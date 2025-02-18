@@ -20,7 +20,7 @@ def add_s3_object_to_db(
     aws_client : BaseClient
         AWS client instance for S3 operations.
     bucket_name : str
-        Name of the S3 bucket to download the object from.
+        Name of the S3 bucket to download the object from. (e.g. "materialsproject-build")
     object_key : str
         Key of the S3 object to process (e.g. "collections/2025-02-12/materials/nelements=2/symmetry_number=208.jsonl.gz")
     db : Database
@@ -60,10 +60,16 @@ def add_jsonl_file_to_db(gzipped_file, db: Database):
         try:
             data = json.loads(line)
 
-            # create a proper Structure instance
-            structure = Structure(
-                id=data["material_id"], type="material", attributes=data
-            )
+            if "material_id" not in data:
+                # this is a task
+                structure = Structure(
+                    id=data["task_id"], type="mp-task", attributes=data
+                )
+            else:
+                # create a proper Structure instance
+                structure = Structure(
+                    id=data["material_id"], type="mp-material", attributes=data
+                )
 
             db.insert_data(structure)
 
