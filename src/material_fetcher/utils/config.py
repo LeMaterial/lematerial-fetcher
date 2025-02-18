@@ -17,7 +17,6 @@ class Config:
     retry_delay: int
     mp_bucket_name: str
     mp_bucket_prefix: str
-    mp_collections_prefix: str
 
 
 def load_config() -> Optional[Config]:
@@ -42,7 +41,6 @@ def load_config() -> Optional[Config]:
         "MATERIALFETCHER_TABLE_NAME",
         "MATERIALFETCHER_MP_BUCKET_NAME",
         "MATERIALFETCHER_MP_BUCKET_PREFIX",
-        "MATERIALFETCHER_MP_COLLECTIONS_PREFIX",
     ]
 
     for var in required_vars:
@@ -68,5 +66,4 @@ def load_config() -> Optional[Config]:
         retry_delay=int(os.getenv("RETRY_DELAY")),
         mp_bucket_name=os.getenv("MATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("MATERIALFETCHER_MP_BUCKET_PREFIX"),
-        mp_collections_prefix=os.getenv("MATERIALFETCHER_MP_COLLECTIONS_PREFIX"),
     )

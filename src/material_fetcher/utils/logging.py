@@ -64,5 +64,8 @@ class Logger:
     def critical(self, message: str, *args, **kwargs):
         self.term_logger.critical(message, stacklevel=2, *args, **kwargs)
 
+    def fatal(self, message: str, *args, **kwargs):
+        self.term_logger.fatal(message, stacklevel=2, *args, **kwargs)
+
 
 logger = Logger()
