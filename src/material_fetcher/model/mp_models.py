@@ -1,5 +1,7 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict
+
+# TODO(ramlaoui): Need to convert those to Structure
 
 
 @dataclass
@@ -53,18 +55,3 @@ class MPStructure:
             k: v for k, v in data.items() if k not in ["material_id", "structure"]
         }
         return instance
-
-
-@dataclass
-class MPResponse:
-    data: List[MPStructure]
-
-    def __init__(self, data: List[MPStructure] = None):
-        self.data = data or []
-
-    @classmethod
-    def from_dict(cls, data: Dict) -> "MPResponse":
-        return cls(data=[MPStructure.from_dict(item) for item in data.get("data", [])])
-
-    def to_dict(self) -> Dict:
-        return {"data": [item.to_dict() for item in self.data]}
