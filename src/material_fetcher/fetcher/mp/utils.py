@@ -4,7 +4,7 @@ import json
 from botocore.client import BaseClient
 
 from material_fetcher.database.postgres import Database
-from material_fetcher.model.models import Structure
+from material_fetcher.model.models import RawStructure
 from material_fetcher.utils.logging import logger
 
 
@@ -62,12 +62,12 @@ def add_jsonl_file_to_db(gzipped_file, db: Database):
 
             if "material_id" not in data:
                 # this is a task
-                structure = Structure(
+                structure = RawStructure(
                     id=data["task_id"], type="mp-task", attributes=data
                 )
             else:
                 # create a proper Structure instance
-                structure = Structure(
+                structure = RawStructure(
                     id=data["material_id"], type="mp-material", attributes=data
                 )
 

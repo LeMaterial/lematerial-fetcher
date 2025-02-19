@@ -1,21 +1,21 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass
-class Structure:
+class RawStructure:
     id: str
     type: str
-    attributes: Dict[str, Any]
+    attributes: dict[str, Any]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "type": self.type, "attributes": self.attributes}
 
 
 @dataclass
 class APIResponse:
-    data: List[Structure]
-    links: Dict[str, str]
+    data: list[RawStructure]
+    links: dict[str, str]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"data": [item.to_dict() for item in self.data], "links": self.links}
