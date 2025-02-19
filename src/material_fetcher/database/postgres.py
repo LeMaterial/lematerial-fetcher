@@ -9,12 +9,37 @@ from material_fetcher.model.optimade import OptimadeStructure
 
 
 class Database:
+    """
+    Base database class for handling PostgreSQL connections and table operations.
+
+    Parameters
+    ----------
+    conn_str : str
+        PostgreSQL connection string
+    table_name : str
+        Name of the database table to operate on
+
+    Attributes
+    ----------
+    conn : psycopg2.extensions.connection
+        PostgreSQL database connection
+    table_name : str
+        Name of the database table
+    columns : dict
+        Dictionary defining table column names and their SQL types
+    """
+
     def __init__(self, conn_str: str, table_name: str):
         self.conn = psycopg2.connect(conn_str)
         self.table_name = table_name
         self.columns = {"id": "TEXT PRIMARY KEY", "type": "TEXT", "attributes": "JSONB"}
 
     def create_table(self) -> None:
+        """
+        Create a new table if it doesn't exist.
+
+        Creates a table with columns defined in self.columns dictionary.
+        """
         with self.conn.cursor() as cur:
             columns_sql = ", ".join(
                 f"{name} {type_}" for name, type_ in self.columns.items()
@@ -28,7 +53,27 @@ class Database:
 
 
 class StructuresDatabase(Database):
+    """
+    Database class for handling raw structure data.
+
+    Inherits from Database class to provide specific functionality for storing
+    and retrieving structure information.
+    """
+
     def insert_data(self, structure: RawStructure) -> None:
+        """
+        Insert a new structure into the database.
+
+        Parameters
+        ----------
+        structure : RawStructure
+            Structure object containing id, type, and attributes to be stored
+
+        Raises
+        ------
+        Exception
+            If there's an error during JSON encoding or database insertion
+        """
         with self.conn.cursor() as cur:
             placeholders = ", ".join(["%s"] * len(self.columns))
             columns = ", ".join(self.columns.keys())
@@ -48,12 +93,22 @@ class StructuresDatabase(Database):
         """
         Fetch items from the database with pagination support.
 
-        Args:
-            offset: Number of items to skip
-            batch_size: Maximum number of items to return
+        Parameters
+        ----------
+        offset : int, optional
+            Number of items to skip, by default 0
+        batch_size : int, optional
+            Maximum number of items to return, by default 100
 
-        Returns:
+        Returns
+        -------
+        list[RawStructure]
             List of Structure objects
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query or JSON decoding
         """
         with self.conn.cursor() as cur:
             columns = ", ".join(self.columns.keys())
@@ -81,6 +136,20 @@ class StructuresDatabase(Database):
 
 
 class OptimadeDatabase(StructuresDatabase):
+    """
+    Database class for handling OPTIMADE-compliant structure data.
+
+    Inherits from StructuresDatabase and implements specific functionality
+    for OPTIMADE structure storage and retrieval.
+
+    Parameters
+    ----------
+    conn_str : str
+        PostgreSQL connection string
+    table_name : str
+        Name of the database table to operate on
+    """
+
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
         self.columns = {
@@ -111,10 +180,35 @@ class OptimadeDatabase(StructuresDatabase):
         }
 
     def _prepare_species_data(self, species: list[dict[str, Any]]) -> list[Json]:
-        """Convert species dictionaries to JSONB format"""
+        """
+        Convert species dictionaries to JSONB format.
+
+        Parameters
+        ----------
+        species : list[dict[str, Any]]
+            List of species dictionaries containing chemical species information
+
+        Returns
+        -------
+        list[Json]
+            List of species data converted to PostgreSQL JSONB format
+        """
         return [Json(s) for s in species]
 
     def insert_data(self, structure: OptimadeStructure) -> None:
+        """
+        Insert an OPTIMADE structure into the database.
+
+        Parameters
+        ----------
+        structure : OptimadeStructure
+            OPTIMADE-compliant structure object containing all required fields
+
+        Raises
+        ------
+        Exception
+            If there's an error during data insertion or JSON encoding
+        """
         with self.conn.cursor() as cur:
             placeholders = ", ".join(["%s"] * len(self.columns))
             columns = ", ".join(self.columns.keys())
@@ -159,6 +253,26 @@ class OptimadeDatabase(StructuresDatabase):
 
 
 def new_db(conn_str: str, table_name: str) -> Optional[Database]:
+    """
+    Create a new database connection.
+
+    Parameters
+    ----------
+    conn_str : str
+        PostgreSQL connection string
+    table_name : str
+        Name of the database table to operate on
+
+    Returns
+    -------
+    Optional[Database]
+        New Database instance if connection successful
+
+    Raises
+    ------
+    Exception
+        If database connection fails
+    """
     try:
         return Database(conn_str, table_name)
     except psycopg2.Error as e:
