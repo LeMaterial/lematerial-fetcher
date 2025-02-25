@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
