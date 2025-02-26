@@ -71,10 +71,6 @@ Run the program using the following command:
 
 Failed URL attempts are logged in a file named `<table_name>_failed_urls.log` within the specified log directory.
 
-## Error Handling
-
-The program retries fetching data from the API up to three times in case of failures, with a delay between attempts. If all retries fail, the URL is logged for further inspection.
-
 ## License and copyright
 
 This code base is the property of Entalpic.
