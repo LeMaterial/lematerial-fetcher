@@ -9,7 +9,6 @@ dependencies = [
     "numpy>=2.1.2",
     "tqdm>=4.67.1",
     "rich>=13.9.4",
-    "cyclopts>=2.9.9",
     "requests>=2.32.3",
     "python-dotenv>=1.0.1",
     "boto3>=1.36.20",
