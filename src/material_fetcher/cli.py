@@ -12,7 +12,10 @@ Learn how to use with:
 from cyclopts import App
 
 from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
-from material_fetcher.fetcher.mp.transform import transform_mp_structure
+from material_fetcher.fetcher.mp.transform import (
+    filter_mp_structure,
+    transform_mp_structure,
+)
 from material_fetcher.transform.transform import transform
 from material_fetcher.utils.logging import logger
 
@@ -47,7 +50,7 @@ def mp_fetch():
 @mp_app.command(name="transform")
 def mp_transform():
     """Transform materials from Material Project."""
-    transform(transform_mp_structure)
+    transform(transform_mp_structure, filter_mp_structure)
 
 
 @alexandria_app.command
