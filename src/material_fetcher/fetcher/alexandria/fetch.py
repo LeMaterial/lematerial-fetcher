@@ -52,7 +52,7 @@ def process_data(db: Database, cfg: Config):
     """
     with ThreadPoolExecutor(max_workers=cfg.num_workers) as executor:
         futures = []
-        offset = 0
+        offset = cfg.page_offset
 
         while True:
             future = executor.submit(
