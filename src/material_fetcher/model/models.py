@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 from dataclasses import dataclass
 from typing import Any
 

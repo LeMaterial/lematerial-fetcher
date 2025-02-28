@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import os
 from dataclasses import dataclass
 from typing import Any, Dict
@@ -35,9 +36,10 @@ class TransformerConfig(BaseConfig):
 def _load_base_config() -> Dict[str, Any]:
     defaults = {
         "MATERIALFETCHER_LOG_DIR": "./logs",
-        "MAX_RETRIES": 3,
-        "NUM_WORKERS": 2,
-        "RETRY_DELAY": 2,
+        "MATERIALFETCHER_MAX_RETRIES": 3,
+        "MATERIALFETCHER_NUM_WORKERS": 2,
+        "MATERIALFETCHER_PAGE_LIMIT": 10,
+        "MATERIALFETCHER_RETRY_DELAY": 2,
     }
 
     # apply defaults
@@ -91,7 +93,7 @@ def load_fetcher_config() -> FetcherConfig:
         base_url=os.getenv("MATERIALFETCHER_API_BASE_URL"),
         db_conn_str=db_conn_str,
         table_name=os.getenv("MATERIALFETCHER_TABLE_NAME"),
-        page_limit=int(os.getenv("PAGE_LIMIT", "10")),
+        page_limit=int(os.getenv("MATERIALFETCHER_PAGE_LIMIT", "10")),
         mp_bucket_name=os.getenv("MATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("MATERIALFETCHER_MP_BUCKET_PREFIX"),
     )
@@ -101,15 +103,15 @@ def load_transformer_config() -> TransformerConfig:
     load_dotenv()
 
     required_vars = [
-        "TRANSFORMER_SOURCE_DB_NAME",
-        "TRANSFORMER_SOURCE_DB_USER",
-        "TRANSFORMER_SOURCE_DB_PASSWORD",
-        "TRANSFORMER_SOURCE_TABLE_NAME",
-        "TRANSFORMER_DEST_DB_NAME",
-        "TRANSFORMER_DEST_DB_USER",
-        "TRANSFORMER_DEST_DB_PASSWORD",
-        "TRANSFORMER_DEST_TABLE_NAME",
-        "TRANSFORMER_BATCH_SIZE",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
+        "MATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME",
+        "MATERIALFETCHER_TRANSFORMER_BATCH_SIZE",
     ]
 
     for var in required_vars:
@@ -117,15 +119,15 @@ def load_transformer_config() -> TransformerConfig:
             raise ValueError(f"{var} is not set")
 
     source_db_conn_str = _create_db_conn_str(
-        "TRANSFORMER_SOURCE_DB_USER",
-        "TRANSFORMER_SOURCE_DB_PASSWORD",
-        "TRANSFORMER_SOURCE_DB_NAME",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
+        "MATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
     )
 
     dest_db_conn_str = _create_db_conn_str(
-        "TRANSFORMER_DEST_DB_USER",
-        "TRANSFORMER_DEST_DB_PASSWORD",
-        "TRANSFORMER_DEST_DB_NAME",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
+        "MATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
     )
 
     base_config = _load_base_config()
@@ -134,7 +136,7 @@ def load_transformer_config() -> TransformerConfig:
         **base_config,
         source_db_conn_str=source_db_conn_str,
         dest_db_conn_str=dest_db_conn_str,
-        source_table_name=os.getenv("TRANSFORMER_SOURCE_TABLE_NAME"),
-        dest_table_name=os.getenv("TRANSFORMER_DEST_TABLE_NAME"),
-        batch_size=int(os.getenv("TRANSFORMER_BATCH_SIZE", "1000")),
+        source_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
+        dest_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
+        batch_size=int(os.getenv("MATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
     )
