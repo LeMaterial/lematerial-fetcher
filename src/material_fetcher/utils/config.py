@@ -32,6 +32,7 @@ class TransformerConfig(BaseConfig):
     source_table_name: str
     dest_table_name: str
     batch_size: int
+    log_every: int
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -114,6 +115,7 @@ def load_transformer_config() -> TransformerConfig:
         "MATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
         "MATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME",
         "MATERIALFETCHER_TRANSFORMER_BATCH_SIZE",
+        "MATERIALFETCHER_TRANSFORMER_LOG_EVERY",
     ]
 
     for var in required_vars:
@@ -141,4 +143,5 @@ def load_transformer_config() -> TransformerConfig:
         source_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
         dest_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
         batch_size=int(os.getenv("MATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
+        log_every=int(os.getenv("MATERIALFETCHER_TRANSFORMER_LOG_EVERY", "1000")),
     )
