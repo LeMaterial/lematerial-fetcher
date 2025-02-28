@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import json
 from dataclasses import dataclass
 from typing import Optional
@@ -47,4 +48,4 @@ def new_db(conn_str: str, table_name: str) -> Optional[Database]:
     try:
         return Database(conn_str, table_name)
     except psycopg2.Error as e:
-        raise Exception(f"Database connection error: {str(e)}")
+        raise Exception(f"Failed to connect to database: {str(e)}") from e

@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
@@ -19,7 +20,7 @@ from material_fetcher.utils.logging import logger
 
 def fetch():
     """
-    Fetch materials data from the Materials Project API and store it in the database.
+    Fetch materials data from the Materials Project AWS OpenData source and store it in the database.
 
     This function retrieves data from S3 buckets and stores it in PostgreSQL. It handles
     the entire pipeline from finding the latest collection version to parallel processing
