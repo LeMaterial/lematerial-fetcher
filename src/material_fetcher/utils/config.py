@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -24,10 +25,10 @@ def load_config() -> Optional[Config]:
 
     defaults = {
         "MATERIALFETCHER_LOG_DIR": "./logs",
-        "MAX_RETRIES": 3,
-        "NUM_WORKERS": 2,
-        "PAGE_LIMIT": 10,
-        "RETRY_DELAY": 2,
+        "MATERIALFETCHER_MAX_RETRIES": 3,
+        "MATERIALFETCHER_NUM_WORKERS": 2,
+        "MATERIALFETCHER_PAGE_LIMIT": 10,
+        "MATERIALFETCHER_RETRY_DELAY": 2,
     }
 
     # apply defaults
@@ -60,10 +61,10 @@ def load_config() -> Optional[Config]:
         db_conn_str=db_conn_str,
         log_dir=os.getenv("MATERIALFETCHER_LOG_DIR"),
         table_name=os.getenv("MATERIALFETCHER_TABLE_NAME"),
-        max_retries=int(os.getenv("MAX_RETRIES")),
-        num_workers=int(os.getenv("NUM_WORKERS")),
-        page_limit=int(os.getenv("PAGE_LIMIT")),
-        retry_delay=int(os.getenv("RETRY_DELAY")),
+        max_retries=int(os.getenv("MATERIALFETCHER_MAX_RETRIES")),
+        num_workers=int(os.getenv("MATERIALFETCHER_NUM_WORKERS")),
+        page_limit=int(os.getenv("MATERIALFETCHER_PAGE_LIMIT")),
+        retry_delay=int(os.getenv("MATERIALFETCHER_RETRY_DELAY")),
         mp_bucket_name=os.getenv("MATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("MATERIALFETCHER_MP_BUCKET_PREFIX"),
     )
