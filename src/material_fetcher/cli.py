@@ -9,7 +9,7 @@ Learn how to use with:
     $ materialfetcher --help
 """
 
-from cyclopts import App
+import click
 
 from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
 from material_fetcher.fetcher.mp.transform import (
@@ -19,46 +19,58 @@ from material_fetcher.fetcher.mp.transform import (
 from material_fetcher.transform.transform import transform
 from material_fetcher.utils.logging import logger
 
-_app = App(
-    help="A CLI tool to fetch materials from various sources.",
-)
-""":py:class:`cyclopts.App`: The main CLI application."""
 
-mp_app = App(name="mp", help="Commands for Material Project API interactions.")
-alexandria_app = App(
-    name="alexandria", help="Commands for Alexandria API interactions."
-)
-
-_app.command(mp_app)
-_app.command(alexandria_app)
+@click.group()
+def cli():
+    """A CLI tool to fetch materials from various sources."""
+    pass
 
 
-def app():
-    """Run the CLI."""
+@click.group(name="mp")
+def mp_cli():
+    """Commands for Material Project API interactions."""
+    pass
+
+
+@click.group(name="alexandria")
+def alexandria_cli():
+    """Commands for Alexandria API interactions."""
+    pass
+
+
+cli.add_command(mp_cli)
+cli.add_command(alexandria_cli)
+
+
+@mp_cli.command(name="fetch")
+def mp_fetch():
+    """Fetch materials from Material Project."""
     try:
-        _app()
+        fetch_mp()
     except KeyboardInterrupt:
         logger.abort("\nAborted.", exit=1)
 
 
-@mp_app.command(name="fetch")
-def mp_fetch():
-    """Fetch materials from Material Project."""
-    fetch_mp()
-
-
-@mp_app.command(name="transform")
+@mp_cli.command(name="transform")
 def mp_transform():
     """Transform materials from Material Project."""
-    transform(transform_mp_structure, filter_mp_structure)
+    try:
+        transform(transform_mp_structure, filter_mp_structure)
+    except KeyboardInterrupt:
+        logger.abort("\nAborted.", exit=1)
 
 
-@alexandria_app.command
-def fetch():
+@alexandria_cli.command(name="fetch")
+def alexandria_fetch():
     """Fetch materials from Alexandria."""
     pass
 
 
+def main():
+    """Run the CLI."""
+    cli(auto_envvar_prefix="MATERIAL_FETCHER")
+
+
 if __name__ == "__main__":
     logger.set_level("INFO")
-    app()
+    main()

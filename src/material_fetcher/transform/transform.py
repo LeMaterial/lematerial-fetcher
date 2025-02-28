@@ -9,6 +9,7 @@ from material_fetcher.utils.logging import logger
 
 def transform(
     transform_fn: Callable[[dict], OptimadeStructure],
+    filter_fn: Callable[[dict], bool],
 ) -> None:
     """
     Transform data from a source database table into OptimadeStructures and store in a target table.
@@ -17,6 +18,8 @@ def transform(
     ----------
     transform_fn : Callable[[dict], OptimadeStructure]
         Function that takes a dictionary of raw data and returns an OptimadeStructure
+    filter_fn : Callable[[dict], bool]
+        Function to choose whether to include a row in the database
 
     Raises
     ------
@@ -31,7 +34,7 @@ def transform(
 
         target_db.create_table()
 
-        process_rows(source_db, target_db, transform_fn, cfg)
+        process_rows(source_db, target_db, transform_fn, filter_fn, cfg)
 
         logger.info("Successfully completed transforming database records")
 
@@ -44,6 +47,7 @@ def process_rows(
     source_db: StructuresDatabase,
     target_db: OptimadeDatabase,
     transform_fn: Callable[[dict], OptimadeStructure],
+    filter_fn: Callable[[dict], bool],
     cfg: TransformerConfig,
 ) -> None:
     """
@@ -56,6 +60,8 @@ def process_rows(
         Source database instance to read from
     target_db : OptimadeDatabase
         Target database instance to write to
+    filter_fn : Callable[[dict], bool]
+        Function to choose whether to include a row in the database
     transform_fn : Callable[[dict], OptimadeStructure]
         Function to transform raw data into OptimadeStructure
     cfg : TransformerConfig
@@ -76,6 +82,9 @@ def process_rows(
             rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
             if not rows:
                 break
+
+            # filter rows
+            rows = [row for row in rows if filter_fn(row)]
 
             total_processed += len(rows)
             logger.info(

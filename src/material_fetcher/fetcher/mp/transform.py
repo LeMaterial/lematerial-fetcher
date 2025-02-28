@@ -5,6 +5,28 @@ from material_fetcher.model.models import RawStructure
 from material_fetcher.model.optimade import OptimadeStructure
 
 
+def filter_mp_structure(raw_structure: RawStructure) -> bool:
+    """
+    Filter a raw Materials Project structure based on whether they have to be included in the
+    database.
+
+    This function defines the criteria for including a structure in the database.
+
+    Parameters
+    ----------
+    raw_structure : RawStructure
+        The raw Materials Project structure to filter.
+
+    Returns
+    -------
+    bool
+        True if the structure should be included in the database, False otherwise.
+    """
+    # TODO(ramlaoui): Implement the filter logic
+    breakpoint()
+    return True
+
+
 def transform_mp_structure(raw_structure: RawStructure) -> OptimadeStructure:
     """
     Transform a raw Materials Project structure into an OptimadeStructure.
