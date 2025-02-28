@@ -90,6 +90,7 @@ def process_rows(
                     row,
                     transform_fn,
                     target_db,
+                    cfg.log_every,
                 )
                 for i, row in enumerate(rows, 1)
             ]
@@ -113,6 +114,7 @@ def worker(
     row: dict,
     transform_fn: Callable[[dict], OptimadeStructure],
     target_db: OptimadeDatabase,
+    log_every: int = 1000,
 ) -> None:
     """
     Transform a single row and store it in the target database.
@@ -139,7 +141,7 @@ def worker(
 
         target_db.insert_data(optimade_structure)
 
-        if worker_id % 1000 == 0:
+        if worker_id % log_every == 0:
             logger.info(f"Transformed {worker_id} records")
 
     except Exception as e:
