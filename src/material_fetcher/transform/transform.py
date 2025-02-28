@@ -58,7 +58,7 @@ def process_rows(
         Target database instance to write to
     transform_fn : Callable[[dict], OptimadeStructure]
         Function to transform raw data into OptimadeStructure
-    cfg : Config
+    cfg : TransformerConfig
         Configuration object containing processing parameters
 
     Raises

@@ -20,6 +20,7 @@ class FetcherConfig(BaseConfig):
     db_conn_str: str
     table_name: str
     page_limit: int
+    log_every: int
     mp_bucket_name: str
     mp_bucket_prefix: str
 
@@ -38,8 +39,8 @@ def _load_base_config() -> Dict[str, Any]:
         "MATERIALFETCHER_LOG_DIR": "./logs",
         "MATERIALFETCHER_MAX_RETRIES": 3,
         "MATERIALFETCHER_NUM_WORKERS": 2,
-        "MATERIALFETCHER_PAGE_LIMIT": 10,
         "MATERIALFETCHER_RETRY_DELAY": 2,
+        "MATERIALFETCHER_LOG_EVERY": 1000,
     }
 
     # apply defaults
@@ -49,9 +50,10 @@ def _load_base_config() -> Dict[str, Any]:
 
     return {
         "log_dir": os.getenv("MATERIALFETCHER_LOG_DIR"),
-        "max_retries": int(os.getenv("MAX_RETRIES")),
-        "num_workers": int(os.getenv("NUM_WORKERS")),
-        "retry_delay": int(os.getenv("RETRY_DELAY")),
+        "max_retries": int(os.getenv("MATERIALFETCHER_MAX_RETRIES")),
+        "num_workers": int(os.getenv("MATERIALFETCHER_NUM_WORKERS")),
+        "retry_delay": int(os.getenv("MATERIALFETCHER_RETRY_DELAY")),
+        "log_every": int(os.getenv("MATERIALFETCHER_LOG_EVERY")),
     }
 
 
