@@ -1,14 +1,10 @@
 # Copyright 2025 Entalpic
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import Any
 
-from botocore.client import BaseClient
-
-from material_fetcher.database.postgres import StructuresDatabase
-from material_fetcher.fetcher.mp.utils import (
-    add_s3_object_to_db,
-    is_critical_error,
-)
+from material_fetcher.fetcher.base import BaseFetcher, ItemsInfo
+from material_fetcher.fetcher.mp.utils import add_s3_object_to_db
+from material_fetcher.model.models import RawStructure
 from material_fetcher.utils.aws import (
     get_aws_client,
     list_s3_objects,
@@ -17,127 +13,147 @@ from material_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from material_fetcher.utils.logging import logger
 
 
+class MPFetcher(BaseFetcher):
+    """
+    Materials Project data fetcher implementation.
+    Fetches data from the Materials Project AWS OpenData source.
+
+    Parameters
+    ----------
+    config : FetcherConfig, optional
+        Configuration for the fetcher. If None, loads from default location.
+    """
+
+    def __init__(self, config: FetcherConfig = None):
+        super().__init__(config or load_fetcher_config())
+        self.aws_client = None
+
+    def setup_resources(self) -> None:
+        """Set up AWS client and database connection."""
+        self.aws_client = get_aws_client()
+        self.setup_database()
+
+    def get_items_to_process(self) -> ItemsInfo:
+        """
+        Get list of S3 object keys to process.
+
+        Returns
+        -------
+        ItemsInfo
+            Information about S3 objects to process
+        """
+        object_keys = list_s3_objects(
+            self.aws_client, self.config.mp_bucket_name, self.config.mp_bucket_prefix
+        )
+        # Filter out non-JSONL files and manifests
+        filtered_keys = [
+            key
+            for key in object_keys
+            if key.endswith(".jsonl.gz") and "manifest.jsonl.gz" not in key
+        ]
+
+        return ItemsInfo(
+            start_offset=0,
+            total_count=len(filtered_keys),
+            items=filtered_keys,  # Store the keys in ItemsInfo
+        )
+
+    def process_items(self, items_info: ItemsInfo) -> None:
+        """
+        Process S3 objects in parallel using a thread pool.
+
+        Parameters
+        ----------
+        items_info : ItemsInfo
+            Information about S3 objects to process
+        """
+        if not items_info.items:
+            logger.warning("No items to process")
+            return
+
+        with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
+            futures = []
+
+            for key in items_info.items:  # Use the stored keys directly
+                future = executor.submit(
+                    self._process_s3_object, self.config.mp_bucket_name, key
+                )
+                futures.append((key, future))
+
+            for key, future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Error processing S3 object {key}: {str(e)}")
+                    if self.is_critical_error(e):
+                        logger.error("Critical error encountered, shutting down")
+                        executor.shutdown(wait=False)
+                        raise
+
+    def cleanup_resources(self) -> None:
+        """Clean up AWS client and database connection."""
+        if self.aws_client:
+            # AWS client doesn't need explicit cleanup
+            self.aws_client = None
+        super().cleanup_resources()
+
+    def read_item(self, item: Any) -> RawStructure:
+        """
+        Read a JSON line into a RawStructure.
+
+        Parameters
+        ----------
+        item : Any
+            JSON data from S3 object
+
+        Returns
+        -------
+        RawStructure
+            Transformed structure
+        """
+        if "material_id" not in item:
+            # This is a task
+            return RawStructure(id=item["task_id"], type="mp-task", attributes=item)
+        else:
+            # This is a material
+            return RawStructure(
+                id=item["material_id"], type="mp-material", attributes=item
+            )
+
+    def _process_s3_object(self, bucket_name: str, object_key: str) -> None:
+        """
+        Process a single S3 object in a worker thread.
+
+        Parameters
+        ----------
+        bucket_name : str
+            Name of the S3 bucket
+        object_key : str
+            Key of the S3 object to process
+
+        Raises
+        ------
+        Exception
+            If a critical error occurs during processing
+        """
+        logger.info(f"Processing file: {object_key}")
+        try:
+            add_s3_object_to_db(
+                self.aws_client, bucket_name, object_key, self.db, self.config.log_every
+            )
+        except Exception as e:
+            logger.error(f"Error processing {object_key}: {str(e)}")
+            if self.is_critical_error(e):
+                raise
+
+
 def fetch():
     """
-    Fetch materials data from the Materials Project AWS OpenData source and store it in the database.
-
-    This function retrieves data from S3 buckets and stores it in PostgreSQL. It handles
-    the entire pipeline from finding the latest collection version to parallel processing
-    of S3 objects.
-
-    Raises
-    ------
-    Exception
-        If any error occurs during the fetching process.
+    Fetch materials data from the Materials Project AWS OpenData source.
+    This is the main entry point for the MP fetcher.
     """
-    try:
-        cfg = load_fetcher_config()
-        aws_client = get_aws_client()
-
-        # lists all objects in the bucket
-        object_keys = list_s3_objects(
-            aws_client, cfg.mp_bucket_name, cfg.mp_bucket_prefix
-        )
-        logger.info(f"Found {len(object_keys)} objects in bucket")
-
-        db = StructuresDatabase(cfg.db_conn_str, cfg.table_name)
-        db.create_table()
-
-        process_s3_objects(db, aws_client, cfg, object_keys)
-
-        logger.info("Successfully completed processing S3 objects")
-
-    except Exception as e:
-        logger.fatal(f"Error during fetch: {str(e)}")
-        raise
-
-
-def process_s3_objects(
-    db: StructuresDatabase,
-    client: BaseClient,
-    cfg: FetcherConfig,
-    object_keys: List[str],
-):
-    """
-    Coordinate the parallel processing of S3 objects using a thread pool.
-
-    Parameters
-    ----------
-    db : StructuresDatabase
-        StructuresDatabase instance for storing the processed data.
-    client : BaseClient
-        AWS client instance for S3 operations.
-    cfg : FetcherConfig
-        Configuration object containing processing parameters.
-    object_keys : List[str]
-        List of S3 object keys to process.
-
-    Raises
-    ------
-    Exception
-        If a critical error occurs during processing.
-    """
-    # filter out non-JSONL files and manifests
-    valid_keys = [
-        key
-        for key in object_keys
-        if key.endswith(".jsonl.gz") and "manifest.jsonl.gz" not in key
-    ]
-
-    with ThreadPoolExecutor(max_workers=cfg.num_workers) as executor:
-        futures = [
-            executor.submit(
-                worker, i, db, client, cfg.mp_bucket_name, key, cfg.log_every
-            )
-            for i, key in enumerate(valid_keys, 1)
-        ]
-        for future in futures:
-            try:
-                future.result()  # This will raise any exceptions that occurred
-            except Exception as e:
-                if is_critical_error(e):
-                    logger.error(f"Critical error encountered: {str(e)}")
-                    executor.shutdown(wait=False)
-                    raise
-
-
-def worker(
-    worker_id: int,
-    db: StructuresDatabase,
-    client: BaseClient,
-    bucket_name: str,
-    object_key: str,
-    log_every: int = 1000,
-):
-    """
-    Process a single S3 object in a worker thread.
-
-    Parameters
-    ----------
-    worker_id : int
-        Identifier for the worker thread.
-    db : StructuresDatabase
-        StructuresDatabase instance for storing the processed data.
-    client : BaseClient
-        AWS client instance for S3 operations.
-    bucket_name : str
-        Name of the S3 bucket.
-    object_key : str
-        Key of the S3 object to process.
-
-    Raises
-    ------
-    Exception
-        If a critical error occurs during processing.
-    """
-    logger.info(f"Worker {worker_id} processing file: {object_key}")
-    try:
-        add_s3_object_to_db(client, bucket_name, object_key, db, log_every)
-    except Exception as e:
-        logger.error(f"Worker {worker_id} error processing {object_key}: {str(e)}")
-        # TODO(ramlaoui): is this still needed?
-        if is_critical_error(e):
-            raise
+    fetcher = MPFetcher()
+    fetcher.fetch()
 
 
 if __name__ == "__main__":

@@ -232,25 +232,3 @@ def select_most_recent_task(tasks: list[RawStructure]) -> Optional[RawStructure]
             logger.warning(f"Could not parse date '{date_str}' for task {task.id}")
 
     return latest_task if latest_task else None
-
-
-def is_critical_error(error: Exception) -> bool:
-    """
-    Determine if the error should stop all processing.
-
-    Parameters
-    ----------
-    error : Exception
-        The error to evaluate.
-
-    Returns
-    -------
-    bool
-        True if the error is critical, False otherwise.
-    """
-    if error is None:
-        return False
-
-    error_str = str(error).lower()
-    critical_conditions = ["connection refused", "no such host", "connection reset"]
-    return any(condition in error_str for condition in critical_conditions)
