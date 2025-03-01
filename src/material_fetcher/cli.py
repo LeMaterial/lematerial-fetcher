@@ -13,7 +13,6 @@ import click
 
 from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
 from material_fetcher.fetcher.mp.transform import (
-    filter_mp_structure,
     transform_mp_structure,
 )
 from material_fetcher.transform.transform import transform
@@ -55,7 +54,7 @@ def mp_fetch():
 def mp_transform():
     """Transform materials from Material Project."""
     try:
-        transform(transform_mp_structure, filter_mp_structure)
+        transform(transform_mp_structure)
     except KeyboardInterrupt:
         logger.abort("\nAborted.", exit=1)
 
