@@ -316,6 +316,69 @@ class OptimadeDatabase(StructuresDatabase):
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
 
 
+class DatasetVersions(Database):
+    """
+    Database class for tracking dataset versions and sync status.
+    """
+
+    def __init__(self, conn_str: str):
+        super().__init__(conn_str, "dataset_versions")
+        self.columns = {
+            "dataset_name": "TEXT PRIMARY KEY",
+            "last_synced_version": "TEXT",
+            "last_sync_date": "TIMESTAMP",
+            "sync_status": "TEXT",
+        }
+
+    def update_version(self, dataset_name: str, version: str) -> None:
+        """
+        Update the version information for a dataset.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Name of the dataset (e.g., 'mp_structures')
+        version : str
+            Version identifier (e.g., '2025-03-14')
+        """
+        with self.conn.cursor() as cur:
+            query = f"""
+            INSERT INTO {self.table_name} (dataset_name, last_synced_version, last_sync_date, sync_status)
+            VALUES (%s, %s, NOW(), 'completed')
+            ON CONFLICT (dataset_name) 
+            DO UPDATE SET 
+                last_synced_version = EXCLUDED.last_synced_version,
+                last_sync_date = EXCLUDED.last_sync_date,
+                sync_status = EXCLUDED.sync_status;
+            """
+            cur.execute(query, (dataset_name, version))
+            self.conn.commit()
+
+    def get_last_synced_version(self, dataset_name: str) -> Optional[str]:
+        """
+        Get the last synced version for a dataset.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Name of the dataset
+
+        Returns
+        -------
+        Optional[str]
+            The last synced version, or None if dataset hasn't been synced
+        """
+        with self.conn.cursor() as cur:
+            query = f"""
+            SELECT last_synced_version 
+            FROM {self.table_name} 
+            WHERE dataset_name = %s;
+            """
+            cur.execute(query, (dataset_name,))
+            result = cur.fetchone()
+            return result[0] if result else None
+
+
 def new_db(conn_str: str, table_name: str) -> Optional[Database]:
     """
     Create a new database connection.
