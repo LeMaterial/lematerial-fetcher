@@ -11,11 +11,9 @@ Learn how to use with:
 
 import click
 
-from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
-from material_fetcher.fetcher.mp.transform import (
-    transform_mp_structure,
-)
-from material_fetcher.transform.transform import transform
+from material_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
+from material_fetcher.fetcher.mp.fetch import MPFetcher
+from material_fetcher.fetcher.mp.transform import MPTransformer
 from material_fetcher.utils.logging import logger
 
 
@@ -27,13 +25,13 @@ def cli():
 
 @click.group(name="mp")
 def mp_cli():
-    """Commands for Material Project API interactions."""
+    """Commands for fetching data from Materials Project."""
     pass
 
 
 @click.group(name="alexandria")
 def alexandria_cli():
-    """Commands for Alexandria API interactions."""
+    """Commands for fetching data from Alexandria."""
     pass
 
 
@@ -43,26 +41,32 @@ cli.add_command(alexandria_cli)
 
 @mp_cli.command(name="fetch")
 def mp_fetch():
-    """Fetch materials from Material Project."""
+    """Fetch materials from Materials Project."""
     try:
-        fetch_mp()
+        fetcher = MPFetcher()
+        fetcher.fetch()
     except KeyboardInterrupt:
-        logger.abort("\nAborted.", exit=1)
+        logger.fatal("\nAborted.", exit=1)
 
 
 @mp_cli.command(name="transform")
 def mp_transform():
     """Transform materials from Material Project."""
     try:
-        transform(transform_mp_structure)
+        transformer = MPTransformer()
+        transformer.transform()
     except KeyboardInterrupt:
-        logger.abort("\nAborted.", exit=1)
+        logger.fatal("\nAborted.", exit=1)
 
 
 @alexandria_cli.command(name="fetch")
 def alexandria_fetch():
     """Fetch materials from Alexandria."""
-    pass
+    try:
+        fetcher = AlexandriaFetcher()
+        fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
 
 
 def main():

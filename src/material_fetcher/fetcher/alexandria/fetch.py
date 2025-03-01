@@ -1,215 +1,151 @@
+# Copyright 2025 Entalpic
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from material_fetcher.database.postgres import Database, new_db
-from material_fetcher.model.models import APIResponse, Structure
-from material_fetcher.utils.config import Config, load_config
+from material_fetcher.fetcher.base import BaseFetcher, ItemsInfo
+from material_fetcher.model.models import RawStructure
+from material_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from material_fetcher.utils.logging import logger
 
 
-def fetch():
+@dataclass
+class BatchInfo:
+    """Information about a batch to be processed."""
+
+    offset: int
+    limit: int
+
+
+class AlexandriaFetcher(BaseFetcher):
     """
-    Fetch materials data from the Alexandria API and store it in the database.
-
-    This function coordinates the entire data fetching pipeline, from setting up the
-    database connection to managing parallel workers for data retrieval.
-
-    Raises
-    ------
-    Exception
-        If any critical error occurs during the fetching process.
-    """
-    try:
-        cfg = load_config()
-        db = new_db(cfg.db_conn_str, cfg.table_name)
-        db.create_table()
-
-        logger.info(
-            f"Starting data fetch from Alexandria API with {cfg.num_workers} workers"
-        )
-        process_data(db, cfg)
-        logger.info("Data fetch completed successfully")
-
-    except Exception as e:
-        logger.fatal(f"Error during fetch: {str(e)}")
-        raise
-
-
-def process_data(db: Database, cfg: Config):
-    """
-    Coordinate parallel processing of API data using a thread pool.
+    Alexandria API data fetcher implementation.
+    Fetches structure data from the Alexandria API endpoint.
 
     Parameters
     ----------
-    db : Database
-        Database instance for storing the processed data.
-    cfg : Config
-        Configuration object containing processing parameters.
+    config : FetcherConfig, optional
+        Configuration for the fetcher. If None, loads from default location.
     """
-    with ThreadPoolExecutor(max_workers=cfg.num_workers) as executor:
-        futures = []
-        offset = cfg.page_offset
 
-        while True:
-            future = executor.submit(
-                worker,
-                db,
-                cfg.base_url,
-                offset,
-                cfg.page_limit,
-                cfg.max_retries,
-                cfg.retry_delay,
-            )
-            futures.append(future)
-            offset += cfg.page_limit
+    def __init__(self, config: FetcherConfig = None):
+        super().__init__(config or load_fetcher_config())
 
-            # check if we've reached the end of data
-            try:
-                if not future.result():
-                    break
-            except Exception as e:
-                logger.error(f"Error in worker: {str(e)}")
-                executor.shutdown(wait=False)
-                raise
+    def setup_resources(self) -> None:
+        """Set up database connection."""
+        self.setup_database()
 
-        # wait for remaining futures to complete
-        for future in futures:
-            try:
-                future.result()
-            except Exception as e:
-                logger.error(f"Error in worker: {str(e)}")
-                executor.shutdown(wait=False)
-                raise
+    def get_items_to_process(self) -> ItemsInfo:
+        """Get information about items to process."""
+        return ItemsInfo(start_offset=self.config.page_offset)
 
+    def process_items(self, items_info: ItemsInfo) -> None:
+        """Process items in parallel, starting from the given offset."""
+        with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
+            futures = []
+            offset = items_info.start_offset
 
-def worker(
-    db: Database,
-    base_url: str,
-    offset: int,
-    limit: int,
-    max_retries: int,
-    retry_delay: int,
-) -> bool:
-    """
-    Process a batch of data from the API in a worker thread.
+            while True:
+                future = executor.submit(
+                    self._process_batch, offset, self.config.page_limit
+                )
+                futures.append((offset, future))
+                offset += self.config.page_limit
 
-    Parameters
-    ----------
-    db : Database
-        Database instance for storing the processed data.
-    base_url : str
-        Base URL of the API.
-    offset : int
-        Starting offset for the data batch.
-    limit : int
-        Maximum number of records to fetch.
-    max_retries : int
-        Maximum number of retry attempts.
-    retry_delay : int
-        Delay between retry attempts in seconds.
+                # Check if we've reached the end of data
+                try:
+                    if not future.result():
+                        break
+                except Exception as e:
+                    logger.error(f"Error processing batch at offset {offset}: {str(e)}")
+                    continue
 
-    Returns
-    -------
-    bool
-        True if data was processed, False if no data was available.
+            # Process remaining futures
+            for batch_offset, future in futures:
+                if not future.done():
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing batch at offset {batch_offset}: {str(e)}"
+                        )
 
-    Raises
-    ------
-    Exception
-        If a critical error occurs during processing.
-    """
-    session = create_session(max_retries, retry_delay)
+    def _process_batch(self, offset: int, limit: int) -> bool:
+        """
+        Process a single batch from the API.
 
-    try:
-        response = fetch_data(session, base_url, offset, limit)
-        if not response.data:
+        Parameters
+        ----------
+        offset : int
+            Offset for the batch
+        limit : int
+            Limit for the batch
+
+        Returns
+        -------
+        bool
+            True if the batch was processed successfully, False if it's the end of data
+        """
+        session = self._create_session()
+
+        try:
+            # Fetch the batch
+            url = f"{self.config.base_url}?page_limit={limit}&sort=id&page_offset={offset}"
+            response = session.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            # Process and store items
+            for item in data.get("data", []):
+                try:
+                    structure = self.read_item(item)
+                    self.db.insert_data(structure)
+                except Exception as e:
+                    logger.warning(
+                        f"Error processing item {item.get('id', 'unknown')}: {str(e)}"
+                    )
+                    continue
+
+            logger.info(f"Successfully processed batch at offset {offset}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error processing batch at offset {offset}: {str(e)}")
             return False
+        finally:
+            session.close()
 
-        for structure in response.data:
-            try:
-                db.insert_data(structure)
-            except Exception as e:
-                logger.warning(f"Error inserting data: {str(e)}")
-                continue
+    def _create_session(self) -> requests.Session:
+        """
+        Create a requests session with retry configuration.
 
-        logger.info(
-            f"Successfully processed {len(response.data)} records at offset {offset}"
+        Returns
+        -------
+        requests.Session
+            Configured session object
+        """
+        retry_strategy = Retry(
+            total=self.config.max_retries,
+            backoff_factor=self.config.retry_delay,
+            status_forcelist=[429, 500, 502, 503, 504],
         )
-        return True
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session = requests.Session()
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
-    except Exception as e:
-        logger.error(f"Error fetching data at offset {offset}: {str(e)}")
-        raise
+    def cleanup_resources(self) -> None:
+        """Clean up database connections."""
+        if hasattr(self._thread_local, "db"):
+            delattr(self._thread_local, "db")
 
-
-def create_session(max_retries: int, retry_delay: int) -> requests.Session:
-    """
-    Create a requests session with retry configuration.
-
-    Parameters
-    ----------
-    max_retries : int
-        Maximum number of retry attempts.
-    retry_delay : int
-        Delay between retry attempts in seconds.
-
-    Returns
-    -------
-    requests.Session
-        Configured session object.
-    """
-    session = requests.Session()
-    retry_strategy = Retry(
-        total=max_retries,
-        backoff_factor=retry_delay,
-        status_forcelist=[429, 500, 502, 503, 504],
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
-
-
-def fetch_data(
-    session: requests.Session, base_url: str, offset: int, limit: int
-) -> Optional[APIResponse]:
-    """
-    Fetch a batch of data from the API.
-
-    Parameters
-    ----------
-    session : requests.Session
-        Session object for making HTTP requests.
-    base_url : str
-        Base URL of the API.
-    offset : int
-        Starting offset for the data batch.
-    limit : int
-        Maximum number of records to fetch.
-
-    Returns
-    -------
-    Optional[APIResponse]
-        API response object containing the fetched data.
-
-    Raises
-    ------
-    Exception
-        If the API request fails.
-    """
-    url = f"{base_url}?page_limit={limit}&sort=id&page_offset={offset}"
-
-    response = session.get(url)
-    response.raise_for_status()
-
-    data = response.json()
-    structures = [
-        Structure(id=item["id"], type=item["type"], attributes=item["attributes"])
-        for item in data["data"]
-    ]
-
-    return APIResponse(data=structures, links=data.get("links", {}))
+    def read_item(self, item: Any) -> RawStructure:
+        """Transform a raw API item into a RawStructure."""
+        return RawStructure(
+            id=item["id"], type=item["type"], attributes=item["attributes"]
+        )
