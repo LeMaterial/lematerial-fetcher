@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from material_fetcher.fetcher.base import BaseFetcher, ItemsInfo
+from material_fetcher.fetch import BaseFetcher, ItemsInfo
 from material_fetcher.fetcher.mp.utils import add_s3_object_to_db
 from material_fetcher.model.models import RawStructure
 from material_fetcher.utils.aws import (

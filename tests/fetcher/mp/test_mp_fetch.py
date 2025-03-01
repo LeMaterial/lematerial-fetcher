@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from material_fetcher.database.postgres import StructuresDatabase
-from material_fetcher.fetcher.base import ItemsInfo
+from material_fetcher.fetch import ItemsInfo
 from material_fetcher.fetcher.mp.fetch import MPFetcher
 from material_fetcher.fetcher.mp.utils import (
     add_jsonl_file_to_db,

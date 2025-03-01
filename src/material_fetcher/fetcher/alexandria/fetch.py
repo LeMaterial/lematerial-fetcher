@@ -7,7 +7,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from material_fetcher.fetcher.base import BaseFetcher, ItemsInfo
+from material_fetcher.fetch import BaseFetcher, ItemsInfo
 from material_fetcher.model.models import RawStructure
 from material_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from material_fetcher.utils.logging import logger
