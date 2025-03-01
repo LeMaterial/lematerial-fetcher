@@ -21,6 +21,7 @@ class FetcherConfig(BaseConfig):
     db_conn_str: str
     table_name: str
     page_limit: int
+    page_offset: int
     mp_bucket_name: str
     mp_bucket_prefix: str
 
@@ -42,6 +43,7 @@ def _load_base_config() -> Dict[str, Any]:
         "MATERIALFETCHER_NUM_WORKERS": 2,
         "MATERIALFETCHER_RETRY_DELAY": 2,
         "MATERIALFETCHER_LOG_EVERY": 1000,
+        "MATERIALFETCHER_PAGE_OFFSET": 0,
     }
 
     # apply defaults
@@ -97,6 +99,7 @@ def load_fetcher_config() -> FetcherConfig:
         db_conn_str=db_conn_str,
         table_name=os.getenv("MATERIALFETCHER_TABLE_NAME"),
         page_limit=int(os.getenv("MATERIALFETCHER_PAGE_LIMIT", "10")),
+        page_offset=int(os.getenv("MATERIALFETCHER_PAGE_OFFSET")),
         mp_bucket_name=os.getenv("MATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("MATERIALFETCHER_MP_BUCKET_PREFIX"),
     )
