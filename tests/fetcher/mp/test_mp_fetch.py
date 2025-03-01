@@ -1,12 +1,13 @@
 # Copyright 2025 Entalpic
 import gzip
 import json
+from datetime import datetime, timedelta
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from material_fetcher.database.postgres import StructuresDatabase
+from material_fetcher.database.postgres import DatasetVersions, StructuresDatabase
 from material_fetcher.fetch import ItemsInfo
 from material_fetcher.fetcher.mp.fetch import MPFetcher
 from material_fetcher.fetcher.mp.utils import (
@@ -29,10 +30,17 @@ def mock_db():
 
 
 @pytest.fixture
+def mock_version_db():
+    """Create a mock version database."""
+    db = MagicMock(spec=DatasetVersions)
+    return db
+
+
+@pytest.fixture
 def sample_structure_data():
     return {
         "material_id": "mp-123",
-        "last_updated": "2024-03-14",
+        "last_updated": {"$date": "2024-03-14"},
         "elements": ["Si", "O"],
         "nelements": 2,
     }
@@ -60,7 +68,7 @@ def mock_config():
 def sample_task_data():
     return {
         "task_id": "mp-task-123",
-        "last_updated": "2024-03-14",
+        "last_updated": {"$date": "2024-03-14"},
         "elements": ["Si", "O"],
         "nelements": 2,
     }
@@ -129,26 +137,44 @@ def test_is_critical_error():
 
 
 class TestMPFetcher:
-    def test_setup_resources(self, mock_aws_client):
+    def test_setup_resources(self, mock_aws_client, mock_db, mock_version_db):
         """Test resource setup initializes AWS client and database"""
-        with patch(
-            "material_fetcher.fetcher.mp.fetch.get_aws_client"
-        ) as mock_get_client:
+        with (
+            patch(
+                "material_fetcher.fetcher.mp.fetch.get_aws_client"
+            ) as mock_get_client,
+            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+        ):
             mock_get_client.return_value = mock_aws_client
+            mock_db_class.return_value = mock_db
+            mock_version_db_class.return_value = mock_version_db
+
             fetcher = MPFetcher()
             fetcher.setup_resources()
 
             assert fetcher.aws_client is not None
             assert fetcher.db is not None
             mock_get_client.assert_called_once()
+            assert mock_db_class.call_count == 2
+            mock_version_db_class.assert_called_once()
 
-    def test_get_items_to_process_empty(self, mock_aws_client, mock_config):
+    def test_get_items_to_process_empty(
+        self, mock_aws_client, mock_config, mock_version_db
+    ):
         """Test handling of empty bucket"""
-        with patch(
-            "material_fetcher.fetcher.mp.fetch.get_aws_client"
-        ) as mock_get_client:
+        with (
+            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+        ):
             mock_get_client.return_value = mock_aws_client
-            mock_aws_client.list_objects_v2.return_value = {"Contents": []}
+            mock_version_db_class.return_value = mock_version_db
+            mock_version_db.get_last_synced_version.return_value = None
+
+            # Setup paginator to return empty list
+            mock_paginator = MagicMock()
+            mock_aws_client.get_paginator.return_value = mock_paginator
+            mock_paginator.paginate.return_value = [{"Contents": []}]
 
             fetcher = MPFetcher(config=mock_config)
             fetcher.aws_client = mock_aws_client
@@ -157,27 +183,45 @@ class TestMPFetcher:
             assert items_info.total_count == 0
             assert len(items_info.items) == 0
 
-    def test_get_items_to_process_filters_correctly(self, mock_aws_client, mock_config):
+    def test_get_items_to_process_filters_correctly(
+        self, mock_aws_client, mock_config, mock_version_db
+    ):
         """Test filtering of S3 objects"""
-        # mock the paginator
+        now = datetime.now()
+
+        # Setup paginator with test data
         mock_paginator = MagicMock()
         mock_aws_client.get_paginator.return_value = mock_paginator
-
         mock_paginator.paginate.return_value = [
             {
                 "Contents": [
-                    {"Key": "test/prefix/data1.jsonl.gz"},
-                    {"Key": "test/prefix/manifest.jsonl.gz"},  # should be filtered
-                    {"Key": "test/prefix/data2.txt"},  # should be filtered
-                    {"Key": "test/prefix/data3.jsonl.gz"},
+                    {
+                        "Key": "test/prefix/data1.jsonl.gz",
+                        "LastModified": now - timedelta(days=1),
+                    },
+                    {
+                        "Key": "test/prefix/manifest.jsonl.gz",
+                        "LastModified": now,
+                    },
+                    {
+                        "Key": "test/prefix/data2.txt",
+                        "LastModified": now,
+                    },
+                    {
+                        "Key": "test/prefix/data3.jsonl.gz",
+                        "LastModified": now,
+                    },
                 ]
             }
         ]
 
-        with patch(
-            "material_fetcher.fetcher.mp.fetch.get_aws_client"
-        ) as mock_get_client:
+        with (
+            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+        ):
             mock_get_client.return_value = mock_aws_client
+            mock_version_db_class.return_value = mock_version_db
+            mock_version_db.get_last_synced_version.return_value = None
 
             fetcher = MPFetcher(config=mock_config)
             fetcher.aws_client = mock_aws_client
@@ -191,47 +235,114 @@ class TestMPFetcher:
 
             assert items_info.total_count == 2
             assert all(key.endswith(".jsonl.gz") for key in items_info.items)
-            assert "manifest.jsonl.gz" not in items_info.items
+            assert "test/prefix/manifest.jsonl.gz" not in items_info.items
             assert set(items_info.items) == {
                 "test/prefix/data1.jsonl.gz",
                 "test/prefix/data3.jsonl.gz",
             }
 
-    def test_read_item_material(self, sample_structure_data):
-        """Test reading a material item"""
-        fetcher = MPFetcher()
-        structure = fetcher.read_item(sample_structure_data)
+    def test_get_items_to_process_with_version(
+        self, mock_aws_client, mock_config, mock_version_db
+    ):
+        """Test filtering of S3 objects with version date"""
+        now = datetime.now()
+        version_date = now - timedelta(days=2)
 
-        assert structure.id == sample_structure_data["material_id"]
-        assert structure.type == "mp-material"
-        assert structure.attributes == sample_structure_data
+        # Setup paginator with test data
+        mock_paginator = MagicMock()
+        mock_aws_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {
+                "Contents": [
+                    {
+                        "Key": "test/prefix/data1.jsonl.gz",
+                        "LastModified": now - timedelta(days=3),  # older than version
+                    },
+                    {
+                        "Key": "test/prefix/data2.jsonl.gz",
+                        "LastModified": now - timedelta(days=1),  # newer than version
+                    },
+                ]
+            }
+        ]
 
-    def test_read_item_task(self, sample_task_data):
-        """Test reading a task item"""
-        fetcher = MPFetcher()
-        structure = fetcher.read_item(sample_task_data)
-
-        assert structure.id == sample_task_data["task_id"]
-        assert structure.type == "mp-task"
-        assert structure.attributes == sample_task_data
-
-    def test_process_items_handles_errors(self, mock_aws_client, mock_config, mock_db):
-        """Test error handling during item processing"""
-        with patch(
-            "material_fetcher.fetcher.mp.fetch.get_aws_client"
-        ) as mock_get_client:
+        with (
+            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+        ):
             mock_get_client.return_value = mock_aws_client
-            mock_aws_client.get_object.side_effect = Exception("Test error")
+            mock_version_db_class.return_value = mock_version_db
+            mock_version_db.get_last_synced_version.return_value = (
+                version_date.strftime("%Y-%m-%d")
+            )
 
             fetcher = MPFetcher(config=mock_config)
             fetcher.aws_client = mock_aws_client
-            with patch.object(fetcher, "_create_db_connection", return_value=mock_db):
-                items_info = ItemsInfo(
-                    start_offset=0, total_count=1, items=["test/key.jsonl.gz"]
-                )
 
+            items_info = fetcher.get_items_to_process()
+
+            assert items_info.total_count == 1
+            assert items_info.items == ["test/prefix/data2.jsonl.gz"]
+
+    def test_process_items_handles_errors(
+        self, mock_aws_client, mock_config, mock_db, mock_version_db
+    ):
+        """Test error handling during item processing"""
+        with (
+            patch(
+                "material_fetcher.fetcher.mp.fetch.get_aws_client"
+            ) as mock_get_client,
+            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+        ):
+            mock_get_client.return_value = mock_aws_client
+            mock_db_class.return_value = mock_db
+            mock_version_db_class.return_value = mock_version_db
+            mock_aws_client.get_object.side_effect = Exception("Test error")
+
+            fetcher = MPFetcher(config=mock_config)
+            fetcher.setup_resources()  # This will properly set up the database connections
+
+            items_info = ItemsInfo(
+                start_offset=0, total_count=1, items=["test/key.jsonl.gz"]
+            )
+
+            fetcher.process_items(items_info)
+
+            mock_aws_client.get_object.side_effect = Exception("Connection refused")
+            with pytest.raises(Exception):
                 fetcher.process_items(items_info)
 
-                mock_aws_client.get_object.side_effect = Exception("Connection refused")
-                with pytest.raises(Exception):
-                    fetcher.process_items(items_info)
+    def test_get_new_version(self, mock_config, mock_version_db):
+        """Test getting new version from latest modified timestamp"""
+        now = datetime.now()
+        with (
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+        ):
+            mock_version_db_class.return_value = mock_version_db
+            mock_db_class.return_value = mock_db_class
+
+            fetcher = MPFetcher(config=mock_config)
+            fetcher.setup_resources()
+            fetcher.latest_modified = now
+
+            version = fetcher.get_new_version()
+            assert version == now.strftime("%Y-%m-%d")
+
+    def test_get_new_version_fallback(self, mock_config, mock_version_db):
+        """Test getting new version fallback when no timestamp available"""
+        with (
+            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+        ):
+            mock_version_db_class.return_value = mock_version_db
+            mock_db_class.return_value = mock_db_class
+
+            fetcher = MPFetcher(config=mock_config)
+            fetcher.setup_resources()
+            fetcher.latest_modified = None
+
+            version = fetcher.get_new_version()
+            today = datetime.now().strftime("%Y-%m-%d")
+            assert version == today

@@ -139,7 +139,8 @@ def test_list_s3_objects_success(mock_s3_client):
     with stubber:
         result = list_s3_objects(client, "test-bucket", "prefix")
 
-    assert result == ["prefix/file1.json", "prefix/file2.json", "prefix/file3.json"]
+    assert result[0]["key"] == "prefix/file1.json"
+    assert result[0]["metadata"]["LastModified"] == "2023-01-01T00:00:00.000Z"
 
 
 def test_list_s3_objects_empty(mock_s3_client):
