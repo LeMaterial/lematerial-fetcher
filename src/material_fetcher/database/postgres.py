@@ -1,6 +1,6 @@
 # Copyright 2025 Entalpic
 import json
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import psycopg2
 from psycopg2.extras import Json
@@ -52,6 +52,62 @@ class Database:
             cur.execute(query)
             self.conn.commit()
 
+    def fetch_items_with_ids(
+        self, ids: List[str], table_name: Optional[str] = None
+    ) -> List[RawStructure]:
+        """
+        Fetch items from the database that match the given list of IDs.
+
+        Parameters
+        ----------
+        ids : List[str]
+            List of IDs to retrieve from the database
+
+        Returns
+        -------
+        List[RawStructure]
+            List of RawStructure objects matching the requested IDs
+        table_name : str, optional
+            Name of the table to fetch items from, by default None
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query execution
+        """
+        if not ids:
+            return []
+
+        if not table_name:
+            table_name = self.table_name
+
+        with self.conn.cursor() as cur:
+            # Use parameterized query with ANY to safely handle the list of IDs
+            placeholders = ",".join(["%s"] * len(ids))
+            query = f"""
+            SELECT id, type, attributes
+            FROM {table_name}
+            WHERE id IN ({placeholders});
+            """
+
+            try:
+                cur.execute(query, ids)
+                results = []
+                for row in cur.fetchall():
+                    id_val, type_val, attributes_json = row
+                    # Parse the JSON attributes
+                    attributes = (
+                        json.loads(attributes_json)
+                        if isinstance(attributes_json, str)
+                        else attributes_json
+                    )
+                    results.append(
+                        RawStructure(id=id_val, type=type_val, attributes=attributes)
+                    )
+                return results
+            except (json.JSONDecodeError, psycopg2.Error) as e:
+                raise Exception(f"Error fetching items with IDs: {str(e)}")
+
 
 class StructuresDatabase(Database):
     """
@@ -90,7 +146,9 @@ class StructuresDatabase(Database):
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
 
-    def fetch_items(self, offset: int = 0, batch_size: int = 100) -> list[RawStructure]:
+    def fetch_items(
+        self, offset: int = 0, batch_size: int = 100, table_name: Optional[str] = None
+    ) -> list[RawStructure]:
         """
         Fetch items from the database with pagination support.
 
@@ -105,17 +163,22 @@ class StructuresDatabase(Database):
         -------
         list[RawStructure]
             List of Structure objects
+        table_name : str, optional
+            Name of the table to fetch items from, by default None
 
         Raises
         ------
         Exception
             If there's an error during database query or JSON decoding
         """
+        if not table_name:
+            table_name = self.table_name
+
         with self.conn.cursor() as cur:
             columns = ", ".join(self.columns.keys())
             query = f"""
             SELECT {columns}
-            FROM {self.table_name}
+            FROM {table_name}
             ORDER BY id
             LIMIT %s OFFSET %s;"""
 
