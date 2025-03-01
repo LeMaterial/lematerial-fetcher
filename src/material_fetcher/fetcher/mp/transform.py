@@ -42,7 +42,7 @@ def get_task_targets(
             site["properties"]["magmom"]
             for site in task.attributes["output"]["structure"]["sites"]
         ]
-    except KeyError:
+    except (TypeError, KeyError):
         logger.warning(
             f"No magnetic moments for {material_id} with functional {functional}"
         )
