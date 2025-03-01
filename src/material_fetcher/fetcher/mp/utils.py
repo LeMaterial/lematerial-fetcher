@@ -76,15 +76,23 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
         try:
             data = json.loads(line)
 
+            last_modified = data.get("last_updated", {}).get("$date", None)
+
             if "material_id" not in data:
                 # this is a task
                 structure = RawStructure(
-                    id=data["task_id"], type="mp-task", attributes=data
+                    id=data["task_id"],
+                    type="mp-task",
+                    attributes=data,
+                    last_modified=last_modified,
                 )
             else:
                 # create a proper Structure instance
                 structure = RawStructure(
-                    id=data["material_id"], type="mp-material", attributes=data
+                    id=data["material_id"],
+                    type="mp-material",
+                    attributes=data,
+                    last_modified=last_modified,
                 )
 
             db.insert_data(structure)

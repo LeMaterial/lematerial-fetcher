@@ -1,6 +1,7 @@
 # Copyright 2025 Entalpic
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
 
 @dataclass
@@ -8,6 +9,7 @@ class RawStructure:
     id: str
     type: str
     attributes: dict[str, Any]
+    last_modified: Optional[datetime] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "type": self.type, "attributes": self.attributes}
