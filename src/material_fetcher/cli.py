@@ -12,6 +12,7 @@ Learn how to use with:
 import click
 
 from material_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
+from material_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
 from material_fetcher.fetcher.mp.fetch import MPFetcher
 from material_fetcher.fetcher.mp.transform import MPTransformer
 from material_fetcher.utils.logging import logger
@@ -65,6 +66,16 @@ def alexandria_fetch():
     try:
         fetcher = AlexandriaFetcher()
         fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@alexandria_cli.command(name="transform")
+def alexandria_transform():
+    """Transform materials from Alexandria."""
+    try:
+        transformer = AlexandriaTransformer()
+        transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

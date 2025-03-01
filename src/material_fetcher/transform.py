@@ -259,8 +259,9 @@ class BaseTransformer(ABC):
                 logger.info(f"Transformed {worker_id} records")
 
         except Exception as e:
-            logger.error(f"Worker {worker_id} error processing row: {str(e)}")
-            raise
+            logger.warning(
+                f"Worker {worker_id} error processing {raw_structure.id} row: {str(e)}"
+            )
 
     @abstractmethod
     def transform_row(
