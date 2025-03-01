@@ -1,25 +1,25 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from typing import Callable, Optional
 
-from material_fetcher.database.postgres import OptimadeDatabase, StructuresDatabase
+from material_fetcher.database.postgres import (
+    OptimadeDatabase,
+    StructuresDatabase,
+)
 from material_fetcher.model.optimade import OptimadeStructure
 from material_fetcher.utils.config import TransformerConfig, load_transformer_config
 from material_fetcher.utils.logging import logger
 
 
 def transform(
-    transform_fn: Callable[[dict], OptimadeStructure],
-    filter_fn: Callable[[dict], bool],
+    transform_fn: Callable[[dict], list[OptimadeStructure]],
 ) -> None:
     """
     Transform data from a source database table into OptimadeStructures and store in a target table.
 
     Parameters
     ----------
-    transform_fn : Callable[[dict], OptimadeStructure]
-        Function that takes a dictionary of raw data and returns an OptimadeStructure
-    filter_fn : Callable[[dict], bool]
-        Function to choose whether to include a row in the database
+    transform_fn : Callable[[dict], list[OptimadeStructure]]
+        Function that takes a dictionary of raw data and returns a list of OptimadeStructures.
 
     Raises
     ------
@@ -34,7 +34,7 @@ def transform(
 
         target_db.create_table()
 
-        process_rows(source_db, target_db, transform_fn, filter_fn, cfg)
+        process_rows(source_db, target_db, transform_fn, cfg)
 
         logger.info("Successfully completed transforming database records")
 
@@ -46,8 +46,7 @@ def transform(
 def process_rows(
     source_db: StructuresDatabase,
     target_db: OptimadeDatabase,
-    transform_fn: Callable[[dict], OptimadeStructure],
-    filter_fn: Callable[[dict], bool],
+    transform_fn: Callable[[dict], list[OptimadeStructure]],
     cfg: TransformerConfig,
 ) -> None:
     """
@@ -60,10 +59,8 @@ def process_rows(
         Source database instance to read from
     target_db : OptimadeDatabase
         Target database instance to write to
-    filter_fn : Callable[[dict], bool]
-        Function to choose whether to include a row in the database
-    transform_fn : Callable[[dict], OptimadeStructure]
-        Function to transform raw data into OptimadeStructure
+    transform_fn : Callable[[dict], list[OptimadeStructure]]
+        Function to transform raw data into OptimadeStructure. Returns a list of OptimadeStructures.
     cfg : TransformerConfig
         Configuration object containing processing parameters
 
@@ -76,15 +73,13 @@ def process_rows(
         batch_size = cfg.batch_size
         offset = 0
         total_processed = 0
+        task_table_name = cfg.mp_task_table_name
 
         while True:
             # get batch of rows from source table
             rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
             if not rows:
                 break
-
-            # filter rows
-            rows = [row for row in rows if filter_fn(row)]
 
             total_processed += len(rows)
             logger.info(
@@ -97,9 +92,11 @@ def process_rows(
                     worker,
                     total_processed - len(rows) + i,
                     row,
-                    transform_fn,
+                    source_db,
                     target_db,
+                    transform_fn,
                     cfg.log_every,
+                    task_table_name,
                 )
                 for i, row in enumerate(rows, 1)
             ]
@@ -121,9 +118,11 @@ def process_rows(
 def worker(
     worker_id: int,
     row: dict,
-    transform_fn: Callable[[dict], OptimadeStructure],
+    source_db: StructuresDatabase,
     target_db: OptimadeDatabase,
+    transform_fn: Callable[[dict], Optional[OptimadeStructure]],
     log_every: int = 1000,
+    task_table_name: Optional[str] = None,
 ) -> None:
     """
     Transform a single row and store it in the target database.
@@ -134,10 +133,17 @@ def worker(
         Identifier for the worker thread
     row : dict
         Raw data row from source database
-    transform_fn : Callable[[dict], OptimadeStructure]
-        Function to transform raw data into OptimadeStructure
+    source_db : StructuresDatabase
+        Source database instance to read from
     target_db : OptimadeDatabase
         Target database instance to write to
+    transform_fn : Callable[[dict], Optional[OptimadeStructure]]
+        Function to transform raw data into OptimadeStructure. Returns None if the row should be skipped.
+    log_every : int
+        Number of rows to process before logging progress
+    task_table_name : Optional[str]
+        Task table name to read targets or trajectories from.
+        This is only used for Materials Project.
 
     Raises
     ------
@@ -146,9 +152,10 @@ def worker(
     """
     try:
         # transform the row into an OptimadeStructure
-        optimade_structure = transform_fn(row)
+        optimade_structures = transform_fn(row, source_db, task_table_name)
 
-        target_db.insert_data(optimade_structure)
+        for optimade_structure in optimade_structures:
+            target_db.insert_data(optimade_structure)
 
         if worker_id % log_every == 0:
             logger.info(f"Transformed {worker_id} records")

@@ -1,33 +1,83 @@
+from enum import Enum
+from typing import Any
+
 import numpy as np
 from pymatgen.core import Structure
 
+from material_fetcher.database.postgres import StructuresDatabase
+from material_fetcher.fetcher.mp.utils import (
+    extract_structure_optimization_tasks,
+    map_tasks_to_functionals,
+)
 from material_fetcher.model.models import RawStructure
-from material_fetcher.model.optimade import OptimadeStructure
+from material_fetcher.model.optimade import Functional, OptimadeStructure
+from material_fetcher.utils.logging import logger
 
 
-def filter_mp_structure(raw_structure: RawStructure) -> bool:
+class TaskType(Enum):
+    STRUCTURE_OPTIMIZATION = "Structure Optimization"
+    DEPRECATED = "Deprecated"
+
+
+def get_task_targets(
+    task: RawStructure, material_id: str, functional: Functional
+) -> dict[str, Any]:
     """
-    Filter a raw Materials Project structure based on whether they have to be included in the
-    database.
-
-    This function defines the criteria for including a structure in the database.
+    Get the target parameters of a task.
 
     Parameters
     ----------
-    raw_structure : RawStructure
-        The raw Materials Project structure to filter.
+    task : RawStructure
+        The task to get the targets from.
 
     Returns
     -------
-    bool
-        True if the structure should be included in the database, False otherwise.
+    dict[str, Any]
+        The target parameters of the task.
     """
-    # TODO(ramlaoui): Implement the filter logic
-    breakpoint()
-    return True
+    targets = {}
+    targets["energy"] = task.attributes["output"]["energy"]
+    try:
+        targets["magnetic_moments"] = [
+            site["properties"]["magmom"]
+            for site in task.attributes["output"]["structure"]["sites"]
+        ]
+    except KeyError:
+        logger.warning(
+            f"No magnetic moments for {material_id} with functional {functional}"
+        )
+        targets["magnetic_moments"] = None
+    targets["forces"] = task.attributes["calcs_reversed"][0]["output"]["ionic_steps"][
+        -1
+    ]["forces"]
+    # TODO(ramlaoui): Check if these are correct
+    targets["dos_ef"] = task.attributes["output"].get("efermi", None)  # dos_ef
+    targets["total_magnetization"] = (
+        task.attributes["output"]
+        .get("magnetization", {})
+        .get("total_magnetization", None)
+    )
+    try:
+        targets["stress_tensor"] = task.attributes["output"]["stress"]
+    except KeyError:
+        logger.warning(
+            f"No stress tensor for {material_id} with functional {functional}"
+        )
+        targets["stress_tensor"] = None
+
+    targets["cross_compatible"] = True
+    non_compatible_elements = ["V", "Cs"]
+    # TODO(msiron): What about Yb?
+    for element in non_compatible_elements:
+        if element in task.attributes["composition_reduced"].keys():
+            targets["cross_compatible"] = False
+
+    return targets
 
 
-def transform_mp_structure(raw_structure: RawStructure) -> OptimadeStructure:
+def transform_mp_structure(
+    raw_structure: RawStructure, source_db: StructuresDatabase, task_table_name: str
+) -> list[OptimadeStructure]:
     """
     Transform a raw Materials Project structure into an OptimadeStructure.
 
@@ -38,12 +88,31 @@ def transform_mp_structure(raw_structure: RawStructure) -> OptimadeStructure:
     ----------
     raw_structure : RawStructure
         The raw Materials Project structure to transform.
+    source_db : StructuresDatabase
+        The source database instance to read from.
+    task_table_name : str
+        The name of the task table to read from.
 
     Returns
     -------
-    OptimadeStructure
-        The transformed OptimadeStructure object.
+    list[OptimadeStructure]
+        The transformed OptimadeStructure objects.
+        If the list is empty, nothing from the structure should be included in the database.
     """
+
+    tasks, calc_types = extract_structure_optimization_tasks(
+        raw_structure, source_db, task_table_name
+    )
+    functionals = map_tasks_to_functionals(tasks, calc_types)
+
+    if not functionals:
+        return []
+
+    targets_functionals = {
+        functional: get_task_targets(task, raw_structure.id, functional)
+        for functional, task in functionals.items()
+    }
+
     pmg_structure = Structure.from_dict(raw_structure.attributes["structure"])
 
     # TODO(ramlaoui): This does not handle with disordered structures
@@ -88,30 +157,40 @@ def transform_mp_structure(raw_structure: RawStructure) -> OptimadeStructure:
         for element in raw_structure.attributes["elements"]
     ]
 
-    optimade_structure = OptimadeStructure(
-        # Basic fields
-        id=raw_structure.attributes["material_id"],
-        source="mp",
-        immutable_id=raw_structure.attributes["material_id"],
-        # Structural fields
-        elements=raw_structure.attributes["elements"],
-        nelements=raw_structure.attributes["nelements"],
-        elements_ratios=element_ratios,
-        # sites
-        nsites=raw_structure.attributes["nsites"],
-        cartesian_site_positions=cartesian_site_positions,
-        species_at_sites=species_at_sites,
-        species=species,
-        # chemistry
-        chemical_formula_anonymous=raw_structure.attributes["formula_anonymous"],
-        chemical_formula_descriptive=raw_structure.attributes["formula_pretty"],
-        chemical_formula_reduced=chemical_formula_reduced,
-        # dimensionality
-        dimension_types=[1, 1, 1],
-        nperiodic_dimensions=3,
-        lattice_vectors=lattice_vectors,
-        # misc
-        last_modified=raw_structure.attributes["builder_meta"]["build_date"]["$date"],
-    )
+    optimade_structures = []
+    for functional in functionals.keys():
+        targets = targets_functionals[functional]
+        optimade_structure = OptimadeStructure(
+            # Basic fields
+            id=raw_structure.attributes["material_id"],
+            source="mp",
+            immutable_id=raw_structure.attributes["material_id"],
+            # Structural fields
+            elements=raw_structure.attributes["elements"],
+            nelements=raw_structure.attributes["nelements"],
+            elements_ratios=element_ratios,
+            # sites
+            nsites=raw_structure.attributes["nsites"],
+            cartesian_site_positions=cartesian_site_positions,
+            species_at_sites=species_at_sites,
+            species=species,
+            # chemistry
+            chemical_formula_anonymous=raw_structure.attributes["formula_anonymous"],
+            chemical_formula_descriptive=raw_structure.attributes["formula_pretty"],
+            chemical_formula_reduced=chemical_formula_reduced,
+            # dimensionality
+            dimension_types=[1, 1, 1],
+            nperiodic_dimensions=3,
+            lattice_vectors=lattice_vectors,
+            # misc
+            last_modified=raw_structure.attributes["builder_meta"]["build_date"][
+                "$date"
+            ],
+            functional=functional,
+            # targets
+            **targets,
+        )
 
-    return optimade_structure
+        optimade_structures.append(optimade_structure)
+
+    return optimade_structures
