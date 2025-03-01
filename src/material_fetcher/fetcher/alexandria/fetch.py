@@ -1,7 +1,9 @@
 # Copyright 2025 Entalpic
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime
+from threading import Lock
+from typing import Any, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -34,6 +36,8 @@ class AlexandriaFetcher(BaseFetcher):
 
     def __init__(self, config: FetcherConfig = None):
         super().__init__(config or load_fetcher_config())
+        self._latest_modified_date: Optional[datetime] = None
+        self._lock = Lock()  # For thread-safe updates
 
     def setup_resources(self) -> None:
         """Set up database connection."""
@@ -146,6 +150,34 @@ class AlexandriaFetcher(BaseFetcher):
 
     def read_item(self, item: Any) -> RawStructure:
         """Transform a raw API item into a RawStructure."""
+        last_modified = item["attributes"].get("last_modified", None)
+        if last_modified:
+            last_modified = datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
+            # update the last modified date if it's the latest
+            with self._lock:
+                if (
+                    self._latest_modified_date is None
+                    or last_modified > self._latest_modified_date
+                ):
+                    self._latest_modified_date = last_modified
+            last_modified = last_modified.strftime("%Y-%m-%d")
         return RawStructure(
-            id=item["id"], type=item["type"], attributes=item["attributes"]
+            id=item["id"],
+            type=item["type"],
+            attributes=item["attributes"],
+            last_modified=last_modified,
         )
+
+    def get_new_version(self) -> str:
+        """
+        Get the new version identifier for the Alexandria dataset.
+        Uses the API version or timestamp from the API response.
+
+        Returns
+        -------
+        str
+            New version identifier in YYYY-MM-DD format
+        """
+        if self.last_modified:
+            return self.last_modified.strftime("%Y-%m-%d")
+        return self.get_current_version()
