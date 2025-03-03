@@ -12,9 +12,7 @@ Learn how to use with:
 import click
 
 from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
-from material_fetcher.fetcher.mp.transform import (
-    transform_mp_structure,
-)
+from material_fetcher.fetcher.mp.transform import transform_mp_structure
 from material_fetcher.transform.transform import transform
 from material_fetcher.utils.logging import logger
 
