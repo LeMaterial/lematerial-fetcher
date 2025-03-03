@@ -26,6 +26,30 @@ class MPTransformer(BaseTransformer):
     Transforms raw Materials Project data into OptimadeStructures.
     """
 
+    def get_new_transform_version(self) -> str:
+        """
+        Get the new transform version based on the latest processed data.
+
+        Returns
+        -------
+        str
+            New transform version in YYYY-MM-DD format
+        """
+        try:
+            with self.target_db.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT MAX(last_modified::date)::text
+                    FROM {self.config.dest_table_name}
+                    """
+                )
+                latest_date = cur.fetchone()[0]
+                return (
+                    latest_date if latest_date else super().get_new_transform_version()
+                )
+        except Exception:
+            return super().get_new_transform_version()
+
     def transform_row(
         self,
         raw_structure: RawStructure,

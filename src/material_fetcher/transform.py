@@ -1,10 +1,12 @@
 # Copyright 2025 Entalpic
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import local
 from typing import Optional
 
 from material_fetcher.database.postgres import (
+    DatasetVersions,
     OptimadeDatabase,
     StructuresDatabase,
 )
@@ -32,6 +34,7 @@ class BaseTransformer(ABC):
     def __init__(self, config: Optional[TransformerConfig] = None):
         self.config = config or load_transformer_config()
         self._thread_local = local()
+        self._transform_version = None
 
     @property
     def source_db(self) -> StructuresDatabase:
@@ -88,8 +91,20 @@ class BaseTransformer(ABC):
             If any error occurs during the transformation process
         """
         try:
+            logger.info(f"Starting transform process for {self.__class__.__name__}")
+
+            current_version = self.get_transform_version()
+            logger.info(f"Current transform version: {current_version or 'Not set'}")
+
             self.setup_databases()
+
             self._process_rows()
+
+            new_version = self.get_new_transform_version()
+            if new_version != current_version:
+                self.update_transform_version(new_version)
+                logger.info(f"Updated transform version to: {new_version}")
+
             logger.info("Successfully completed transforming database records")
         except Exception as e:
             logger.fatal(f"Error during transform: {str(e)}")
@@ -97,12 +112,66 @@ class BaseTransformer(ABC):
         finally:
             self.cleanup_resources()
 
+    def get_transform_version(self) -> Optional[str]:
+        """
+        Get the current transform version.
+        This version tracks the state of transformed data.
+
+        Returns
+        -------
+        Optional[str]
+            Current transform version or None if not set
+        """
+        try:
+            if not hasattr(self._thread_local, "version_db"):
+                self._thread_local.version_db = DatasetVersions(
+                    self.config.dest_db_conn_str
+                )
+            current_version = self._thread_local.version_db.get_last_synced_version(
+                f"{self.config.dest_table_name}_transform"
+            )
+            return current_version
+        except Exception as e:
+            logger.error(f"Error getting transform version: {str(e)}")
+            return None
+
+    def update_transform_version(self, version: str) -> None:
+        """
+        Update the transform version.
+
+        Parameters
+        ----------
+        version : str
+            New transform version
+        """
+        if not hasattr(self._thread_local, "version_db"):
+            self._thread_local.version_db = DatasetVersions(
+                self.config.dest_db_conn_str
+            )
+        self._thread_local.version_db.update_version(
+            f"{self.config.dest_table_name}_transform", version
+        )
+
+    def get_new_transform_version(self) -> str:
+        """
+        Get the new transform version.
+        Subclasses should implement specific version generation logic.
+
+        Returns
+        -------
+        str
+            New transform version
+        """
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     def cleanup_resources(self) -> None:
         """Clean up database connections for all threads."""
         if hasattr(self._thread_local, "source_db"):
             delattr(self._thread_local, "source_db")
         if hasattr(self._thread_local, "target_db"):
             delattr(self._thread_local, "target_db")
+        if hasattr(self._thread_local, "version_db"):
+            delattr(self._thread_local, "version_db")
 
     def _process_rows(self) -> None:
         """

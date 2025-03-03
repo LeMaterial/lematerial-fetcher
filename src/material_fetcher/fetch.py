@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from threading import local
 from typing import Any, List, Optional
 
-from material_fetcher.database.postgres import StructuresDatabase
-from material_fetcher.model.models import RawStructure
+from material_fetcher.database.postgres import DatasetVersions, StructuresDatabase
 from material_fetcher.utils.config import FetcherConfig
 from material_fetcher.utils.logging import logger
 
@@ -60,6 +59,21 @@ class BaseFetcher(ABC):
             self._thread_local.db = self._create_db_connection()
         return self._thread_local.db
 
+    @property
+    def version_db(self) -> DatasetVersions:
+        """
+        Get the version tracking database connection for the current thread.
+        Creates a new connection if one doesn't exist.
+
+        Returns
+        -------
+        DatasetVersions
+            Version tracking database connection for the current thread
+        """
+        if not hasattr(self._thread_local, "version_db"):
+            self._thread_local.version_db = DatasetVersions(self.config.db_conn_str)
+        return self._thread_local.version_db
+
     def _create_db_connection(
         self, table_name: Optional[str] = None
     ) -> StructuresDatabase:
@@ -90,7 +104,32 @@ class BaseFetcher(ABC):
         table_name : Optional[str]
             Name of the table to create. If None, uses the one from config.
         """
-        pass
+        db = self._create_db_connection(table_name)
+        db.create_table()
+
+        self.version_db.create_table()
+
+    def get_current_version(self) -> Optional[str]:
+        """
+        Get the current version of the dataset.
+
+        Returns
+        -------
+        Optional[str]
+            The current version identifier, or None if not set
+        """
+        return self.version_db.get_last_synced_version(self.config.table_name)
+
+    def update_version(self, version: str) -> None:
+        """
+        Update the version information for the current dataset.
+
+        Parameters
+        ----------
+        version : str
+            New version identifier
+        """
+        self.version_db.update_version(self.config.table_name, version)
 
     def fetch(self) -> None:
         """
@@ -108,6 +147,10 @@ class BaseFetcher(ABC):
         try:
             logger.info(f"Starting fetch process for {self.__class__.__name__}")
 
+            # Get current version
+            current_version = self.get_current_version()
+            logger.info(f"Current dataset version: {current_version or 'Not set'}")
+
             # Initialize resources
             self.setup_resources()
 
@@ -119,6 +162,12 @@ class BaseFetcher(ABC):
 
             # Process the items
             self.process_items(items_info)
+
+            # Update version after successful processing
+            new_version = self.get_new_version()
+            if new_version != current_version:
+                self.update_version(new_version)
+                logger.info(f"Updated dataset version to: {new_version}")
 
             # Cleanup
             self.cleanup_resources()
@@ -188,6 +237,19 @@ class BaseFetcher(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_new_version(self) -> str:
+        """
+        Get the new version identifier for the current dataset.
+        Must be implemented by subclasses.
+
+        Returns
+        -------
+        str
+            New version identifier
+        """
+        pass
+
     def cleanup_resources(self) -> None:
         """
         Clean up any resources that were created during the fetch process.
@@ -195,21 +257,5 @@ class BaseFetcher(ABC):
         """
         if hasattr(self._thread_local, "db"):
             delattr(self._thread_local, "db")
-
-    @abstractmethod
-    def read_item(self, item: Any) -> RawStructure:
-        """
-        Read a single item into a RawStructure.
-        Must be implemented by subclasses.
-
-        Parameters
-        ----------
-        item : Any
-            The item to transform
-
-        Returns
-        -------
-        RawStructure
-            The transformed structure
-        """
-        pass
+        if hasattr(self._thread_local, "version_db"):
+            delattr(self._thread_local, "version_db")
