@@ -1,9 +1,9 @@
 # Copyright 2025 Entalpic
 from typing import Optional
 
-from material_fetcher.model.models import RawStructure
-from material_fetcher.model.optimade import Functional, OptimadeStructure
-from material_fetcher.transform import BaseTransformer
+from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.model.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.transform import BaseTransformer
 
 
 class AlexandriaTransformer(BaseTransformer):

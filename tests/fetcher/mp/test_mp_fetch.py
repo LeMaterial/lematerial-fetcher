@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from material_fetcher.database.postgres import DatasetVersions, StructuresDatabase
-from material_fetcher.fetch import ItemsInfo
-from material_fetcher.fetcher.mp.fetch import MPFetcher
-from material_fetcher.fetcher.mp.utils import (
+from lematerial_fetcher.database.postgres import DatasetVersions, StructuresDatabase
+from lematerial_fetcher.fetch import ItemsInfo
+from lematerial_fetcher.fetcher.mp.fetch import MPFetcher
+from lematerial_fetcher.fetcher.mp.utils import (
     add_jsonl_file_to_db,
     add_s3_object_to_db,
 )
-from material_fetcher.utils.config import FetcherConfig
+from lematerial_fetcher.utils.config import FetcherConfig
 
 
 @pytest.fixture
@@ -143,10 +143,10 @@ class TestMPFetcher:
         """Test resource setup initializes AWS client and database"""
         with (
             patch(
-                "material_fetcher.fetcher.mp.fetch.get_aws_client"
+                "lematerial_fetcher.fetcher.mp.fetch.get_aws_client"
             ) as mock_get_client,
-            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
         ):
             mock_get_client.return_value = mock_aws_client
             mock_db_class.return_value = mock_db
@@ -166,8 +166,8 @@ class TestMPFetcher:
     ):
         """Test handling of empty bucket"""
         with (
-            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
         ):
             mock_get_client.return_value = mock_aws_client
             mock_version_db_class.return_value = mock_version_db
@@ -218,8 +218,8 @@ class TestMPFetcher:
         ]
 
         with (
-            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
         ):
             mock_get_client.return_value = mock_aws_client
             mock_version_db_class.return_value = mock_version_db
@@ -269,8 +269,8 @@ class TestMPFetcher:
         ]
 
         with (
-            patch("material_fetcher.utils.aws.get_aws_client") as mock_get_client,
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.utils.aws.get_aws_client") as mock_get_client,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
         ):
             mock_get_client.return_value = mock_aws_client
             mock_version_db_class.return_value = mock_version_db
@@ -292,10 +292,10 @@ class TestMPFetcher:
         """Test error handling during item processing"""
         with (
             patch(
-                "material_fetcher.fetcher.mp.fetch.get_aws_client"
+                "lematerial_fetcher.fetcher.mp.fetch.get_aws_client"
             ) as mock_get_client,
-            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
         ):
             mock_get_client.return_value = mock_aws_client
             mock_db_class.return_value = mock_db
@@ -319,8 +319,8 @@ class TestMPFetcher:
         """Test getting new version from latest modified timestamp"""
         now = datetime.now()
         with (
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
-            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.fetch.StructuresDatabase") as mock_db_class,
         ):
             mock_version_db_class.return_value = mock_version_db
             mock_db_class.return_value = mock_db_class
@@ -335,8 +335,8 @@ class TestMPFetcher:
     def test_get_new_version_fallback(self, mock_config, mock_version_db):
         """Test getting new version fallback when no timestamp available"""
         with (
-            patch("material_fetcher.fetch.DatasetVersions") as mock_version_db_class,
-            patch("material_fetcher.fetch.StructuresDatabase") as mock_db_class,
+            patch("lematerial_fetcher.fetch.DatasetVersions") as mock_version_db_class,
+            patch("lematerial_fetcher.fetch.StructuresDatabase") as mock_db_class,
         ):
             mock_version_db_class.return_value = mock_version_db
             mock_db_class.return_value = mock_db_class

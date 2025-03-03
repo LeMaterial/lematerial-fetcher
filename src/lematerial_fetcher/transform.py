@@ -5,15 +5,15 @@ from datetime import datetime, timezone
 from threading import local
 from typing import Optional
 
-from material_fetcher.database.postgres import (
+from lematerial_fetcher.database.postgres import (
     DatasetVersions,
     OptimadeDatabase,
     StructuresDatabase,
 )
-from material_fetcher.model.models import RawStructure
-from material_fetcher.model.optimade import OptimadeStructure
-from material_fetcher.utils.config import TransformerConfig, load_transformer_config
-from material_fetcher.utils.logging import logger
+from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.model.optimade import OptimadeStructure
+from lematerial_fetcher.utils.config import TransformerConfig, load_transformer_config
+from lematerial_fetcher.utils.logging import logger
 
 
 class BaseTransformer(ABC):

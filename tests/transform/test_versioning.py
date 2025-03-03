@@ -4,14 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from material_fetcher.database.postgres import (
+from lematerial_fetcher.database.postgres import (
     DatasetVersions,
     OptimadeDatabase,
     StructuresDatabase,
 )
-from material_fetcher.model.models import RawStructure
-from material_fetcher.transform import BaseTransformer
-from material_fetcher.utils.config import TransformerConfig
+from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.transform import BaseTransformer
+from lematerial_fetcher.utils.config import TransformerConfig
 
 
 class TestTransformer(BaseTransformer):
@@ -67,13 +67,14 @@ def patched_transformer(transformer, mock_version_db, mock_source_db, mock_targe
     """Create a transformer with patched database classes."""
     with (
         patch(
-            "material_fetcher.transform.DatasetVersions", return_value=mock_version_db
+            "lematerial_fetcher.transform.DatasetVersions", return_value=mock_version_db
         ),
         patch(
-            "material_fetcher.transform.StructuresDatabase", return_value=mock_source_db
+            "lematerial_fetcher.transform.StructuresDatabase",
+            return_value=mock_source_db,
         ),
         patch(
-            "material_fetcher.transform.OptimadeDatabase", return_value=mock_target_db
+            "lematerial_fetcher.transform.OptimadeDatabase", return_value=mock_target_db
         ),
     ):
         yield transformer
@@ -166,9 +167,9 @@ def test_cleanup_resources(patched_transformer):
     assert not hasattr(patched_transformer._thread_local, "version_db")
 
 
-@patch("material_fetcher.transform.DatasetVersions")
-@patch("material_fetcher.transform.StructuresDatabase")
-@patch("material_fetcher.transform.OptimadeDatabase")
+@patch("lematerial_fetcher.transform.DatasetVersions")
+@patch("lematerial_fetcher.transform.StructuresDatabase")
+@patch("lematerial_fetcher.transform.OptimadeDatabase")
 def test_thread_local_databases(
     mock_optimade_class, mock_structures_class, mock_dataset_versions_class, transformer
 ):

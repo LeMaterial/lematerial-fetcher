@@ -11,11 +11,11 @@ Learn how to use with:
 
 import click
 
-from material_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
-from material_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
-from material_fetcher.fetcher.mp.fetch import MPFetcher
-from material_fetcher.fetcher.mp.transform import MPTransformer
-from material_fetcher.utils.logging import logger
+from lematerial_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
+from lematerial_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
+from lematerial_fetcher.fetcher.mp.fetch import MPFetcher
+from lematerial_fetcher.fetcher.mp.transform import MPTransformer
+from lematerial_fetcher.utils.logging import logger
 
 
 @click.group()
@@ -82,7 +82,7 @@ def alexandria_transform():
 
 def main():
     """Run the CLI."""
-    cli(auto_envvar_prefix="MATERIAL_FETCHER")
+    cli(auto_envvar_prefix="LEMATERIAL_FETCHER")
 
 
 if __name__ == "__main__":

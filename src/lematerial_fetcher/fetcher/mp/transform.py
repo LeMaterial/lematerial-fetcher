@@ -5,14 +5,14 @@ from typing import Any, Optional
 import numpy as np
 from pymatgen.core import Structure
 
-from material_fetcher.fetcher.mp.utils import (
+from lematerial_fetcher.fetcher.mp.utils import (
     extract_structure_optimization_tasks,
     map_tasks_to_functionals,
 )
-from material_fetcher.model.models import RawStructure
-from material_fetcher.model.optimade import Functional, OptimadeStructure
-from material_fetcher.transform import BaseTransformer
-from material_fetcher.utils.logging import logger
+from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.model.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.transform import BaseTransformer
+from lematerial_fetcher.utils.logging import logger
 
 
 class TaskType(Enum):

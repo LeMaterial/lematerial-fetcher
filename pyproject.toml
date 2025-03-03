@@ -1,6 +1,6 @@
 # Copyright 2025 Entalpic
 [project]
-name = "material-fetcher"
+name = "lematerial-fetcher"
 version = "0.1.0"
 description = "Data fetching and processing for LeMaterial datasets"
 readme = "README.md"
