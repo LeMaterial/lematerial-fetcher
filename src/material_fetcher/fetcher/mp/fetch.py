@@ -4,7 +4,7 @@ from typing import List
 
 from botocore.client import BaseClient
 
-from material_fetcher.database.postgres import Database
+from material_fetcher.database.postgres import StructuresDatabase
 from material_fetcher.fetcher.mp.utils import (
     add_s3_object_to_db,
     is_critical_error,
@@ -13,7 +13,7 @@ from material_fetcher.utils.aws import (
     get_aws_client,
     list_s3_objects,
 )
-from material_fetcher.utils.config import Config, load_config
+from material_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from material_fetcher.utils.logging import logger
 
 
@@ -31,7 +31,7 @@ def fetch():
         If any error occurs during the fetching process.
     """
     try:
-        cfg = load_config()
+        cfg = load_fetcher_config()
         aws_client = get_aws_client()
 
         # lists all objects in the bucket
@@ -40,7 +40,7 @@ def fetch():
         )
         logger.info(f"Found {len(object_keys)} objects in bucket")
 
-        db = Database(cfg.db_conn_str, cfg.table_name)
+        db = StructuresDatabase(cfg.db_conn_str, cfg.table_name)
         db.create_table()
 
         process_s3_objects(db, aws_client, cfg, object_keys)
@@ -53,18 +53,21 @@ def fetch():
 
 
 def process_s3_objects(
-    db: Database, client: BaseClient, cfg: Config, object_keys: List[str]
+    db: StructuresDatabase,
+    client: BaseClient,
+    cfg: FetcherConfig,
+    object_keys: List[str],
 ):
     """
     Coordinate the parallel processing of S3 objects using a thread pool.
 
     Parameters
     ----------
-    db : Database
-        Database instance for storing the processed data.
+    db : StructuresDatabase
+        StructuresDatabase instance for storing the processed data.
     client : BaseClient
         AWS client instance for S3 operations.
-    cfg : Config
+    cfg : FetcherConfig
         Configuration object containing processing parameters.
     object_keys : List[str]
         List of S3 object keys to process.
@@ -97,7 +100,11 @@ def process_s3_objects(
 
 
 def worker(
-    worker_id: int, db: Database, client: BaseClient, bucket_name: str, object_key: str
+    worker_id: int,
+    db: StructuresDatabase,
+    client: BaseClient,
+    bucket_name: str,
+    object_key: str,
 ):
     """
     Process a single S3 object in a worker thread.
@@ -106,8 +113,8 @@ def worker(
     ----------
     worker_id : int
         Identifier for the worker thread.
-    db : Database
-        Database instance for storing the processed data.
+    db : StructuresDatabase
+        StructuresDatabase instance for storing the processed data.
     client : BaseClient
         AWS client instance for S3 operations.
     bucket_name : str

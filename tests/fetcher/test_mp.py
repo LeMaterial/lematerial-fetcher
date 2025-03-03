@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from material_fetcher.database.postgres import Database
+from material_fetcher.database.postgres import StructuresDatabase
 from material_fetcher.fetcher.mp.utils import (
     add_jsonl_file_to_db,
     add_s3_object_to_db,
@@ -21,7 +21,7 @@ def mock_aws_client():
 
 @pytest.fixture
 def mock_db():
-    db = MagicMock(spec=Database)
+    db = MagicMock(spec=StructuresDatabase)
     return db
 
 

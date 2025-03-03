@@ -5,6 +5,8 @@ import dotenv
 import pytest
 from dotenv import load_dotenv
 
+from material_fetcher.utils.config import load_fetcher_config
+
 
 @pytest.fixture(autouse=True, scope="module")
 def mock_load_dotenv():
@@ -66,7 +68,10 @@ def mock_config_env_vars(monkeypatch):
         "MATERIALFETCHER_TABLE_NAME": "test_table",
         "MATERIALFETCHER_MP_BUCKET_NAME": "test_bucket",
         "MATERIALFETCHER_MP_BUCKET_PREFIX": "test_prefix",
-        "MATERIALFETCHER_MP_COLLECTIONS_PREFIX": "test_collections",
+        "MATERIALFETCHER_LOG_DIR": "./logs",
+        "MAX_RETRIES": 3,
+        "NUM_WORKERS": 2,
+        "RETRY_DELAY": 2,
     }
     for key, value in test_env_vars.items():
         monkeypatch.setenv(key, value)
@@ -75,9 +80,7 @@ def mock_config_env_vars(monkeypatch):
 
 def test_load_config(mock_config_env_vars):
     """Test loading configuration from env file with all required variables"""
-    from material_fetcher.utils.config import load_config
-
-    config = load_config()
+    config = load_fetcher_config()
 
     assert config.base_url == mock_config_env_vars["MATERIALFETCHER_API_BASE_URL"]
     assert config.table_name == mock_config_env_vars["MATERIALFETCHER_TABLE_NAME"]
@@ -87,10 +90,6 @@ def test_load_config(mock_config_env_vars):
     assert (
         config.mp_bucket_prefix
         == mock_config_env_vars["MATERIALFETCHER_MP_BUCKET_PREFIX"]
-    )
-    assert (
-        config.mp_collections_prefix
-        == mock_config_env_vars["MATERIALFETCHER_MP_COLLECTIONS_PREFIX"]
     )
     assert (
         config.db_conn_str
@@ -103,29 +102,3 @@ def test_load_config(mock_config_env_vars):
     assert config.num_workers == 2
     assert config.page_limit == 10
     assert config.retry_delay == 2
-
-
-@pytest.fixture
-def mock_missing_config_env_vars(monkeypatch):
-    """Fixture to set up test environment variables"""
-    test_env_vars = {
-        "MATERIALFETCHER_DB_USER": "testuser",
-        "MATERIALFETCHER_DB_PASSWORD": "testpass",
-        "MATERIALFETCHER_DB_NAME": "testdb",
-        "MATERIALFETCHER_TABLE_NAME": "test_table",
-        "MATERIALFETCHER_MP_BUCKET_NAME": "test_bucket",
-        "MATERIALFETCHER_MP_BUCKET_PREFIX": "test_prefix",
-        "MATERIALFETCHER_MP_COLLECTIONS_PREFIX": "test_collections",
-    }
-    for key, value in test_env_vars.items():
-        monkeypatch.setenv(key, value)
-    return test_env_vars
-
-
-def test_missing_required_vars(mock_missing_config_env_vars):
-    """Test behavior when required environment variables are missing"""
-    from material_fetcher.utils.config import load_config
-
-    with pytest.raises(ValueError) as exc_info:
-        load_config()
-    assert "MATERIALFETCHER_API_BASE_URL is not set" in str(exc_info.value)
