@@ -16,8 +16,10 @@ class Config:
     num_workers: int
     page_limit: int
     retry_delay: int
+    page_offset: int
     mp_bucket_name: str
     mp_bucket_prefix: str
+    mp_collections_prefix: str
 
 
 def load_config() -> Optional[Config]:
@@ -29,6 +31,7 @@ def load_config() -> Optional[Config]:
         "MATERIALFETCHER_NUM_WORKERS": 2,
         "MATERIALFETCHER_PAGE_LIMIT": 10,
         "MATERIALFETCHER_RETRY_DELAY": 2,
+        "MATERIALFETCHER_PAGE_OFFSET": 0,
     }
 
     # apply defaults
@@ -42,6 +45,7 @@ def load_config() -> Optional[Config]:
         "MATERIALFETCHER_TABLE_NAME",
         "MATERIALFETCHER_MP_BUCKET_NAME",
         "MATERIALFETCHER_MP_BUCKET_PREFIX",
+        "MATERIALFETCHER_MP_COLLECTIONS_PREFIX",
     ]
 
     for var in required_vars:
@@ -65,6 +69,8 @@ def load_config() -> Optional[Config]:
         num_workers=int(os.getenv("MATERIALFETCHER_NUM_WORKERS")),
         page_limit=int(os.getenv("MATERIALFETCHER_PAGE_LIMIT")),
         retry_delay=int(os.getenv("MATERIALFETCHER_RETRY_DELAY")),
+        page_offset=int(os.getenv("MATERIALFETCHER_PAGE_OFFSET")),
         mp_bucket_name=os.getenv("MATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("MATERIALFETCHER_MP_BUCKET_PREFIX"),
+        mp_collections_prefix=os.getenv("MATERIALFETCHER_MP_COLLECTIONS_PREFIX"),
     )

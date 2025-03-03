@@ -11,6 +11,7 @@ Learn how to use with:
 
 from cyclopts import App
 
+from material_fetcher.fetcher.alexandria.fetch import fetch as fetch_alexandria
 from material_fetcher.fetcher.mp.fetch import fetch as fetch_mp
 from material_fetcher.utils.logging import logger
 
@@ -42,10 +43,10 @@ def mp_fetch():
     fetch_mp()
 
 
-@alexandria_app.command
-def fetch():
+@alexandria_app.command(name="fetch")
+def alexandria_fetch():
     """Fetch materials from Alexandria."""
-    pass
+    fetch_alexandria()
 
 
 if __name__ == "__main__":
