@@ -8,7 +8,25 @@ from dotenv import load_dotenv
 from material_fetcher.utils.config import load_fetcher_config
 
 
-@pytest.fixture(autouse=True, scope="module")
+@pytest.fixture(autouse=True, scope="function")
+def clean_env():
+    """Clean environment variables before each test"""
+    # Store original env vars
+    original_env = dict(os.environ)
+
+    # Remove all MATERIALFETCHER_ env vars
+    for key in list(os.environ.keys()):
+        if key.startswith("MATERIALFETCHER_"):
+            del os.environ[key]
+
+    yield
+
+    # Restore original env vars
+    os.environ.clear()
+    os.environ.update(original_env)
+
+
+@pytest.fixture(autouse=True, scope="session")
 def mock_load_dotenv():
     """Prevent load_dotenv from loading any .env files during tests"""
     with pytest.MonkeyPatch().context() as mp:
@@ -61,27 +79,46 @@ def test_env_variable_not_set():
 def mock_config_env_vars(monkeypatch):
     """Fixture to set up test environment variables"""
     test_env_vars = {
-        "MATERIALFETCHER_API_BASE_URL": "https://api.material-fetcher.com",
+        # Base config vars
+        "MATERIALFETCHER_LOG_DIR": "./logs",
+        "MATERIALFETCHER_MAX_RETRIES": "3",
+        "MATERIALFETCHER_NUM_WORKERS": "2",
+        "MATERIALFETCHER_RETRY_DELAY": "2",
+        "MATERIALFETCHER_LOG_EVERY": "1000",
+        # Fetcher specific vars
+        "MATERIALFETCHER_API_BASE_URL": "https://api.test.com",
         "MATERIALFETCHER_DB_USER": "testuser",
         "MATERIALFETCHER_DB_PASSWORD": "testpass",
         "MATERIALFETCHER_DB_NAME": "testdb",
         "MATERIALFETCHER_TABLE_NAME": "test_table",
-        "MATERIALFETCHER_MP_BUCKET_NAME": "test_bucket",
-        "MATERIALFETCHER_MP_BUCKET_PREFIX": "test_prefix",
-        "MATERIALFETCHER_LOG_DIR": "./logs",
-        "MAX_RETRIES": 3,
-        "NUM_WORKERS": 2,
-        "RETRY_DELAY": 2,
+        "MATERIALFETCHER_PAGE_LIMIT": "10",
+        "MATERIALFETCHER_PAGE_OFFSET": "0",
+        "MATERIALFETCHER_MP_BUCKET_NAME": "test-bucket",
+        "MATERIALFETCHER_MP_BUCKET_PREFIX": "test/prefix",
     }
     for key, value in test_env_vars.items():
         monkeypatch.setenv(key, value)
     return test_env_vars
 
 
-def test_load_config(mock_config_env_vars):
-    """Test loading configuration from env file with all required variables"""
+def test_load_fetcher_config(mock_config_env_vars):
+    """Test loading fetcher configuration with all required variables"""
     config = load_fetcher_config()
 
+    # Test base config values
+    assert config.log_dir == mock_config_env_vars["MATERIALFETCHER_LOG_DIR"]
+    assert config.max_retries == int(
+        mock_config_env_vars["MATERIALFETCHER_MAX_RETRIES"]
+    )
+    assert config.num_workers == int(
+        mock_config_env_vars["MATERIALFETCHER_NUM_WORKERS"]
+    )
+    assert config.retry_delay == int(
+        mock_config_env_vars["MATERIALFETCHER_RETRY_DELAY"]
+    )
+    assert config.log_every == int(mock_config_env_vars["MATERIALFETCHER_LOG_EVERY"])
+
+    # Test fetcher specific values
     assert config.base_url == mock_config_env_vars["MATERIALFETCHER_API_BASE_URL"]
     assert config.table_name == mock_config_env_vars["MATERIALFETCHER_TABLE_NAME"]
     assert (
@@ -91,14 +128,16 @@ def test_load_config(mock_config_env_vars):
         config.mp_bucket_prefix
         == mock_config_env_vars["MATERIALFETCHER_MP_BUCKET_PREFIX"]
     )
-    assert (
-        config.db_conn_str
-        == f"user={mock_config_env_vars['MATERIALFETCHER_DB_USER']} password={mock_config_env_vars['MATERIALFETCHER_DB_PASSWORD']} dbname={mock_config_env_vars['MATERIALFETCHER_DB_NAME']} sslmode=disable"
+    assert config.page_limit == int(mock_config_env_vars["MATERIALFETCHER_PAGE_LIMIT"])
+    assert config.page_offset == int(
+        mock_config_env_vars["MATERIALFETCHER_PAGE_OFFSET"]
     )
 
-    # default values
-    assert config.log_dir == "./logs"
-    assert config.max_retries == 3
-    assert config.num_workers == 2
-    assert config.page_limit == 10
-    assert config.retry_delay == 2
+    # Test database connection string
+    expected_db_conn = (
+        f"user={mock_config_env_vars['MATERIALFETCHER_DB_USER']} "
+        f"password={mock_config_env_vars['MATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_config_env_vars['MATERIALFETCHER_DB_NAME']} "
+        "sslmode=disable"
+    )
+    assert config.db_conn_str == expected_db_conn
