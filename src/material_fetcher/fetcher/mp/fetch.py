@@ -86,7 +86,9 @@ def process_s3_objects(
 
     with ThreadPoolExecutor(max_workers=cfg.num_workers) as executor:
         futures = [
-            executor.submit(worker, i, db, client, cfg.mp_bucket_name, key)
+            executor.submit(
+                worker, i, db, client, cfg.mp_bucket_name, key, cfg.log_every
+            )
             for i, key in enumerate(valid_keys, 1)
         ]
         for future in futures:
@@ -105,6 +107,7 @@ def worker(
     client: BaseClient,
     bucket_name: str,
     object_key: str,
+    log_every: int = 1000,
 ):
     """
     Process a single S3 object in a worker thread.
@@ -129,7 +132,7 @@ def worker(
     """
     logger.info(f"Worker {worker_id} processing file: {object_key}")
     try:
-        add_s3_object_to_db(client, bucket_name, object_key, db)
+        add_s3_object_to_db(client, bucket_name, object_key, db, log_every)
     except Exception as e:
         logger.error(f"Worker {worker_id} error processing {object_key}: {str(e)}")
         # TODO(ramlaoui): is this still needed?

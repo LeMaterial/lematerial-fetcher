@@ -1,7 +1,7 @@
 # Copyright 2025 Entalpic
 import os
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -12,6 +12,7 @@ class BaseConfig:
     max_retries: int
     num_workers: int
     retry_delay: int
+    log_every: int
 
 
 @dataclass
@@ -20,7 +21,6 @@ class FetcherConfig(BaseConfig):
     db_conn_str: str
     table_name: str
     page_limit: int
-    log_every: int
     mp_bucket_name: str
     mp_bucket_prefix: str
 
@@ -32,7 +32,7 @@ class TransformerConfig(BaseConfig):
     source_table_name: str
     dest_table_name: str
     batch_size: int
-    log_every: int
+    mp_task_table_name: Optional[str] = None
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -143,5 +143,7 @@ def load_transformer_config() -> TransformerConfig:
         source_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
         dest_table_name=os.getenv("MATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
         batch_size=int(os.getenv("MATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
-        log_every=int(os.getenv("MATERIALFETCHER_TRANSFORMER_LOG_EVERY", "1000")),
+        mp_task_table_name=os.getenv(
+            "MATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
+        ),
     )
