@@ -137,7 +137,9 @@ def test_is_critical_error():
 
 
 class TestMPFetcher:
-    def test_setup_resources(self, mock_aws_client, mock_db, mock_version_db):
+    def test_setup_resources(
+        self, mock_config, mock_aws_client, mock_db, mock_version_db
+    ):
         """Test resource setup initializes AWS client and database"""
         with (
             patch(
@@ -150,7 +152,7 @@ class TestMPFetcher:
             mock_db_class.return_value = mock_db
             mock_version_db_class.return_value = mock_version_db
 
-            fetcher = MPFetcher()
+            fetcher = MPFetcher(config=mock_config)
             fetcher.setup_resources()
 
             assert fetcher.aws_client is not None
