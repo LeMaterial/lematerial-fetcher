@@ -11,7 +11,6 @@ from material_fetcher.fetcher.mp.utils import (
 )
 from material_fetcher.utils.aws import (
     get_aws_client,
-    get_latest_collection_version_prefix,
     list_s3_objects,
 )
 from material_fetcher.utils.config import Config, load_config
@@ -35,17 +34,9 @@ def fetch():
         cfg = load_config()
         aws_client = get_aws_client()
 
-        latest_collection_prefix = get_latest_collection_version_prefix(
-            aws_client,
-            cfg.mp_bucket_name,
-            cfg.mp_bucket_prefix,
-            cfg.mp_collections_prefix,
-        )
-        logger.info(f"Latest collection date: {latest_collection_prefix}")
-
         # lists all objects in the bucket
         object_keys = list_s3_objects(
-            aws_client, cfg.mp_bucket_name, latest_collection_prefix
+            aws_client, cfg.mp_bucket_name, cfg.mp_bucket_prefix
         )
         logger.info(f"Found {len(object_keys)} objects in bucket")
 
