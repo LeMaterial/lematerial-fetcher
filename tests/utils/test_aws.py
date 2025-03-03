@@ -6,7 +6,7 @@ from botocore import UNSIGNED
 from botocore.response import StreamingBody
 from botocore.stub import Stubber
 
-from material_fetcher.utils.aws import (
+from lematerial_fetcher.utils.aws import (
     download_s3_object,
     get_aws_client,
     get_latest_collection_version_prefix,

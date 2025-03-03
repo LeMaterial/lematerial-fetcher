@@ -5,7 +5,7 @@ import dotenv
 import pytest
 from dotenv import load_dotenv
 
-from material_fetcher.utils.config import load_fetcher_config
+from lematerial_fetcher.utils.config import load_fetcher_config
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -14,9 +14,9 @@ def clean_env():
     # Store original env vars
     original_env = dict(os.environ)
 
-    # Remove all MATERIALFETCHER_ env vars
+    # Remove all LEMATERIALFETCHER_ env vars
     for key in list(os.environ.keys()):
-        if key.startswith("MATERIALFETCHER_"):
+        if key.startswith("LEMATERIALFETCHER_"):
             del os.environ[key]
 
     yield
@@ -80,21 +80,21 @@ def mock_config_env_vars(monkeypatch):
     """Fixture to set up test environment variables"""
     test_env_vars = {
         # Base config vars
-        "MATERIALFETCHER_LOG_DIR": "./logs",
-        "MATERIALFETCHER_MAX_RETRIES": "3",
-        "MATERIALFETCHER_NUM_WORKERS": "2",
-        "MATERIALFETCHER_RETRY_DELAY": "2",
-        "MATERIALFETCHER_LOG_EVERY": "1000",
+        "LEMATERIALFETCHER_LOG_DIR": "./logs",
+        "LEMATERIALFETCHER_MAX_RETRIES": "3",
+        "LEMATERIALFETCHER_NUM_WORKERS": "2",
+        "LEMATERIALFETCHER_RETRY_DELAY": "2",
+        "LEMATERIALFETCHER_LOG_EVERY": "1000",
         # Fetcher specific vars
-        "MATERIALFETCHER_API_BASE_URL": "https://api.test.com",
-        "MATERIALFETCHER_DB_USER": "testuser",
-        "MATERIALFETCHER_DB_PASSWORD": "testpass",
-        "MATERIALFETCHER_DB_NAME": "testdb",
-        "MATERIALFETCHER_TABLE_NAME": "test_table",
-        "MATERIALFETCHER_PAGE_LIMIT": "10",
-        "MATERIALFETCHER_PAGE_OFFSET": "0",
-        "MATERIALFETCHER_MP_BUCKET_NAME": "test-bucket",
-        "MATERIALFETCHER_MP_BUCKET_PREFIX": "test/prefix",
+        "LEMATERIALFETCHER_API_BASE_URL": "https://api.test.com",
+        "LEMATERIALFETCHER_DB_USER": "testuser",
+        "LEMATERIALFETCHER_DB_PASSWORD": "testpass",
+        "LEMATERIALFETCHER_DB_NAME": "testdb",
+        "LEMATERIALFETCHER_TABLE_NAME": "test_table",
+        "LEMATERIALFETCHER_PAGE_LIMIT": "10",
+        "LEMATERIALFETCHER_PAGE_OFFSET": "0",
+        "LEMATERIALFETCHER_MP_BUCKET_NAME": "test-bucket",
+        "LEMATERIALFETCHER_MP_BUCKET_PREFIX": "test/prefix",
     }
     for key, value in test_env_vars.items():
         monkeypatch.setenv(key, value)
@@ -106,38 +106,41 @@ def test_load_fetcher_config(mock_config_env_vars):
     config = load_fetcher_config()
 
     # Test base config values
-    assert config.log_dir == mock_config_env_vars["MATERIALFETCHER_LOG_DIR"]
+    assert config.log_dir == mock_config_env_vars["LEMATERIALFETCHER_LOG_DIR"]
     assert config.max_retries == int(
-        mock_config_env_vars["MATERIALFETCHER_MAX_RETRIES"]
+        mock_config_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]
     )
     assert config.num_workers == int(
-        mock_config_env_vars["MATERIALFETCHER_NUM_WORKERS"]
+        mock_config_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]
     )
     assert config.retry_delay == int(
-        mock_config_env_vars["MATERIALFETCHER_RETRY_DELAY"]
+        mock_config_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]
     )
-    assert config.log_every == int(mock_config_env_vars["MATERIALFETCHER_LOG_EVERY"])
+    assert config.log_every == int(mock_config_env_vars["LEMATERIALFETCHER_LOG_EVERY"])
 
     # Test fetcher specific values
-    assert config.base_url == mock_config_env_vars["MATERIALFETCHER_API_BASE_URL"]
-    assert config.table_name == mock_config_env_vars["MATERIALFETCHER_TABLE_NAME"]
+    assert config.base_url == mock_config_env_vars["LEMATERIALFETCHER_API_BASE_URL"]
+    assert config.table_name == mock_config_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
     assert (
-        config.mp_bucket_name == mock_config_env_vars["MATERIALFETCHER_MP_BUCKET_NAME"]
+        config.mp_bucket_name
+        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_NAME"]
     )
     assert (
         config.mp_bucket_prefix
-        == mock_config_env_vars["MATERIALFETCHER_MP_BUCKET_PREFIX"]
+        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_PREFIX"]
     )
-    assert config.page_limit == int(mock_config_env_vars["MATERIALFETCHER_PAGE_LIMIT"])
+    assert config.page_limit == int(
+        mock_config_env_vars["LEMATERIALFETCHER_PAGE_LIMIT"]
+    )
     assert config.page_offset == int(
-        mock_config_env_vars["MATERIALFETCHER_PAGE_OFFSET"]
+        mock_config_env_vars["LEMATERIALFETCHER_PAGE_OFFSET"]
     )
 
     # Test database connection string
     expected_db_conn = (
-        f"user={mock_config_env_vars['MATERIALFETCHER_DB_USER']} "
-        f"password={mock_config_env_vars['MATERIALFETCHER_DB_PASSWORD']} "
-        f"dbname={mock_config_env_vars['MATERIALFETCHER_DB_NAME']} "
+        f"user={mock_config_env_vars['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_config_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_config_env_vars['LEMATERIALFETCHER_DB_NAME']} "
         "sslmode=disable"
     )
     assert config.db_conn_str == expected_db_conn

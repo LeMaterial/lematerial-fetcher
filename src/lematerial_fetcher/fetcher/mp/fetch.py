@@ -2,14 +2,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from material_fetcher.fetch import BaseFetcher, ItemsInfo
-from material_fetcher.fetcher.mp.utils import add_s3_object_to_db
-from material_fetcher.utils.aws import (
+from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
+from lematerial_fetcher.fetcher.mp.utils import add_s3_object_to_db
+from lematerial_fetcher.utils.aws import (
     get_aws_client,
     list_s3_objects,
 )
-from material_fetcher.utils.config import FetcherConfig, load_fetcher_config
-from material_fetcher.utils.logging import logger
+from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
+from lematerial_fetcher.utils.logging import logger
 
 
 class MPFetcher(BaseFetcher):

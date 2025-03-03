@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from threading import local
 from typing import Any, List, Optional
 
-from material_fetcher.database.postgres import DatasetVersions, StructuresDatabase
-from material_fetcher.utils.config import FetcherConfig
-from material_fetcher.utils.logging import logger
+from lematerial_fetcher.database.postgres import DatasetVersions, StructuresDatabase
+from lematerial_fetcher.utils.config import FetcherConfig
+from lematerial_fetcher.utils.logging import logger
 
 
 @dataclass
