@@ -5,8 +5,8 @@ from typing import Any, List, Optional
 import psycopg2
 from psycopg2.extras import Json
 
-from lematerial_fetcher.model.models import RawStructure
-from lematerial_fetcher.model.optimade import OptimadeStructure
+from lematerial_fetcher.models.models import RawStructure
+from lematerial_fetcher.models.optimade import OptimadeStructure
 
 
 class Database:

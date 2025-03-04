@@ -1,8 +1,8 @@
 # Copyright 2025 Entalpic
 from typing import Optional
 
-from lematerial_fetcher.model.models import RawStructure
-from lematerial_fetcher.model.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.models import RawStructure
+from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.transform import BaseTransformer
 
 

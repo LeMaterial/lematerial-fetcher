@@ -9,8 +9,8 @@ from lematerial_fetcher.fetcher.mp.utils import (
     extract_structure_optimization_tasks,
     map_tasks_to_functionals,
 )
-from lematerial_fetcher.model.models import RawStructure
-from lematerial_fetcher.model.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.models import RawStructure
+from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.logging import logger
 
