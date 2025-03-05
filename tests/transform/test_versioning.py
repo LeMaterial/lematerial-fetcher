@@ -33,7 +33,6 @@ def mock_version_db():
 def mock_source_db():
     """Create a mock source database."""
     mock_db = MagicMock(spec=StructuresDatabase)
-    mock_db.fetch_items.return_value = []  # no items to process by default
     return mock_db
 
 
@@ -41,6 +40,7 @@ def mock_source_db():
 def mock_target_db():
     """Create a mock target database."""
     mock_db = MagicMock(spec=OptimadeDatabase)
+    mock_db.fetch_items.return_value = []  # no items to process by default
     return mock_db
 
 
@@ -63,11 +63,15 @@ def transformer(mock_source_db, mock_target_db):
 
 
 @pytest.fixture
-def patched_transformer(transformer, mock_version_db):
+def patched_transformer(transformer, mock_version_db, mock_source_db):
     """Create a transformer with patched database classes."""
     with (
         patch(
             "lematerial_fetcher.transform.DatasetVersions", return_value=mock_version_db
+        ),
+        patch(
+            "lematerial_fetcher.transform.StructuresDatabase",
+            return_value=mock_source_db,
         ),
     ):
         yield transformer
@@ -191,7 +195,7 @@ def test_cleanup_resources(patched_transformer):
 
 
 @patch("lematerial_fetcher.transform.DatasetVersions")
-def test_thread_local_databases(mock_dataset_versions_class, transformer):
+def test_thread_local_databases(mock_dataset_versions_class, patched_transformer):
     """Test that each thread gets its own database connections."""
     from threading import Lock
 
@@ -216,9 +220,9 @@ def test_thread_local_databases(mock_dataset_versions_class, transformer):
 
         mock_dataset_versions_class.return_value = mock_version_db
 
-        version_db = transformer.get_transform_version()
-        source_db = transformer.source_db
-        target_db = transformer.target_db
+        version_db = patched_transformer.get_transform_version()
+        source_db = patched_transformer.source_db
+        target_db = patched_transformer.target_db
 
         # store results thread-safely
         with results_lock:
