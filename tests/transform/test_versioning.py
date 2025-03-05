@@ -9,7 +9,7 @@ from lematerial_fetcher.database.postgres import (
     OptimadeDatabase,
     StructuresDatabase,
 )
-from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.config import TransformerConfig
 
@@ -45,7 +45,7 @@ def mock_target_db():
 
 
 @pytest.fixture
-def transformer():
+def transformer(mock_source_db, mock_target_db):
     """Create a test transformer instance."""
     config = TransformerConfig(
         source_db_conn_str="mock://source",
@@ -59,22 +59,15 @@ def transformer():
         num_workers=2,
         retry_delay=2,
     )
-    return TestTransformer(config)
+    return TestTransformer(config, mock_source_db, mock_target_db)
 
 
 @pytest.fixture
-def patched_transformer(transformer, mock_version_db, mock_source_db, mock_target_db):
+def patched_transformer(transformer, mock_version_db):
     """Create a transformer with patched database classes."""
     with (
         patch(
             "lematerial_fetcher.transform.DatasetVersions", return_value=mock_version_db
-        ),
-        patch(
-            "lematerial_fetcher.transform.StructuresDatabase",
-            return_value=mock_source_db,
-        ),
-        patch(
-            "lematerial_fetcher.transform.OptimadeDatabase", return_value=mock_target_db
         ),
     ):
         yield transformer
@@ -116,6 +109,16 @@ def test_transform_updates_version(patched_transformer, mock_version_db):
     initial_version = "2024-12-31"
     mock_version_db.get_last_synced_version.return_value = initial_version
 
+    # Configure mock source db to return empty list after first batch
+    patched_transformer.source_db.fetch_items.side_effect = [
+        [
+            RawStructure(
+                id="test", type="structure", attributes={}, last_modified="2025-01-01"
+            )
+        ],
+        [],  # Return empty list to end the loop
+    ]
+
     # mock the get_new_transform_version to return a known value
     new_version = "2025-01-01"
     patched_transformer.get_new_transform_version = lambda: new_version
@@ -133,6 +136,16 @@ def test_transform_skips_version_update_if_same(patched_transformer, mock_versio
     initial_version = "2025-01-01"
     mock_version_db.get_last_synced_version.return_value = initial_version
 
+    # Configure mock source db to return empty list after first batch
+    patched_transformer.source_db.fetch_items.side_effect = [
+        [
+            RawStructure(
+                id="test", type="structure", attributes={}, last_modified="2025-01-01"
+            )
+        ],
+        [],  # Return empty list to end the loop
+    ]
+
     patched_transformer.get_new_transform_version = lambda: initial_version
 
     patched_transformer.transform()
@@ -149,7 +162,17 @@ def test_transform_handles_version_error(patched_transformer, mock_version_db):
     # mock version operations to raise error
     mock_version_db.get_last_synced_version.side_effect = raise_error
 
-    # transform should still complete without version operations
+    # Configure mock source db to return empty list after first batch
+    patched_transformer.source_db.fetch_items.side_effect = [
+        [
+            RawStructure(
+                id="test", type="structure", attributes={}, last_modified="2025-01-01"
+            )
+        ],
+        [],  # Return empty list to end the loop
+    ]
+
+    # should execute fine
     patched_transformer.transform()
 
 
@@ -168,11 +191,7 @@ def test_cleanup_resources(patched_transformer):
 
 
 @patch("lematerial_fetcher.transform.DatasetVersions")
-@patch("lematerial_fetcher.transform.StructuresDatabase")
-@patch("lematerial_fetcher.transform.OptimadeDatabase")
-def test_thread_local_databases(
-    mock_optimade_class, mock_structures_class, mock_dataset_versions_class, transformer
-):
+def test_thread_local_databases(mock_dataset_versions_class, transformer):
     """Test that each thread gets its own database connections."""
     from threading import Lock
 
@@ -196,8 +215,6 @@ def test_thread_local_databases(
         mock_version_db, mock_source_db, mock_target_db = thread_mocks[thread_name]
 
         mock_dataset_versions_class.return_value = mock_version_db
-        mock_structures_class.return_value = mock_source_db
-        mock_optimade_class.return_value = mock_target_db
 
         version_db = transformer.get_transform_version()
         source_db = transformer.source_db
