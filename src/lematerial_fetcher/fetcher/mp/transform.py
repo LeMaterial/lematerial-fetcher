@@ -1,31 +1,23 @@
 # Copyright 2025 Entalpic
-from enum import Enum
 from typing import Any, Optional
 
 import numpy as np
 from pymatgen.core import Structure
 
+from lematerial_fetcher.database.postgres import OptimadeDatabase, TrajectoriesDatabase
 from lematerial_fetcher.fetcher.mp.utils import (
     extract_structure_optimization_tasks,
+    map_task_to_functional,
     map_tasks_to_functionals,
 )
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.trajectories import Trajectory
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.logging import logger
 
 
-class TaskType(Enum):
-    STRUCTURE_OPTIMIZATION = "Structure Optimization"
-    DEPRECATED = "Deprecated"
-
-
-class MPTransformer(BaseTransformer):
-    """
-    Materials Project transformer implementation.
-    Transforms raw Materials Project data into OptimadeStructures.
-    """
-
+class BaseMPTransformer:
     def get_new_transform_version(self) -> str:
         """
         Get the new transform version based on the latest processed data.
@@ -50,41 +42,27 @@ class MPTransformer(BaseTransformer):
         except Exception:
             return super().get_new_transform_version()
 
-    def transform_row(
+    def _transform_structure(
         self,
         raw_structure: RawStructure,
-        task_table_name: Optional[str] = None,
-    ) -> list[OptimadeStructure]:
+        mp_structure: dict[str, Any],
+    ) -> dict[str, Any]:
         """
-        Transform a raw Materials Project structure into OptimadeStructures.
+        Take a raw Materials Project structure and return a dictionary of fields
+        that can be used to construct an OptimadeStructure.
 
         Parameters
         ----------
-        raw_structure : RawStructure
-            RawStructure object from the dumped database
-        task_table_name : Optional[str]
-            Task table name to read targets or trajectories from
+        mp_structure : dict[str, Any]
+            The raw Materials Project structure to transform.
 
         Returns
         -------
-        list[OptimadeStructure]
-            The transformed OptimadeStructure objects.
-            If the list is empty, nothing from the structure should be included in the database.
+        dict[str, Any]
+            The transformed Materials Project structure.
         """
-        tasks, calc_types = extract_structure_optimization_tasks(
-            raw_structure, self.source_db, task_table_name
-        )
-        functionals = map_tasks_to_functionals(tasks, calc_types)
 
-        if not functionals:
-            return []
-
-        targets_functionals = {
-            functional: self._get_task_targets(task, raw_structure.id, functional)
-            for functional, task in functionals.items()
-        }
-
-        pmg_structure = Structure.from_dict(raw_structure.attributes["structure"])
+        pmg_structure = Structure.from_dict(mp_structure)
 
         # TODO(ramlaoui): This does not handle with disordered structures
 
@@ -129,33 +107,200 @@ class MPTransformer(BaseTransformer):
             for element in raw_structure.attributes["elements"]
         ]
 
+        return {
+            # Structural fields
+            "elements": raw_structure.attributes["elements"],
+            "nelements": raw_structure.attributes["nelements"],
+            "elements_ratios": element_ratios,
+            # sites
+            "nsites": raw_structure.attributes["nsites"],
+            "cartesian_site_positions": cartesian_site_positions,
+            "species_at_sites": species_at_sites,
+            "species": species,
+            # chemistry
+            "chemical_formula_anonymous": raw_structure.attributes["formula_anonymous"],
+            "chemical_formula_descriptive": raw_structure.attributes["formula_pretty"],
+            "chemical_formula_reduced": chemical_formula_reduced,
+            # dimensionality
+            "dimension_types": [1, 1, 1],
+            "nperiodic_dimensions": 3,
+            "lattice_vectors": lattice_vectors,
+        }
+
+    def _get_calc_targets(
+        self, calc_output: dict[str, Any], composition_reduced: dict[str, float]
+    ) -> dict[str, Any]:
+        """
+        Get the targets of a calculation.
+        These targets include:
+        - energy
+        - forces
+        - stress tensor
+        - magnetic moments
+        - total magnetization
+
+        Parameters
+        ----------
+        calc_output : dict[str, Any]
+            The output of an MP task calculation.
+        composition_reduced : dict[str, float]
+            The composition of the material in reduced form.
+
+        Returns
+        -------
+        dict[str, Any]
+            The targets of the calculation.
+        """
+
+        targets = {}
+        breakpoint()
+        targets["energy"] = calc_output["energy"]
+        try:
+            targets["magnetic_moments"] = [
+                site["properties"]["magmom"]
+                for site in calc_output["structure"]["sites"]
+            ]
+        except (TypeError, KeyError):
+            logger.warning("No magnetic moments")
+            targets["magnetic_moments"] = None
+        targets["forces"] = calc_output["ionic_steps"][-1]["forces"]
+        # TODO(ramlaoui): Check if these are correct
+        targets["dos_ef"] = calc_output.get("efermi", None)  # dos_ef
+        targets["total_magnetization"] = calc_output.get("magnetization", {}).get(
+            "total_magnetization", None
+        )
+        try:
+            targets["stress_tensor"] = calc_output["stress"]
+        except KeyError:
+            logger.warning("No stress tensor")
+            targets["stress_tensor"] = None
+
+        targets["cross_compatible"] = True
+        non_compatible_elements = ["V", "Cs"]
+        # TODO(msiron): What about Yb?
+        for element in non_compatible_elements:
+            if element in composition_reduced.keys():
+                targets["cross_compatible"] = False
+
+        return targets
+
+    def _get_ionic_step_targets(self, ionic_step: dict[str, Any]) -> dict[str, Any]:
+        """
+        Get the targets of an ionic step.
+        These targets include:
+        - forces
+        - stress tensor
+        - energy
+
+        Parameters
+        ----------
+        ionic_step : dict[str, Any]
+            The ionic step to get the targets from.
+
+        Returns
+        -------
+        dict[str, Any]
+            The targets of the ionic step.
+        """
+        targets = {}
+        targets["forces"] = ionic_step["forces"]
+        targets["stress_tensor"] = ionic_step["stress"]
+        targets["energy"] = ionic_step["e_fr_energy"]
+
+        return targets
+
+    def _get_task_targets(
+        self, task: RawStructure, material_id: str, functional: Functional
+    ) -> dict[str, Any]:
+        """
+        Get the target outputs of a task.
+        These outputs include:
+        - energy
+        - forces
+        - stress tensor
+        - magnetic moments
+        - total magnetization
+        - cross-compatibility
+        - dos_ef
+
+        Parameters
+        ----------
+        task : RawStructure
+            The task to get the targets from.
+
+        Returns
+        -------
+        dict[str, Any]
+            The target parameters of the task.
+        """
+        try:
+            targets = self._get_calc_targets(
+                task.attributes["output"], task.attributes["composition_reduced"]
+            )
+        except KeyError as e:
+            logger.warning(
+                f"Error getting targets for {material_id} with functional {functional}: {e}"
+            )
+            return {}
+
+        return targets
+
+
+class MPTransformer(
+    BaseMPTransformer, BaseTransformer[OptimadeDatabase, OptimadeStructure]
+):
+    """
+    Materials Project transformer implementation.
+    Transforms raw Materials Project data into OptimadeStructures.
+    """
+
+    def transform_row(
+        self,
+        raw_structure: RawStructure,
+        task_table_name: Optional[str] = None,
+    ) -> list[OptimadeStructure]:
+        """
+        Transform a raw Materials Project structure into OptimadeStructures.
+
+        Parameters
+        ----------
+        raw_structure : RawStructure
+            RawStructure object from the dumped database
+        task_table_name : Optional[str]
+            Task table name to read targets or trajectories from
+
+        Returns
+        -------
+        list[OptimadeStructure]
+            The transformed OptimadeStructure objects.
+            If the list is empty, nothing from the structure should be included in the database.
+        """
+        tasks, calc_types = extract_structure_optimization_tasks(
+            raw_structure, self.source_db, task_table_name
+        )
+        functionals = map_tasks_to_functionals(tasks, calc_types)
+
+        if not functionals:
+            return []
+
+        targets_functionals = {
+            functional: self._get_task_targets(task, raw_structure.id, functional)
+            for functional, task in functionals.items()
+        }
+
+        input_structure_fields = self._transform_structure(
+            raw_structure.attributes["structure"]
+        )
+
         optimade_structures = []
         for functional in functionals.keys():
             targets = targets_functionals[functional]
             optimade_structure = OptimadeStructure(
-                # Basic fields
-                id=raw_structure.attributes["material_id"],
+                id=f"{raw_structure.attributes['material_id']}-{functional}",
                 source="mp",
+                # Basic fields
                 immutable_id=raw_structure.attributes["material_id"],
-                # Structural fields
-                elements=raw_structure.attributes["elements"],
-                nelements=raw_structure.attributes["nelements"],
-                elements_ratios=element_ratios,
-                # sites
-                nsites=raw_structure.attributes["nsites"],
-                cartesian_site_positions=cartesian_site_positions,
-                species_at_sites=species_at_sites,
-                species=species,
-                # chemistry
-                chemical_formula_anonymous=raw_structure.attributes[
-                    "formula_anonymous"
-                ],
-                chemical_formula_descriptive=raw_structure.attributes["formula_pretty"],
-                chemical_formula_reduced=chemical_formula_reduced,
-                # dimensionality
-                dimension_types=[1, 1, 1],
-                nperiodic_dimensions=3,
-                lattice_vectors=lattice_vectors,
+                **input_structure_fields,
                 # misc
                 last_modified=raw_structure.attributes["builder_meta"]["build_date"][
                     "$date"
@@ -169,57 +314,97 @@ class MPTransformer(BaseTransformer):
 
         return optimade_structures
 
-    def _get_task_targets(
-        self, task: RawStructure, material_id: str, functional: Functional
-    ) -> dict[str, Any]:
+
+class MPTrajectoryTransformer(
+    BaseMPTransformer, BaseTransformer[TrajectoriesDatabase, Trajectory]
+):
+    """
+    Materials Project transformer implementation for trajectories.
+    Transforms raw Materials Project data into OptimadeTrajectories.
+    """
+
+    def __init__(self, *args, **kwargs):
+        if "structure_class" in kwargs:
+            del kwargs["structure_class"]
+        if "database_class" in kwargs:
+            del kwargs["database_class"]
+        super().__init__(
+            *args,
+            **kwargs,
+            structure_class=Trajectory,
+            database_class=TrajectoriesDatabase,
+        )
+
+    def transform_row(
+        self, raw_structure: RawStructure, task_table_name: Optional[str] = None
+    ) -> list[Trajectory]:
         """
-        Get the target parameters of a task.
+        Transform a raw Materials Project structure into Trajectory objects.
 
         Parameters
         ----------
-        task : RawStructure
-            The task to get the targets from.
+        raw_structure : RawStructure
+            RawStructure object from the dumped database.
+            In this case, we expect the raw_structure to be an MP task
+            which already contains the trajectories.
+        task_table_name : Optional[str]
+            Task table name to read targets or trajectories from.
+            This is not used here since we expect the raw_structure to be an MP task
+            which already contains the trajectories.
 
         Returns
         -------
-        dict[str, Any]
-            The target parameters of the task.
+        list[Trajectory]
+            The transformed Trajectory objects.
         """
-        targets = {}
-        targets["energy"] = task.attributes["output"]["energy"]
-        try:
-            targets["magnetic_moments"] = [
-                site["properties"]["magmom"]
-                for site in task.attributes["output"]["structure"]["sites"]
-            ]
-        except (TypeError, KeyError):
-            logger.warning(
-                f"No magnetic moments for {material_id} with functional {functional}"
-            )
-            targets["magnetic_moments"] = None
-        targets["forces"] = task.attributes["calcs_reversed"][0]["output"][
-            "ionic_steps"
-        ][-1]["forces"]
-        # TODO(ramlaoui): Check if these are correct
-        targets["dos_ef"] = task.attributes["output"].get("efermi", None)  # dos_ef
-        targets["total_magnetization"] = (
-            task.attributes["output"]
-            .get("magnetization", {})
-            .get("total_magnetization", None)
-        )
-        try:
-            targets["stress_tensor"] = task.attributes["output"]["stress"]
-        except KeyError:
-            logger.warning(
-                f"No stress tensor for {material_id} with functional {functional}"
-            )
-            targets["stress_tensor"] = None
 
-        targets["cross_compatible"] = True
-        non_compatible_elements = ["V", "Cs"]
-        # TODO(msiron): What about Yb?
-        for element in non_compatible_elements:
-            if element in task.attributes["composition_reduced"].keys():
-                targets["cross_compatible"] = False
+        if raw_structure.attributes["task_type"] != "Structure Optimization":
+            return []
 
-        return targets
+        functional = map_task_to_functional(raw_structure)
+
+        if not (isinstance(functional, Functional)):
+            return []
+
+        trajectories = []
+
+        # First loop to get the number of relaxation steps
+        # This is the number of the trajectory (eg. 0 for the first relaxation, 1 for the second used to decrease pullay stress)
+        trajectory_number = []
+        # This is the step in the total concatenated relaxation trajectory
+        trajectory_step = []
+        relaxation_step = 0
+        for i, calc in enumerate(raw_structure.attributes["calcs_reversed"][::-1]):
+            for ionic_step in calc["output"]["ionic_steps"]:
+                trajectory_number.append(i)  # 0-indexed
+                trajectory_step.append(relaxation_step)
+                relaxation_step += 1
+
+        trajectory_step_copy = trajectory_step.copy()
+        for i, calc in enumerate(raw_structure.attributes["calcs_reversed"][::-1]):
+            # TODO(ramlaoui): What about this input?
+            # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
+
+            for ionic_step in calc["output"]["ionic_steps"]:
+                input_structure_fields = self._transform_structure(
+                    raw_structure, ionic_step["structure"]
+                )
+                output_targets = self._get_ionic_step_targets(ionic_step)
+                relaxation_step = trajectory_step_copy.pop()
+
+                trajectory = Trajectory(
+                    id=f"{raw_structure.id}-{functional}-{relaxation_step}",
+                    source="mp",
+                    immutable_id=raw_structure.id,
+                    **input_structure_fields,
+                    **output_targets,
+                    functional=functional,
+                    last_modified=raw_structure.attributes["last_updated"]["$date"],
+                    relaxation_step=relaxation_step,
+                    trajectory_step=trajectory_step,
+                    trajectory_number=trajectory_number,
+                )
+
+                trajectories.append(trajectory)
+
+        return trajectories
