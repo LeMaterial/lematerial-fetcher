@@ -1,7 +1,6 @@
 # Copyright 2025 Entalpic
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from threading import local
 from typing import Any, List, Optional
 
 from lematerial_fetcher.database.postgres import DatasetVersions, StructuresDatabase
@@ -42,37 +41,38 @@ class BaseFetcher(ABC):
             Configuration object containing necessary parameters for the fetcher
         """
         self.config = config
-        self._thread_local = local()
+        self._db = None
+        self._version_db = None
 
     @property
     def db(self) -> StructuresDatabase:
         """
-        Get the database connection for the current thread.
+        Get the database connection.
         Creates a new connection if one doesn't exist.
 
         Returns
         -------
         StructuresDatabase
-            Database connection for the current thread
+            Database connection
         """
-        if not hasattr(self._thread_local, "db"):
-            self._thread_local.db = self._create_db_connection()
-        return self._thread_local.db
+        if self._db is None:
+            self._db = self._create_db_connection()
+        return self._db
 
     @property
     def version_db(self) -> DatasetVersions:
         """
-        Get the version tracking database connection for the current thread.
+        Get the version tracking database connection.
         Creates a new connection if one doesn't exist.
 
         Returns
         -------
         DatasetVersions
-            Version tracking database connection for the current thread
+            Version tracking database connection
         """
-        if not hasattr(self._thread_local, "version_db"):
-            self._thread_local.version_db = DatasetVersions(self.config.db_conn_str)
-        return self._thread_local.version_db
+        if self._version_db is None:
+            self._version_db = DatasetVersions(self.config.db_conn_str)
+        return self._version_db
 
     def _create_db_connection(
         self, table_name: Optional[str] = None
@@ -255,7 +255,5 @@ class BaseFetcher(ABC):
         Clean up any resources that were created during the fetch process.
         Must be implemented by subclasses.
         """
-        if hasattr(self._thread_local, "db"):
-            delattr(self._thread_local, "db")
-        if hasattr(self._thread_local, "version_db"):
-            delattr(self._thread_local, "version_db")
+        self._db = None
+        self._version_db = None
