@@ -42,7 +42,8 @@ class BaseFetcher(ABC):
         """
         self.config = config
         self._db = None
-        self._version_db = None
+        self.version_db = DatasetVersions(self.config.db_conn_str)
+        self.version_db.create_table()
 
     @property
     def db(self) -> StructuresDatabase:
@@ -58,21 +59,6 @@ class BaseFetcher(ABC):
         if self._db is None:
             self._db = self._create_db_connection()
         return self._db
-
-    @property
-    def version_db(self) -> DatasetVersions:
-        """
-        Get the version tracking database connection.
-        Creates a new connection if one doesn't exist.
-
-        Returns
-        -------
-        DatasetVersions
-            Version tracking database connection
-        """
-        if self._version_db is None:
-            self._version_db = DatasetVersions(self.config.db_conn_str)
-        return self._version_db
 
     def _create_db_connection(
         self, table_name: Optional[str] = None
