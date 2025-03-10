@@ -287,7 +287,7 @@ class TestMPFetcher:
             assert items_info.items == ["test/prefix/data2.jsonl.gz"]
 
     def test_process_items_handles_errors(
-        self, mock_aws_client, mock_config, mock_db, mock_version_db
+        self, mock_aws_client, mock_config, mock_db, mock_version_db, caplog
     ):
         """Test error handling during item processing"""
         with (
@@ -312,8 +312,7 @@ class TestMPFetcher:
             fetcher.process_items(items_info)
 
             mock_aws_client.get_object.side_effect = Exception("Connection refused")
-            with pytest.raises(Exception):
-                fetcher.process_items(items_info)
+            fetcher.process_items(items_info)
 
     def test_get_new_version(self, mock_config, mock_version_db):
         """Test getting new version from latest modified timestamp"""

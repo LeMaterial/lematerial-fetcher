@@ -1,5 +1,6 @@
 # Copyright 2025 Entalpic
 import os
+from unittest.mock import patch
 
 import dotenv
 import pytest
@@ -103,7 +104,9 @@ def mock_config_env_vars(monkeypatch):
 
 def test_load_fetcher_config(mock_config_env_vars):
     """Test loading fetcher configuration with all required variables"""
-    config = load_fetcher_config()
+    with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
+        mock_load_dotenv.return_value = {}
+        config = load_fetcher_config()
 
     # Test base config values
     assert config.log_dir == mock_config_env_vars["LEMATERIALFETCHER_LOG_DIR"]
