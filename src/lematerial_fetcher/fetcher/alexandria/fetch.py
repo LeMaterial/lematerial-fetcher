@@ -58,20 +58,23 @@ def process_batch(base_url, batch_info, config, manager_dict=None):
             data = response.json()
 
             # Process and store items
-            item_count = 0
+            structures = []
             for item in data.get("data", []):
                 try:
                     structure, last_modified = read_item(
                         item, manager_dict["latest_modified"]
                     )
                     manager_dict["latest_modified"] = last_modified
-                    db.insert_data(structure)
-                    item_count += 1
+                    structures.append(structure)
                 except Exception as e:
                     logger.warning(
                         f"Error processing item {item.get('id', 'unknown')}: {str(e)}"
                     )
                     continue
+
+            # Insert all structures in a batch
+            if structures:
+                db.batch_insert_data(structures)
 
             return len(data.get("data", [])) > 0
 
