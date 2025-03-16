@@ -59,13 +59,18 @@ def mp_fetch():
     is_flag=True,
     help="Transform trajectory data from Material Project.",
 )
-def mp_transform(traj):
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Run transformations in the main process for debugging purposes.",
+)
+def mp_transform(traj, debug):
     """Transform materials from Material Project."""
     try:
         if traj:
-            transformer = MPTrajectoryTransformer()
+            transformer = MPTrajectoryTransformer(debug=debug)
         else:
-            transformer = MPTransformer()
+            transformer = MPTransformer(debug=debug)
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -82,10 +87,15 @@ def alexandria_fetch():
 
 
 @alexandria_cli.command(name="transform")
-def alexandria_transform():
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Run transformations in the main process for debugging purposes.",
+)
+def alexandria_transform(debug):
     """Transform materials from Alexandria."""
     try:
-        transformer = AlexandriaTransformer()
+        transformer = AlexandriaTransformer(debug=debug)
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
