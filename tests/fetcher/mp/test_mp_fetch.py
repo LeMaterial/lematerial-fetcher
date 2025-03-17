@@ -97,7 +97,7 @@ def test_add_s3_object_to_db_structure(mock_aws_client, mock_db, sample_structur
     mock_aws_client.get_object.assert_called_once_with(
         Bucket=bucket_name, Key=object_key
     )
-    mock_db.insert_data.assert_called_once()
+    mock_db.batch_insert_data.assert_called_once()
 
 
 def test_add_jsonl_file_to_db_structure(mock_db, sample_structure_data):
@@ -110,7 +110,7 @@ def test_add_jsonl_file_to_db_structure(mock_db, sample_structure_data):
 
     add_jsonl_file_to_db(decompressed_data, mock_db)
 
-    mock_db.insert_data.assert_called_once()
+    mock_db.batch_insert_data.assert_called_once()
 
 
 def test_add_jsonl_file_handles_invalid_json(mock_db):

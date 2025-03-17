@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from threading import Thread
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -73,7 +72,15 @@ def patched_transformer(transformer, mock_version_db, mock_source_db):
             "lematerial_fetcher.transform.StructuresDatabase",
             return_value=mock_source_db,
         ),
+        patch(
+            "lematerial_fetcher.transform.OptimadeDatabase",
+            return_value=mock_target_db,
+        ),
     ):
+        # TODO(Ramlaoui): Will need to monkey_patch the multiprocessing.Pool instead
+        # Set debug mode to True to avoid using ProcessPoolExecutor
+        transformer.debug = True
+
         yield transformer
 
 
@@ -108,13 +115,15 @@ def test_get_new_transform_version(patched_transformer):
     assert version == today
 
 
-def test_transform_updates_version(patched_transformer, mock_version_db):
+def test_transform_updates_version(
+    patched_transformer, mock_version_db, mock_source_db
+):
     """Test that transform process updates version."""
     initial_version = "2024-12-31"
     mock_version_db.get_last_synced_version.return_value = initial_version
 
     # Configure mock source db to return empty list after first batch
-    patched_transformer.source_db.fetch_items.side_effect = [
+    mock_source_db.fetch_items.side_effect = [
         [
             RawStructure(
                 id="test", type="structure", attributes={}, last_modified="2025-01-01"
@@ -135,13 +144,15 @@ def test_transform_updates_version(patched_transformer, mock_version_db):
     )
 
 
-def test_transform_skips_version_update_if_same(patched_transformer, mock_version_db):
+def test_transform_skips_version_update_if_same(
+    patched_transformer, mock_version_db, mock_source_db
+):
     """Test that transform doesn't update version if it hasn't changed."""
     initial_version = "2025-01-01"
     mock_version_db.get_last_synced_version.return_value = initial_version
 
     # Configure mock source db to return empty list after first batch
-    patched_transformer.source_db.fetch_items.side_effect = [
+    mock_source_db.fetch_items.side_effect = [
         [
             RawStructure(
                 id="test", type="structure", attributes={}, last_modified="2025-01-01"
@@ -157,7 +168,9 @@ def test_transform_skips_version_update_if_same(patched_transformer, mock_versio
     mock_version_db.update_version.assert_not_called()
 
 
-def test_transform_handles_version_error(patched_transformer, mock_version_db):
+def test_transform_handles_version_error(
+    patched_transformer, mock_version_db, mock_source_db
+):
     """Test transform handles errors in version operations gracefully."""
 
     def raise_error(*args, **kwargs):
@@ -167,7 +180,7 @@ def test_transform_handles_version_error(patched_transformer, mock_version_db):
     mock_version_db.get_last_synced_version.side_effect = raise_error
 
     # Configure mock source db to return empty list after first batch
-    patched_transformer.source_db.fetch_items.side_effect = [
+    mock_source_db.fetch_items.side_effect = [
         [
             RawStructure(
                 id="test", type="structure", attributes={}, last_modified="2025-01-01"
@@ -178,71 +191,6 @@ def test_transform_handles_version_error(patched_transformer, mock_version_db):
 
     # should execute fine
     patched_transformer.transform()
-
-
-def test_cleanup_resources(patched_transformer):
-    """Test that cleanup properly removes thread-local resources."""
-    # access all database properties to ensure they're created
-    _ = patched_transformer.source_db
-    _ = patched_transformer.target_db
-    _ = patched_transformer.get_transform_version()  # creates version_db
-
-    patched_transformer.cleanup_resources()
-
-    assert not hasattr(patched_transformer._thread_local, "source_db")
-    assert not hasattr(patched_transformer._thread_local, "target_db")
-    assert not hasattr(patched_transformer._thread_local, "version_db")
-
-
-@patch("lematerial_fetcher.transform.DatasetVersions")
-def test_thread_local_databases(mock_dataset_versions_class, patched_transformer):
-    """Test that each thread gets its own database connections."""
-    from threading import Lock
-
-    results = {}
-    results_lock = Lock()
-
-    thread_mocks = {
-        "thread1": (
-            MagicMock(spec=DatasetVersions),
-            MagicMock(spec=StructuresDatabase),
-            MagicMock(spec=OptimadeDatabase),
-        ),
-        "thread2": (
-            MagicMock(spec=DatasetVersions),
-            MagicMock(spec=StructuresDatabase),
-            MagicMock(spec=OptimadeDatabase),
-        ),
-    }
-
-    def thread_func(thread_name):
-        mock_version_db, mock_source_db, mock_target_db = thread_mocks[thread_name]
-
-        mock_dataset_versions_class.return_value = mock_version_db
-
-        version_db = patched_transformer.get_transform_version()
-        source_db = patched_transformer.source_db
-        target_db = patched_transformer.target_db
-
-        # store results thread-safely
-        with results_lock:
-            results[thread_name] = (version_db, source_db, target_db)
-            print(f"Thread {thread_name} stored results: {results[thread_name]}")
-
-    threads = [
-        Thread(target=thread_func, args=("thread1",)),
-        Thread(target=thread_func, args=("thread2",)),
-    ]
-
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert len(results) == 2, f"Expected 2 thread results, got {len(results)}"
-    assert results["thread1"] != results["thread2"], (
-        "Thread database instances should be different"
-    )
 
 
 @pytest.fixture
