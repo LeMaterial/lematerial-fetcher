@@ -7,7 +7,6 @@ from pymatgen.core import Structure
 from lematerial_fetcher.database.postgres import OptimadeDatabase, TrajectoriesDatabase
 from lematerial_fetcher.fetcher.mp.utils import (
     extract_structure_optimization_tasks,
-    map_task_to_functional,
     map_tasks_to_functionals,
 )
 from lematerial_fetcher.models.models import RawStructure
@@ -335,6 +334,57 @@ class MPTrajectoryTransformer(
             database_class=TrajectoriesDatabase,
         )
 
+    def transform_tasks(
+        self, task: RawStructure, functional: Functional
+    ) -> list[Trajectory]:
+        """
+        Transform a raw Materials Project structure into Trajectory objects.
+
+        Parameters
+        ----------
+        task : RawStructure
+            The task to extract the trajectories from.
+        functional : Functional
+            The functional to use for the transformation.
+
+        Returns
+        -------
+        list[Trajectory]
+            The transformed Trajectory objects.
+        """
+
+        trajectories = []
+
+        relaxation_step = 0
+        # trajectories are stored in reverse order (last relaxation step first)
+        for i, calc in enumerate(task.attributes["calcs_reversed"][::-1]):
+            # TODO(ramlaoui): What about this input?
+            # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
+
+            # ionic steps are stored in normal order (first step first)
+            for ionic_step in calc["output"]["ionic_steps"]:
+                input_structure_fields = self._transform_structure(
+                    task, ionic_step["structure"]
+                )
+                output_targets = self._get_ionic_step_targets(ionic_step)
+
+                trajectory = Trajectory(
+                    id=f"{task.id}-{functional}-{relaxation_step}",
+                    source="mp",
+                    immutable_id=task.id,
+                    **input_structure_fields,
+                    **output_targets,
+                    functional=functional,
+                    last_modified=task.attributes["last_updated"]["$date"],
+                    relaxation_step=relaxation_step,
+                    relaxation_number=i,
+                )
+
+                trajectories.append(trajectory)
+                relaxation_step += 1
+
+        return trajectories
+
     def transform_row(
         self, raw_structure: RawStructure, task_table_name: Optional[str] = None
     ) -> list[Trajectory]:
@@ -358,53 +408,25 @@ class MPTrajectoryTransformer(
             The transformed Trajectory objects.
         """
 
-        if raw_structure.attributes["task_type"] != "Structure Optimization":
+        tasks, calc_types = extract_structure_optimization_tasks(
+            raw_structure, self.source_db, task_table_name
+        )
+        functionals = map_tasks_to_functionals(tasks, calc_types)
+
+        # Only keep tasks with a BY-C license
+        license = raw_structure.attributes["builder_meta"]["license"]
+        if license != "BY-C":
+            logger.warning(
+                f"Material {raw_structure.id} has a license of {license}, skipping"
+            )
             return []
 
-        functional = map_task_to_functional(raw_structure)
-
-        if not (isinstance(functional, Functional)):
+        if not functionals:
+            logger.warning(f"Material {raw_structure.id} has no functionals, skipping")
             return []
 
         trajectories = []
-
-        # First loop to get the number of relaxation steps
-        # This is the number of the trajectory (eg. 0 for the first relaxation, 1 for the second used to decrease pullay stress)
-        trajectory_number = []
-        # This is the step in the total concatenated relaxation trajectory
-        trajectory_step = []
-        relaxation_step = 0
-        for i, calc in enumerate(raw_structure.attributes["calcs_reversed"][::-1]):
-            for ionic_step in calc["output"]["ionic_steps"]:
-                trajectory_number.append(i)  # 0-indexed
-                trajectory_step.append(relaxation_step)
-                relaxation_step += 1
-
-        trajectory_step_copy = trajectory_step.copy()
-        for i, calc in enumerate(raw_structure.attributes["calcs_reversed"][::-1]):
-            # TODO(ramlaoui): What about this input?
-            # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
-
-            for ionic_step in calc["output"]["ionic_steps"]:
-                input_structure_fields = self._transform_structure(
-                    raw_structure, ionic_step["structure"]
-                )
-                output_targets = self._get_ionic_step_targets(ionic_step)
-                relaxation_step = trajectory_step_copy.pop()
-
-                trajectory = Trajectory(
-                    id=f"{raw_structure.id}-{functional}-{relaxation_step}",
-                    source="mp",
-                    immutable_id=raw_structure.id,
-                    **input_structure_fields,
-                    **output_targets,
-                    functional=functional,
-                    last_modified=raw_structure.attributes["last_updated"]["$date"],
-                    relaxation_step=relaxation_step,
-                    trajectory_step=trajectory_step,
-                    trajectory_number=trajectory_number,
-                )
-
-                trajectories.append(trajectory)
+        for functional, task in functionals.items():
+            trajectories.extend(self.transform_tasks(task, functional))
 
         return trajectories
