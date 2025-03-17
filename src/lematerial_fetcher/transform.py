@@ -10,8 +10,8 @@ from lematerial_fetcher.database.postgres import (
     OptimadeDatabase,
     StructuresDatabase,
 )
-from lematerial_fetcher.model.models import RawStructure
-from lematerial_fetcher.model.optimade import OptimadeStructure
+from lematerial_fetcher.models.models import RawStructure
+from lematerial_fetcher.models.optimade import OptimadeStructure
 from lematerial_fetcher.utils.config import TransformerConfig, load_transformer_config
 from lematerial_fetcher.utils.logging import logger
 

@@ -8,8 +8,8 @@ from typing import Optional
 from botocore.client import BaseClient
 
 from lematerial_fetcher.database.postgres import Database, StructuresDatabase
-from lematerial_fetcher.model.models import RawStructure
-from lematerial_fetcher.model.optimade import Functional
+from lematerial_fetcher.models.models import RawStructure
+from lematerial_fetcher.models.optimade import Functional
 from lematerial_fetcher.utils.logging import logger
 
 MP_FUNCTIONAL_MAPPING = {
