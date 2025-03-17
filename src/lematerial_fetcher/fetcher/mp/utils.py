@@ -151,11 +151,20 @@ def extract_structure_optimization_tasks(
         - The second dictionary maps task IDs to the calculation type.
     """
 
-    structure_optimization_tasks = [
-        mp_id
-        for mp_id, task_type in raw_structure.attributes["task_types"].items()
-        if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
-    ]
+    # This means that the raw structure is a material
+    if "task_types" in raw_structure.attributes:
+        structure_optimization_tasks = [
+            mp_id
+            for mp_id, task_type in raw_structure.attributes["task_types"].items()
+            if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
+        ]
+    else:
+        raise ValueError(
+            "Invalid raw structure type: "
+            + raw_structure.type
+            + ". Expected 'task_types' in the attributes."
+        )
+
     non_deprecated_task_ids = [
         mp_id
         for mp_id in structure_optimization_tasks
@@ -223,6 +232,13 @@ def map_tasks_to_functionals(
 
     for task_id, calc_type in task_calc_types.items():
         functional = calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
+        if task_id not in tasks:
+            logger.warning(
+                f"Task {task_id} was not found in your tasks databases, "
+                + "this task will be ignored"
+            )
+            continue
+
         if functional in MP_FUNCTIONAL_MAPPING:
             if functional == Functional.PBE and calc_type == "GGA+U":
                 functional_tasks["GGA+U"].append(tasks[task_id])

@@ -1,8 +1,7 @@
 # Copyright 2025 Entalpic
-import functools
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from multiprocessing import Manager
+from typing import Any
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
@@ -13,46 +12,6 @@ from lematerial_fetcher.utils.aws import (
 )
 from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from lematerial_fetcher.utils.logging import logger
-
-
-def process_s3_object(bucket_name, object_key, config, log_every, manager_dict=None):
-    """
-    Process a single S3 object in a worker process. Each process creates its own
-    database connection and AWS client.
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the S3 bucket
-    object_key : str
-        Key of the S3 object to process
-    config : FetcherConfig
-        Configuration object
-    log_every : int
-        How often to log progress
-    manager_dict : dict, optional
-        Shared dictionary to signal critical errors across processes
-
-    Returns
-    -------
-    bool
-        True if successful, False if failed
-    """
-    try:
-        # Create new AWS client for this process
-        aws_client = get_aws_client()
-
-        # Create new database connection for this process
-        db = StructuresDatabase(config.db_conn_str, config.table_name)
-
-        add_s3_object_to_db(aws_client, bucket_name, object_key, db, log_every)
-        return True
-    except Exception as e:
-        shared_critical_error = BaseFetcher.is_critical_error(e)
-        if shared_critical_error and manager_dict is not None:
-            manager_dict["occurred"] = True  # shared across processes
-
-        return False
 
 
 class MPFetcher(BaseFetcher):
@@ -66,8 +25,8 @@ class MPFetcher(BaseFetcher):
         Configuration for the fetcher. If None, loads from default location.
     """
 
-    def __init__(self, config: FetcherConfig = None):
-        super().__init__(config or load_fetcher_config())
+    def __init__(self, config: FetcherConfig = None, debug: bool = False):
+        super().__init__(config or load_fetcher_config(), debug)
         self.aws_client = None
         # Create a Manager for sharing state between processes
         self.manager = Manager()
@@ -153,62 +112,42 @@ class MPFetcher(BaseFetcher):
             items=filtered_keys,
         )
 
-    def process_items(self, items_info: ItemsInfo) -> None:
+    @staticmethod
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
         """
-        Process S3 objects in parallel using a process pool.
+        Process a single S3 object batch.
 
         Parameters
         ----------
-        items_info : ItemsInfo
-            Information about S3 objects to process
+        batch : str
+            The S3 object key to process
+        config : FetcherConfig
+            Configuration object
+        manager_dict : dict
+            Shared dictionary for inter-process communication
+
+        Returns
+        -------
+        bool
+            True if successful, False if failed
         """
-        if not items_info.items:
-            logger.warning("No items to process")
-            return
+        try:
+            # Create new AWS client for this process
+            aws_client = get_aws_client()
 
-        # Reset critical error flag before starting
-        self.manager_dict["occurred"] = False
+            # Create new database connection for this process
+            db = StructuresDatabase(config.db_conn_str, config.table_name)
 
-        # Create a partial function with fixed parameters
-        process_func = functools.partial(
-            process_s3_object,
-            self.config.mp_bucket_name,
-            config=self.config,
-            log_every=self.config.log_every,
-            manager_dict=self.manager_dict,
-        )
+            add_s3_object_to_db(
+                aws_client, config.mp_bucket_name, batch, db, config.log_every
+            )
+            return True
+        except Exception as e:
+            shared_critical_error = BaseFetcher.is_critical_error(e)
+            if shared_critical_error and manager_dict is not None:
+                manager_dict["occurred"] = True  # shared across processes
 
-        with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
-            futures = []
-
-            # Submit all jobs
-            for key in items_info.items:
-                futures.append((key, executor.submit(process_func, key)))
-
-            # Process results as they complete
-            failed_count = 0
-            for key, future in futures:
-                try:
-                    result = future.result()
-                    if not result:
-                        failed_count += 1
-
-                    # Check for critical errors and shutdown if needed
-                    if self.manager_dict.get("occurred", False):
-                        logger.critical(
-                            "Critical error detected, shutting down process pool"
-                        )
-                        executor.shutdown(wait=False)
-                        raise RuntimeError("Critical error occurred during processing")
-
-                    logger.info(f"Successfully processed {key}")
-
-                except Exception as e:
-                    logger.error(f"Error processing S3 object {key}: {str(e)}")
-                    failed_count += 1
-
-            if failed_count > 0:
-                logger.warning(f"{failed_count} items failed to process")
+            return False
 
     def cleanup_resources(self) -> None:
         """Clean up AWS client, database connection, and process manager."""

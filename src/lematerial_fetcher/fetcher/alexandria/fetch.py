@@ -1,6 +1,4 @@
 # Copyright 2025 Entalpic
-import functools
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import Manager
@@ -23,74 +21,6 @@ class BatchInfo:
 
     offset: int
     limit: int
-
-
-def process_batch(base_url, batch_info, config, manager_dict=None):
-    """
-    Process a single batch from the API in a worker process.
-
-    Parameters
-    ----------
-    base_url : str
-        Base URL for the API
-    batch_info : BatchInfo
-        Information about the batch to process
-    config : FetcherConfig
-        Configuration object
-    manager_dict : dict, optional
-        Shared dictionary to signal critical errors across processes
-
-    Returns
-    -------
-    bool
-        True if successful, False if failed
-    """
-    try:
-        db = StructuresDatabase(config.db_conn_str, config.table_name)
-
-        session = create_session()
-
-        try:
-            # Fetch the batch
-            url = f"{base_url}?page_limit={batch_info.limit}&sort=id&page_offset={batch_info.offset}"
-            response = session.get(url)
-            response.raise_for_status()
-            data = response.json()
-
-            # Process and store items
-            structures = []
-            for item in data.get("data", []):
-                try:
-                    structure, last_modified = read_item(
-                        item, manager_dict["latest_modified"]
-                    )
-                    manager_dict["latest_modified"] = last_modified
-                    structures.append(structure)
-                except Exception as e:
-                    logger.warning(
-                        f"Error processing item {item.get('id', 'unknown')}: {str(e)}"
-                    )
-                    continue
-
-            # Insert all structures in a batch
-            if structures:
-                db.batch_insert_data(structures)
-
-            return len(data.get("data", [])) > 0
-
-        except Exception as e:
-            # Check if this is a critical error
-            shared_critical_error = BaseFetcher.is_critical_error(e)
-            if shared_critical_error and manager_dict is not None:
-                manager_dict["occurred"] = True  # shared across processes
-
-            return False
-        finally:
-            session.close()
-
-    except Exception as e:
-        logger.error(f"Process initialization error: {str(e)}")
-        return False
 
 
 def create_session() -> requests.Session:
@@ -141,9 +71,9 @@ def read_item(item: Any, latest_modified: datetime) -> RawStructure:
 class AlexandriaFetcher(BaseFetcher):
     """Fetcher for the Alexandria API."""
 
-    def __init__(self, config: FetcherConfig = None):
+    def __init__(self, config: FetcherConfig = None, debug: bool = False):
         """Initialize the fetcher."""
-        super().__init__(config or load_fetcher_config())
+        super().__init__(config or load_fetcher_config(), debug)
         self.manager = Manager()
         self.manager_dict = self.manager.dict()
         self.manager_dict["latest_modified"] = None
@@ -160,113 +90,70 @@ class AlexandriaFetcher(BaseFetcher):
         # Actual batches will be generated dynamically during processing
         return ItemsInfo(start_offset=self.config.page_offset)
 
-    def process_items(self, items_info: ItemsInfo) -> None:
+    @staticmethod
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
         """
-        Process batches in parallel using a process pool.
+        Process a single batch from the Alexandria API.
 
         Parameters
         ----------
-        items_info : ItemsInfo
-            Information about batches to process
+        batch : BatchInfo
+            Information about the batch to process
+        config : FetcherConfig
+            Configuration object
+        manager_dict : dict
+            Shared dictionary for inter-process communication
+
+        Returns
+        -------
+        bool
+            True if successful and more data is available, False if failed or no more data
         """
-        logger.info(f"Starting processing from offset {items_info.start_offset}")
+        try:
+            db = StructuresDatabase(config.db_conn_str, config.table_name)
+            session = create_session()
 
-        self.manager_dict["occurred"] = False
+            try:
+                # Fetch the batch
+                url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
+                response = session.get(url)
+                response.raise_for_status()
+                data = response.json()
 
-        with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
-            futures = []
-            current_offset = items_info.start_offset
-            more_data = True
-
-            process_func = functools.partial(
-                process_batch,
-                self.config.base_url,
-                config=self.config,
-                manager_dict=self.manager_dict,
-            )
-
-            initial_batches = min(
-                self.config.num_workers * 2, 10
-            )  # Start with 2 jobs per worker
-            for _ in range(initial_batches):
-                batch_info = BatchInfo(
-                    offset=current_offset, limit=self.config.page_limit
-                )
-                futures.append((batch_info, executor.submit(process_func, batch_info)))
-                current_offset += self.config.page_limit
-
-            # Process results and submit new jobs as needed
-            while futures and more_data:
-                for i, (batch_info, future) in enumerate(futures):
-                    if future.done():
-                        try:
-                            has_more_data = future.result()
-                            if not has_more_data:
-                                more_data = False
-                                logger.info("Reached end of data")
-                                break
-
-                            if self.manager_dict.get("occurred", False):
-                                logger.critical(
-                                    "Critical error detected, shutting down process pool"
-                                )
-                                executor.shutdown(wait=False)
-                                raise RuntimeError(
-                                    "Critical error occurred during processing"
-                                )
-
-                            logger.info(
-                                f"Successfully processed batch at offset {batch_info.offset}"
-                            )
-
-                            if more_data:
-                                new_batch_info = BatchInfo(
-                                    offset=current_offset, limit=self.config.page_limit
-                                )
-                                futures.append(
-                                    (
-                                        new_batch_info,
-                                        executor.submit(process_func, new_batch_info),
-                                    )
-                                )
-                                current_offset += self.config.page_limit
-
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing batch at offset {batch_info.offset}: {str(e)}"
-                            )
-
-                            if BaseFetcher.is_critical_error(e):
-                                logger.critical(
-                                    "Critical error detected, shutting down"
-                                )
-                                executor.shutdown(wait=False)
-                                raise
-
-                            # Submit a new job even if this one failed
-                            if more_data:
-                                new_batch_info = BatchInfo(
-                                    offset=current_offset, limit=self.config.page_limit
-                                )
-                                futures.append(
-                                    (
-                                        new_batch_info,
-                                        executor.submit(process_func, new_batch_info),
-                                    )
-                                )
-                                current_offset += self.config.page_limit
-
-                        futures.pop(i)
-                        break
-
-            for batch_info, future in futures:
-                if not future.done():
+                # Process and store items
+                structures = []
+                for api_item in data.get("data", []):
                     try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing batch at offset {batch_info.offset}: {str(e)}"
+                        structure, last_modified = read_item(
+                            api_item, manager_dict["latest_modified"]
                         )
+                        manager_dict["latest_modified"] = last_modified
+                        structures.append(structure)
+                    except Exception as e:
+                        logger.warning(
+                            f"Error processing item {api_item.get('id', 'unknown')}: {str(e)}"
+                        )
+                        continue
+
+                # Insert all structures in a batch
+                if structures:
+                    db.batch_insert_data(structures)
+
+                return len(data.get("data", [])) > 0
+
+            except Exception as e:
+                # Check if this is a critical error
+                shared_critical_error = BaseFetcher.is_critical_error(e)
+                if shared_critical_error and manager_dict is not None:
+                    manager_dict["occurred"] = True  # shared across processes
+
+                return False
+            finally:
+                session.close()
+
+        except Exception as e:
+            logger.error(f"Process initialization error: {str(e)}")
+            return False
 
     def cleanup_resources(self) -> None:
         """Clean up resources."""
