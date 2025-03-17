@@ -1,6 +1,7 @@
 # Copyright 2025 Entalpic
 from typing import Optional
 
+from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.transform import BaseTransformer
@@ -39,6 +40,7 @@ class AlexandriaTransformer(BaseTransformer):
     def transform_row(
         self,
         raw_structure: RawStructure,
+        source_db: Optional[StructuresDatabase] = None,
         task_table_name: Optional[str] = None,
     ) -> list[OptimadeStructure]:
         """
@@ -48,6 +50,8 @@ class AlexandriaTransformer(BaseTransformer):
         ----------
         raw_structure : RawStructure
             RawStructure object from the dumped database
+        source_db : Optional[StructuresDatabase]
+            Source database connection
         task_table_name : Optional[str]
             Task table name to read targets or trajectories from
 

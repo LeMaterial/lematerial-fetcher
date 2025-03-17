@@ -4,7 +4,11 @@ from typing import Any, Optional
 import numpy as np
 from pymatgen.core import Structure
 
-from lematerial_fetcher.database.postgres import OptimadeDatabase, TrajectoriesDatabase
+from lematerial_fetcher.database.postgres import (
+    OptimadeDatabase,
+    StructuresDatabase,
+    TrajectoriesDatabase,
+)
 from lematerial_fetcher.fetcher.mp.utils import (
     extract_structure_optimization_tasks,
     map_tasks_to_functionals,
@@ -152,7 +156,6 @@ class BaseMPTransformer:
         """
 
         targets = {}
-        breakpoint()
         targets["energy"] = calc_output["energy"]
         try:
             targets["magnetic_moments"] = [
@@ -256,6 +259,7 @@ class MPTransformer(
     def transform_row(
         self,
         raw_structure: RawStructure,
+        source_db: StructuresDatabase,
         task_table_name: Optional[str] = None,
     ) -> list[OptimadeStructure]:
         """
@@ -265,6 +269,8 @@ class MPTransformer(
         ----------
         raw_structure : RawStructure
             RawStructure object from the dumped database
+        source_db : StructuresDatabase
+            Source database connection
         task_table_name : Optional[str]
             Task table name to read targets or trajectories from
 
@@ -275,7 +281,7 @@ class MPTransformer(
             If the list is empty, nothing from the structure should be included in the database.
         """
         tasks, calc_types = extract_structure_optimization_tasks(
-            raw_structure, self.source_db, task_table_name
+            raw_structure, source_db, task_table_name
         )
         functionals = map_tasks_to_functionals(tasks, calc_types)
 
@@ -356,8 +362,7 @@ class MPTrajectoryTransformer(
         trajectories = []
 
         relaxation_step = 0
-        # trajectories are stored in reverse order (last relaxation step first)
-        for i, calc in enumerate(task.attributes["calcs_reversed"][::-1]):
+        for i, calc in enumerate(task.attributes["calcs_reversed"]):
             # TODO(ramlaoui): What about this input?
             # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
 
@@ -386,7 +391,10 @@ class MPTrajectoryTransformer(
         return trajectories
 
     def transform_row(
-        self, raw_structure: RawStructure, task_table_name: Optional[str] = None
+        self,
+        raw_structure: RawStructure,
+        source_db: StructuresDatabase,
+        task_table_name: Optional[str] = None,
     ) -> list[Trajectory]:
         """
         Transform a raw Materials Project structure into Trajectory objects.
@@ -397,6 +405,8 @@ class MPTrajectoryTransformer(
             RawStructure object from the dumped database.
             In this case, we expect the raw_structure to be an MP task
             which already contains the trajectories.
+        source_db : StructuresDatabase
+            Source database connection
         task_table_name : Optional[str]
             Task table name to read targets or trajectories from.
             This is not used here since we expect the raw_structure to be an MP task
@@ -409,7 +419,7 @@ class MPTrajectoryTransformer(
         """
 
         tasks, calc_types = extract_structure_optimization_tasks(
-            raw_structure, self.source_db, task_table_name
+            raw_structure, source_db, task_table_name
         )
         functionals = map_tasks_to_functionals(tasks, calc_types)
 

@@ -384,8 +384,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
         self.columns.update(
             {
                 "relaxation_step": "INTEGER",
-                "trajectory_step": "INTEGER[]",
-                "trajectory_number": "INTEGER[]",
+                "relaxation_number": "INTEGER",
             }
         )
 
@@ -441,8 +440,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
                     structure.entalpic_fingerprint,
                     # trajectory-specific fields
                     structure.relaxation_step,
-                    structure.trajectory_step,
-                    structure.trajectory_number,
+                    structure.relaxation_number,
                 )
                 cur.execute(query, input_data)
                 self.conn.commit()

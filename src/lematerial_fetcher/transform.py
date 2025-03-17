@@ -1,8 +1,8 @@
 # Copyright 2025 Entalpic
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
-from threading import local
+from multiprocessing import Manager
 from typing import Generic, Optional, Type, TypeVar
 
 from lematerial_fetcher.database.postgres import (
@@ -18,6 +18,82 @@ from lematerial_fetcher.utils.logging import logger
 # type variables for the database and structure types
 TDatabase = TypeVar("TDatabase")
 TStructure = TypeVar("TStructure")
+
+
+def process_batch(
+    batch_id: int,
+    rows: list[RawStructure],
+    task_table_name: Optional[str],
+    config: TransformerConfig,
+    database_class: Type[TDatabase],
+    structure_class: Type[TStructure],
+    transformer_class: Type["BaseTransformer[TDatabase, TStructure]"],
+    manager_dict: dict,
+) -> None:
+    """
+    Process a batch of rows in a worker process.
+
+    Parameters
+    ----------
+    batch_id : int
+        Identifier for the batch
+    rows : list[RawStructure]
+        List of raw structures to process
+    task_table_name : Optional[str]
+        Task table name to read targets or trajectories from.
+        This is only used for Materials Project.
+    config : TransformerConfig
+        Configuration object
+    database_class : Type[TDatabase]
+        The class to use for the target database
+    structure_class : Type[TStructure]
+        The class to use for the transformed structures
+    transformer_class : Type["BaseTransformer[TDatabase, TStructure]"]
+        The transformer class to use for transformation
+    manager_dict : dict
+        Shared dictionary to signal critical errors across processes
+    """
+    try:
+        # Create new database connections for this process
+        source_db = StructuresDatabase(
+            config.source_db_conn_str, config.source_table_name
+        )
+        target_db = database_class(config.dest_db_conn_str, config.dest_table_name)
+
+        # transform the rows into TStructure objects
+        transformer = transformer_class(
+            config=config,
+            database_class=database_class,
+            structure_class=structure_class,
+        )
+
+        for i, raw_structure in enumerate(rows, 1):
+            try:
+                structures = transformer.transform_row(
+                    raw_structure, source_db=source_db, task_table_name=task_table_name
+                )
+
+                for structure in structures:
+                    target_db.insert_data(structure)
+
+                if (batch_id * len(rows) + i) % config.log_every == 0:
+                    logger.info(f"Transformed {batch_id * len(rows) + i} records")
+
+            except Exception as e:
+                logger.warning(f"Error processing {raw_structure.id} row: {str(e)}")
+                # Check if this is a critical error
+                if BaseTransformer.is_critical_error(e):
+                    manager_dict["occurred"] = True  # shared across processes
+                    return
+
+    except Exception as e:
+        logger.error(f"Process initialization error: {str(e)}")
+        if BaseTransformer.is_critical_error(e):
+            manager_dict["occurred"] = True  # shared across processes
+
+    finally:
+        source_db.close()
+        target_db.close()
 
 
 class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
@@ -36,6 +112,9 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         The class to use for the target database
     structure_class : Type[TStructure]
         The class to use for the transformed structures
+    debug : bool, optional
+        If True, runs transformations in the main process for debugging purposes.
+        Defaults to False.
     """
 
     def __init__(
@@ -43,46 +122,18 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         config: Optional[TransformerConfig] = None,
         database_class: Type[TDatabase] = OptimadeDatabase,
         structure_class: Type[TStructure] = OptimadeStructure,
+        debug: bool = False,
     ):
         self.config = config or load_transformer_config()
-        self._thread_local = local()
-        self._transform_version = None
         self._database_class = database_class
         self._structure_class = structure_class
-
-    @property
-    def source_db(self) -> StructuresDatabase:
-        """
-        Get the source database connection for the current thread.
-        Creates a new connection if one doesn't exist.
-
-        Returns
-        -------
-        TDatabase
-            Source database connection for the current thread
-        """
-        if not hasattr(self._thread_local, "source_db"):
-            self._thread_local.source_db = StructuresDatabase(
-                self.config.source_db_conn_str, self.config.source_table_name
-            )
-        return self._thread_local.source_db
-
-    @property
-    def target_db(self) -> TDatabase:
-        """
-        Get the target database connection for the current thread.
-        Creates a new connection if one doesn't exist.
-
-        Returns
-        -------
-        TDatabase
-            Target database connection for the current thread
-        """
-        if not hasattr(self._thread_local, "target_db"):
-            self._thread_local.target_db = self._database_class(
-                self.config.dest_db_conn_str, self.config.dest_table_name
-            )
-        return self._thread_local.target_db
+        self.debug = debug
+        if not debug:
+            self.manager = Manager()
+            self.manager_dict = self.manager.dict()
+            self.manager_dict["occurred"] = False
+        else:
+            self.manager_dict = {}
 
     def setup_databases(self) -> None:
         """Set up source and target database tables."""
@@ -137,11 +188,8 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
             Current transform version or None if not set
         """
         try:
-            if not hasattr(self._thread_local, "version_db"):
-                self._thread_local.version_db = DatasetVersions(
-                    self.config.dest_db_conn_str
-                )
-            current_version = self._thread_local.version_db.get_last_synced_version(
+            version_db = DatasetVersions(self.config.dest_db_conn_str)
+            current_version = version_db.get_last_synced_version(
                 f"{self.config.dest_table_name}_transform"
             )
             return current_version
@@ -158,13 +206,8 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         version : str
             New transform version
         """
-        if not hasattr(self._thread_local, "version_db"):
-            self._thread_local.version_db = DatasetVersions(
-                self.config.dest_db_conn_str
-            )
-        self._thread_local.version_db.update_version(
-            f"{self.config.dest_table_name}_transform", version
-        )
+        version_db = DatasetVersions(self.config.dest_db_conn_str)
+        version_db.update_version(f"{self.config.dest_table_name}_transform", version)
 
     def get_new_transform_version(self) -> str:
         """
@@ -179,33 +222,33 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def cleanup_resources(self) -> None:
-        """Clean up database connections for all threads."""
-        if hasattr(self._thread_local, "source_db"):
-            delattr(self._thread_local, "source_db")
-        if hasattr(self._thread_local, "target_db"):
-            delattr(self._thread_local, "target_db")
-        if hasattr(self._thread_local, "version_db"):
-            delattr(self._thread_local, "version_db")
+        """Clean up database connections and process manager."""
+        if hasattr(self, "manager"):
+            self.manager.shutdown()
 
     def _process_rows(self) -> None:
         """
         Process rows from source database in parallel, transform them, and store in target database.
-        Processes rows in batches to avoid memory issues.
+        Processes rows in batches to avoid memory issues. Uses a work-stealing approach where workers
+        can grab new work immediately without waiting for other workers.
 
         Raises
         ------
         Exception
             If a critical error occurs during processing
         """
-        with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
-            batch_size = self.config.batch_size
-            offset = 0
-            total_processed = 0
-            task_table_name = self.config.mp_task_table_name
+        batch_size = self.config.batch_size
+        offset = 0
+        total_processed = 0
+        task_table_name = self.config.mp_task_table_name
 
+        if self.debug:
+            # Debug mode: process in main process
             while True:
-                # get batch of rows from source table
-                rows = self.source_db.fetch_items(offset=offset, batch_size=batch_size)
+                source_db = StructuresDatabase(
+                    self.config.source_db_conn_str, self.config.source_table_name
+                )
+                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
                 if not rows:
                     break
 
@@ -214,73 +257,124 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
                     f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
                 )
 
-                # submit transformation tasks for this batch
-                futures = [
-                    executor.submit(
-                        self._worker,
-                        total_processed - len(rows) + i,
-                        row,
-                        task_table_name,
-                    )
-                    for i, row in enumerate(rows, 1)
-                ]
+                # Process batch in main process
+                process_batch(
+                    offset // batch_size,  # batch_id
+                    rows,
+                    task_table_name,
+                    self.config,
+                    self._database_class,
+                    self._structure_class,
+                    self.__class__,
+                    self.manager_dict,
+                )
 
-                # wait for batch to complete
-                for future in futures:
+                offset += batch_size
+
+            logger.info(f"Completed processing {total_processed} total rows")
+            return
+
+        # Normal mode: process in parallel with work stealing
+        with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
+            futures = set()
+
+            while True:
+                # Check for completed futures and remove them
+                done, futures = futures, set()
+                for future in done:
                     try:
-                        future.result()
+                        future.result()  # Check for any exceptions
                     except Exception as e:
                         logger.error(f"Critical error encountered: {str(e)}")
                         executor.shutdown(wait=False)
                         raise
 
+                # Check for critical errors across processes
+                if self.manager_dict.get("occurred", False):
+                    logger.critical(
+                        "Critical error detected, shutting down process pool"
+                    )
+                    executor.shutdown(wait=False)
+                    raise RuntimeError("Critical error occurred during processing")
+
+                # Get next batch of rows
+                source_db = StructuresDatabase(
+                    self.config.source_db_conn_str, self.config.source_table_name
+                )
+                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
+                if not rows:
+                    # Wait for remaining futures to complete
+                    for future in futures:
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(f"Critical error encountered: {str(e)}")
+                            executor.shutdown(wait=False)
+                            raise
+                    break
+
+                total_processed += len(rows)
+                logger.info(
+                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
+                )
+
+                # Split the batch into smaller chunks for parallel processing
+                chunk_size = max(1, len(rows) // self.config.num_workers)
+                chunks = [
+                    rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)
+                ]
+
+                # Submit new tasks for each chunk
+                for chunk in chunks:
+                    future = executor.submit(
+                        process_batch,
+                        offset // batch_size,  # batch_id
+                        chunk,
+                        task_table_name,
+                        self.config,
+                        self._database_class,
+                        self._structure_class,
+                        self.__class__,
+                        self.manager_dict,
+                    )
+                    futures.add(future)
+
                 offset += batch_size
 
             logger.info(f"Completed processing {total_processed} total rows")
 
-    def _worker(
-        self,
-        worker_id: int,
-        raw_structure: RawStructure,
-        task_table_name: Optional[str] = None,
-    ) -> None:
+    @staticmethod
+    def is_critical_error(error: Exception) -> bool:
         """
-        Transform a single row and store it in the target database.
+        Determine if an error should be considered critical and stop processing.
 
         Parameters
         ----------
-        worker_id : int
-            Identifier for the worker thread
-        raw_structure : RawStructure
-            RawStructure object from the dumped database
-        task_table_name : Optional[str]
-            Task table name to read targets or trajectories from.
-            This is only used for Materials Project.
+        error : Exception
+            The error to evaluate
 
-        Raises
-        ------
-        Exception
-            If an error occurs during transformation or database insertion
+        Returns
+        -------
+        bool
+            True if the error is critical, False otherwise
         """
-        try:
-            # transform the row into TStructure objects
-            structures = self.transform_row(raw_structure, task_table_name)
+        if error is None:
+            return False
 
-            for structure in structures:
-                self.target_db.insert_data(structure)
-
-            if worker_id % self.config.log_every == 0:
-                logger.info(f"Transformed {worker_id} records")
-
-        except Exception as e:
-            logger.warning(
-                f"Worker {worker_id} error processing {raw_structure.id} row: {str(e)}"
-            )
+        error_str = str(error).lower()
+        critical_conditions = [
+            "connection refused",
+            "no such host",
+            "connection reset",
+            "database error",
+        ]
+        return any(condition in error_str for condition in critical_conditions)
 
     @abstractmethod
     def transform_row(
         self,
         raw_structure: RawStructure,
+        source_db: Optional[StructuresDatabase] = None,
         task_table_name: Optional[str] = None,
     ) -> list[TStructure]:
         """
@@ -291,6 +385,8 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         ----------
         raw_structure : RawStructure
             RawStructure object from the dumped database
+        source_db : Optional[StructuresDatabase]
+            Source database connection
         task_table_name : Optional[str]
             Task table name to read targets or trajectories from.
             This is only used for Materials Project.
