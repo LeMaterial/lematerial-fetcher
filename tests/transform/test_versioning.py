@@ -9,7 +9,7 @@ from lematerial_fetcher.database.postgres import (
     OptimadeDatabase,
     StructuresDatabase,
 )
-from lematerial_fetcher.model.models import RawStructure
+from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.config import TransformerConfig
 
