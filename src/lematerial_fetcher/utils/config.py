@@ -36,6 +36,7 @@ class TransformerConfig(BaseConfig):
     dest_table_name: str
     batch_size: int
     mp_task_table_name: Optional[str] = None
+    mysql_config: Optional[dict] = None
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -72,6 +73,16 @@ def _create_db_conn_str(user_env: str, password_env: str, dbname_env: str) -> st
     )
 
 
+def _load_mysql_config() -> dict:
+    return {
+        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
+        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
+        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
+        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
+        "cert_path": os.getenv("LEMATERIALFETCHER_MYSQL_CERT_PATH"),
+    }
+
+
 def load_fetcher_config() -> FetcherConfig:
     load_dotenv(override=True)
 
@@ -95,12 +106,7 @@ def load_fetcher_config() -> FetcherConfig:
 
     base_config = _load_base_config()
 
-    mysql_config = {
-        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
-        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
-        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
-        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
-    }
+    mysql_config = _load_mysql_config()
 
     return FetcherConfig(
         **base_config,
@@ -150,6 +156,8 @@ def load_transformer_config() -> TransformerConfig:
 
     base_config = _load_base_config()
 
+    mysql_config = _load_mysql_config()
+
     return TransformerConfig(
         **base_config,
         source_db_conn_str=source_db_conn_str,
@@ -160,4 +168,5 @@ def load_transformer_config() -> TransformerConfig:
         mp_task_table_name=os.getenv(
             "LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
         ),
+        mysql_config=mysql_config,
     )

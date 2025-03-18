@@ -25,6 +25,7 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTransformer,
 )
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
+from lematerial_fetcher.fetcher.oqmd.transform import OQMDTransformer
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -142,6 +143,17 @@ def oqmd_fetch(ctx):
     try:
         fetcher = OQMDFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@oqmd_cli.command(name="transform")
+@click.pass_context
+def oqmd_transform(ctx):
+    """Transform materials from OQMD."""
+    try:
+        transformer = OQMDTransformer(debug=ctx.obj["debug"])
+        transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

@@ -30,7 +30,7 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
         necessary to create an OptimadeStructure object.
     """
     # Basic chemistry fields
-    elements = sorted(list(set(str(site.species) for site in structure.sites)))
+    elements = sorted(list(set(str(site.specie) for site in structure.sites)))
     # Note that this function returns a different result than the composition.to_reduced_dict method of pymatgen
     elements_ratios = get_element_ratios_from_composition_reduced(
         structure.composition.to_reduced_dict
@@ -85,3 +85,34 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
         "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
     }
+
+
+def stress_matrix_from_voigt_6_stress(voigt_6_stress: list[float]) -> list[float]:
+    """
+    Convert a 6-element voigt notation stress tensor to a full 3x3 stress matrix.
+
+    The voigt notation stress tensor is defined as:
+    [sigma_xx, sigma_yy, sigma_zz, sigma_yz, sigma_xz, sigma_xy]
+
+    The full 3x3 stress matrix is defined as:
+    [
+        [sigma_xx, sigma_xy, sigma_xz],
+        [sigma_xy, sigma_yy, sigma_yz],
+        [sigma_xz, sigma_yz, sigma_zz],
+    ]
+
+    Parameters
+    ----------
+    voigt_6_stress : list[float]
+        The 6-element voigt notation stress tensor
+
+    Returns
+    -------
+    list[float]
+        The full 3x3 stress matrix
+    """
+    return [
+        [voigt_6_stress[0], voigt_6_stress[5], voigt_6_stress[4]],
+        [voigt_6_stress[5], voigt_6_stress[1], voigt_6_stress[3]],
+        [voigt_6_stress[4], voigt_6_stress[3], voigt_6_stress[2]],
+    ]

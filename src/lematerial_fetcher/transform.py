@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from multiprocessing import Manager
-from typing import Generic, Optional, Type, TypeVar
+from typing import Any, Generic, Optional, Type, TypeVar
 
 from lematerial_fetcher.database.postgres import (
     DatasetVersions,
@@ -373,7 +373,7 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
     @abstractmethod
     def transform_row(
         self,
-        raw_structure: RawStructure,
+        raw_structure: RawStructure | dict[str, Any],
         source_db: Optional[StructuresDatabase] = None,
         task_table_name: Optional[str] = None,
     ) -> list[TStructure]:
@@ -397,4 +397,4 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
             List of transformed structure objects.
             If the list is empty, the row will be skipped.
         """
-        pass
+        breakpoint()
