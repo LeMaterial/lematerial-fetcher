@@ -11,8 +11,14 @@ Learn how to use with:
 
 import click
 
-from lematerial_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
-from lematerial_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
+from lematerial_fetcher.fetcher.alexandria.fetch import (
+    AlexandriaFetcher,
+    AlexandriaTrajectoryFetcher,
+)
+from lematerial_fetcher.fetcher.alexandria.transform import (
+    AlexandriaTrajectoryTransformer,
+    AlexandriaTransformer,
+)
 from lematerial_fetcher.fetcher.mp.fetch import MPFetcher
 from lematerial_fetcher.fetcher.mp.transform import (
     MPTrajectoryTransformer,
@@ -93,10 +99,18 @@ def mp_transform(ctx, traj):
 
 @alexandria_cli.command(name="fetch")
 @click.pass_context
-def alexandria_fetch(ctx):
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Fetch trajectory data from Alexandria.",
+)
+def alexandria_fetch(ctx, traj):
     """Fetch materials from Alexandria."""
     try:
-        fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
+        if traj:
+            fetcher = AlexandriaTrajectoryFetcher(debug=ctx.obj["debug"])
+        else:
+            fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -104,10 +118,18 @@ def alexandria_fetch(ctx):
 
 @alexandria_cli.command(name="transform")
 @click.pass_context
-def alexandria_transform(ctx):
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Transform trajectory data from Alexandria.",
+)
+def alexandria_transform(ctx, traj):
     """Transform materials from Alexandria."""
     try:
-        transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
+        if traj:
+            transformer = AlexandriaTrajectoryTransformer(debug=ctx.obj["debug"])
+        else:
+            transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
