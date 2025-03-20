@@ -35,6 +35,7 @@ def download_file(
     path: Optional[str] = None,
     desc: Optional[str] = None,
     decompress: str = None,
+    position: int = 0,
 ) -> str:
     """
     Download a file from a URL and save it to a local path. Optionally decompress gzipped content on the fly.
@@ -50,6 +51,8 @@ def download_file(
     decompress : str
         The type of compression to decompress. If None, the file will not be decompressed.
         Supported types are "gz" and "bz2".
+    position : int
+        The position of the worker in the pool. Used to have different tqdm progress bars for different workers.
 
     Returns
     -------
@@ -76,7 +79,9 @@ def download_file(
         path = path.replace(".bz2", "")
 
     with open(path, "wb") as f:
-        with tqdm(total=total_size, unit="iB", unit_scale=True, desc=desc) as pbar:
+        with tqdm(
+            total=total_size, unit="iB", unit_scale=True, desc=desc, position=position
+        ) as pbar:
             if decompress == "gz":
                 decompressor = gzip.GzipFile(fileobj=response.raw, mode="rb")
                 while True:
@@ -86,13 +91,15 @@ def download_file(
                     size = f.write(chunk)
                     pbar.update(size)
             elif decompress == "bz2":
-                decompressor = bz2.BZ2File(response.raw, "rb")
-                while True:
-                    chunk = decompressor.read(block_size)
-                    if not chunk:
-                        break
-                    size = f.write(chunk)
-                    pbar.update(size)
+                decompressor = bz2.BZ2Decompressor()
+                for chunk in response.iter_content(block_size):
+                    if chunk:  # keep-alive chunks are ignored
+                        try:
+                            decompressed = decompressor.decompress(chunk)
+                            size = f.write(decompressed)
+                            pbar.update(size)
+                        except EOFError:  # end of file
+                            break
             else:
                 for data in response.iter_content(block_size):
                     size = f.write(data)

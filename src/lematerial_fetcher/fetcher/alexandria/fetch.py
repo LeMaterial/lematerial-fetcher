@@ -1,4 +1,5 @@
 # Copyright 2025 Entalpic
+import gc
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -95,7 +96,9 @@ class AlexandriaFetcher(BaseFetcher):
         return ItemsInfo(start_offset=self.config.page_offset)
 
     @staticmethod
-    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
+    def _process_batch(
+        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+    ) -> bool:
         """
         Process a single batch from the Alexandria API.
 
@@ -107,6 +110,8 @@ class AlexandriaFetcher(BaseFetcher):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
+        worker_id : int
+            The ID of the worker
 
         Returns
         -------
@@ -228,14 +233,23 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
                 # include the file if we can't check its metadata
                 filtered_keys.append((url["url"], url["last_modified"]))
 
+        filtered_keys = sorted(filtered_keys, key=lambda x: x[1])
+        if self.config.page_offset > 0:
+            logger.info(
+                f"Skipping {self.config.page_offset} files, starting from {filtered_keys[0][0]}"
+            )
+        filtered_keys = [(x[0], x[1], i) for i, x in enumerate(filtered_keys)]
+
         return ItemsInfo(
-            start_offset=0,
+            start_offset=self.config.page_offset,
             total_count=len(urls),
             items=filtered_keys,
         )
 
     @staticmethod
-    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
+    def _process_batch(
+        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+    ) -> bool:
         """
         Process a single batch from the Alexandria API.
 
@@ -247,6 +261,8 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
+        worker_id : int
+            The ID of the worker
 
         Returns
         -------
@@ -256,11 +272,14 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
         try:
             db = StructuresDatabase(config.db_conn_str, config.table_name)
 
-            file_url, last_modified = batch
+            file_url, last_modified, offset = batch
 
             # Download and process the JSON BZ2 file
             file_path = download_file(
-                file_url, desc=f"Downloading {file_url}", decompress="bz2"
+                file_url,
+                desc=f"Downloading {file_url}",
+                decompress="bz2",
+                position=worker_id,
             )
 
             # This is a hack to get the functional from the URL
@@ -299,6 +318,7 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             # Update the latest modified date
             manager_dict["latest_modified"] = last_modified
 
+            gc.collect()
             return True
 
         except Exception as e:
@@ -306,9 +326,10 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             shared_critical_error = BaseFetcher.is_critical_error(e)
             if shared_critical_error and manager_dict is not None:
                 manager_dict["occurred"] = True  # shared across processes
-            logger.error(f"Error processing batch: {str(e)}")
+            logger.error(f"Error processing batch: {str(e)} at offset {offset}")
             if os.path.exists(file_path):
                 os.remove(file_path)
+            gc.collect()
             return False
 
     def cleanup_resources(self) -> None:
