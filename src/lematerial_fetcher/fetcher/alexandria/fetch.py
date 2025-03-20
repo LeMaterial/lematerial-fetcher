@@ -1,12 +1,11 @@
 # Copyright 2025 Entalpic
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import Manager
 from typing import Any
 
-from tqdm import tqdm
+import ijson
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
@@ -267,12 +266,13 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             # This is a hack to get the functional from the URL
             functional = get_functional_from_url(file_url)
 
-            # Read and parse the JSON file efficiently with orjson
-            with open(file_path, "rb") as f:
-                data = json.load(f)
-                structures = []
+            # Read and parse the JSON iteratively using ijson
+            structures = []
+            with open(file_path, "r") as f:
+                f.seek(0)
 
-                for id, item in tqdm(data.items(), desc="Processing trajectories"):
+                # Get all keys at the root level
+                for key, item in ijson.kvitems(f, "", use_float=True):
                     sanitized_item = sanitize_json(
                         item
                     )  # Replace NaN values with null in JSON data
@@ -280,7 +280,7 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
                         trajectory["functional"] = functional
 
                     raw_structure = RawStructure(
-                        id=id,
+                        id=key,
                         type="trajectory",
                         attributes=sanitized_item,
                         last_modified=last_modified,
