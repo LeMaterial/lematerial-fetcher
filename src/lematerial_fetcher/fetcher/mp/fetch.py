@@ -152,10 +152,8 @@ class MPFetcher(BaseFetcher):
     def cleanup_resources(self) -> None:
         """Clean up AWS client, database connection, and process manager."""
         if self.aws_client:
-            # AWS client doesn't need explicit cleanup
             self.aws_client = None
 
-        # Clean up the manager
         if hasattr(self, "manager"):
             self.manager.shutdown()
 

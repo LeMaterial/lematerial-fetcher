@@ -115,47 +115,44 @@ class AlexandriaFetcher(BaseFetcher):
             True if successful and more data is available, False if failed or no more data
         """
         try:
-            db = StructuresDatabase(config.db_conn_str, config.table_name)
-            session = create_session()
+            with StructuresDatabase(config.db_conn_str, config.table_name) as db:
+                session = create_session()
 
-            try:
-                # Fetch the batch
-                url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
-                response = session.get(url)
-                response.raise_for_status()
-                data = response.json()
+                try:
+                    # Fetch the batch
+                    url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
+                    response = session.get(url)
+                    response.raise_for_status()
+                    data = response.json()
 
-                # Process and store items
-                structures = []
-                for api_item in data.get("data", []):
-                    try:
-                        structure, last_modified = read_item(
-                            api_item, manager_dict["latest_modified"]
-                        )
-                        manager_dict["latest_modified"] = last_modified
-                        structures.append(structure)
-                    except Exception as e:
-                        logger.warning(
-                            f"Error processing item {api_item.get('id', 'unknown')}: {str(e)}"
-                        )
-                        continue
+                    # Process and store items
+                    structures = []
+                    for api_item in data.get("data", []):
+                        try:
+                            structure, last_modified = read_item(
+                                api_item, manager_dict["latest_modified"]
+                            )
+                            manager_dict["latest_modified"] = last_modified
+                            structures.append(structure)
+                        except Exception as e:
+                            logger.warning(
+                                f"Error processing item {api_item.get('id', 'unknown')}: {str(e)}"
+                            )
+                            continue
 
-                # Insert all structures in a batch
-                if structures:
-                    db.batch_insert_data(structures)
+                    # Insert all structures in a batch
+                    if structures:
+                        db.batch_insert_data(structures)
 
-                return len(data.get("data", [])) > 0
+                    return len(data.get("data", [])) > 0
 
-            except Exception as e:
-                # Check if this is a critical error
-                shared_critical_error = BaseFetcher.is_critical_error(e)
-                if shared_critical_error and manager_dict is not None:
-                    manager_dict["occurred"] = True  # shared across processes
+                except Exception as e:
+                    # Check if this is a critical error
+                    shared_critical_error = BaseFetcher.is_critical_error(e)
+                    if shared_critical_error and manager_dict is not None:
+                        manager_dict["occurred"] = True  # shared across processes
 
-                return False
-            finally:
-                session.close()
-
+                    return False
         except Exception as e:
             logger.error(f"Process initialization error: {str(e)}")
             return False
@@ -254,62 +251,71 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
         bool
             True if successful, False if failed
         """
+        db = None
+        file_path = None
         try:
             db = StructuresDatabase(config.db_conn_str, config.table_name)
-
             file_url, last_modified = batch
 
-            # Download and process the JSON BZ2 file
-            file_path = download_file(
-                file_url, desc=f"Downloading {file_url}", decompress="bz2"
-            )
+            try:
+                # Download and process the JSON BZ2 file
+                file_path = download_file(
+                    file_url, desc=f"Downloading {file_url}", decompress="bz2"
+                )
 
-            # This is a hack to get the functional from the URL
-            functional = get_functional_from_url(file_url)
+                # This is a hack to get the functional from the URL
+                functional = get_functional_from_url(file_url)
 
-            # Read and parse the JSON file efficiently with orjson
-            with open(file_path, "rb") as f:
-                data = json.load(f)
-                structures = []
+                # Read and parse the JSON file efficiently with orjson
+                with open(file_path, "rb") as f:
+                    data = json.load(f)
+                    structures = []
 
-                for id, item in tqdm(data.items(), desc="Processing trajectories"):
-                    sanitized_item = sanitize_json(
-                        item
-                    )  # Replace NaN values with null in JSON data
-                    for trajectory in sanitized_item:
-                        trajectory["functional"] = functional
+                    for id, item in tqdm(data.items(), desc="Processing trajectories"):
+                        sanitized_item = sanitize_json(
+                            item
+                        )  # Replace NaN values with null in JSON data
+                        for trajectory in sanitized_item:
+                            trajectory["functional"] = functional
 
-                    raw_structure = RawStructure(
-                        id=id,
-                        type="trajectory",
-                        attributes=sanitized_item,
-                        last_modified=last_modified,
-                    )
-                    structures.append(raw_structure)
+                        raw_structure = RawStructure(
+                            id=id,
+                            type="trajectory",
+                            attributes=sanitized_item,
+                            last_modified=last_modified,
+                        )
+                        structures.append(raw_structure)
 
-                    if len(structures) % config.log_every == 0:
+                        if len(structures) % config.log_every == 0:
+                            db.batch_insert_data(structures)
+                            structures = []
+
+                    if structures:
                         db.batch_insert_data(structures)
-                        structures = []
 
-                if structures:
-                    db.batch_insert_data(structures)
+                os.remove(file_path)
 
-            os.remove(file_path)
+                # Update the latest modified date
+                manager_dict["latest_modified"] = last_modified
 
-            # Update the latest modified date
-            manager_dict["latest_modified"] = last_modified
+                return True
 
-            return True
+            except Exception as e:
+                shared_critical_error = BaseFetcher.is_critical_error(e)
+                if shared_critical_error and manager_dict is not None:
+                    manager_dict["occurred"] = True
+                logger.error(f"Error processing batch: {str(e)}")
+                if file_path and os.path.exists(file_path):
+                    os.remove(file_path)
+                return False
 
         except Exception as e:
-            # Check if this is a critical error
-            shared_critical_error = BaseFetcher.is_critical_error(e)
-            if shared_critical_error and manager_dict is not None:
-                manager_dict["occurred"] = True  # shared across processes
-            logger.error(f"Error processing batch: {str(e)}")
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            logger.error(f"Process initialization error: {str(e)}")
             return False
+
+        finally:
+            if db:
+                db.close()
 
     def cleanup_resources(self) -> None:
         """Clean up resources."""

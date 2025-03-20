@@ -78,45 +78,51 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
     processed = 0
     structures = []
 
-    for line in gzipped_file:
-        processed += 1
-        try:
-            data = json.loads(line)
+    try:
+        with gzipped_file:  # Assure la fermeture du fichier
+            for line in gzipped_file:
+                processed += 1
+                try:
+                    data = json.loads(line)
 
-            last_modified = data.get("last_updated", {}).get("$date", None)
+                    last_modified = data.get("last_updated", {}).get("$date", None)
 
-            if "material_id" not in data:
-                # this is a task
-                structure = RawStructure(
-                    id=data["task_id"],
-                    type="mp-task",
-                    attributes=data,
-                    last_modified=last_modified,
-                )
-            else:
-                # create a proper Structure instance
-                structure = RawStructure(
-                    id=data["material_id"],
-                    type="mp-material",
-                    attributes=data,
-                    last_modified=last_modified,
-                )
+                    if "material_id" not in data:
+                        # this is a task
+                        structure = RawStructure(
+                            id=data["task_id"],
+                            type="mp-task",
+                            attributes=data,
+                            last_modified=last_modified,
+                        )
+                    else:
+                        # create a proper Structure instance
+                        structure = RawStructure(
+                            id=data["material_id"],
+                            type="mp-material",
+                            attributes=data,
+                            last_modified=last_modified,
+                        )
 
-            structures.append(structure)
+                    structures.append(structure)
 
-            if processed % log_every == 0:
-                logger.info(f"Processed {processed} records")
-                # Insert batch when we hit the log_every threshold
-                if structures:
-                    db.batch_insert_data(structures)
-                    structures = []
+                    if processed % log_every == 0:
+                        logger.info(f"Processed {processed} records")
+                        # Insert batch when we hit the log_every threshold
+                        if structures:
+                            db.batch_insert_data(structures)
+                            structures = []
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON line: {e}")
-            continue
-        except Exception as e:
-            logger.warning(f"Failed to insert data: {e}")
-            continue
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse JSON line: {e}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Failed to insert data: {e}")
+                    continue
+
+    finally:
+        if not gzipped_file.closed:
+            gzipped_file.close()
 
     # Insert any remaining structures
     if structures:

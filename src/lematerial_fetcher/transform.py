@@ -53,8 +53,9 @@ def process_batch(
     manager_dict : dict
         Shared dictionary to signal critical errors across processes
     """
+    source_db = None
+    target_db = None
     try:
-        # Create new database connections for this process
         source_db = StructuresDatabase(
             config.source_db_conn_str, config.source_table_name
         )
@@ -90,10 +91,12 @@ def process_batch(
         logger.error(f"Process initialization error: {str(e)}")
         if BaseTransformer.is_critical_error(e):
             manager_dict["occurred"] = True  # shared across processes
-
+        raise
     finally:
-        source_db.close()
-        target_db.close()
+        if source_db:
+            source_db.close()
+        if target_db:
+            target_db.close()
 
 
 class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
@@ -245,31 +248,31 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         if self.debug:
             # Debug mode: process in main process
             while True:
-                source_db = StructuresDatabase(
+                with StructuresDatabase(
                     self.config.source_db_conn_str, self.config.source_table_name
-                )
-                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
-                if not rows:
-                    break
+                ) as source_db:
+                    rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
+                    if not rows:
+                        break
 
-                total_processed += len(rows)
-                logger.info(
-                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
-                )
+                    total_processed += len(rows)
+                    logger.info(
+                        f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
+                    )
 
-                # Process batch in main process
-                process_batch(
-                    offset // batch_size,  # batch_id
-                    rows,
-                    task_table_name,
-                    self.config,
-                    self._database_class,
-                    self._structure_class,
-                    self.__class__,
-                    self.manager_dict,
-                )
+                    # Process batch in main process
+                    process_batch(
+                        offset // batch_size,  # batch_id
+                        rows,
+                        task_table_name,
+                        self.config,
+                        self._database_class,
+                        self._structure_class,
+                        self.__class__,
+                        self.manager_dict,
+                    )
 
-                offset += batch_size
+                    offset += batch_size
 
             logger.info(f"Completed processing {total_processed} total rows")
             return
@@ -298,20 +301,20 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
                     raise RuntimeError("Critical error occurred during processing")
 
                 # Get next batch of rows
-                source_db = StructuresDatabase(
+                with StructuresDatabase(
                     self.config.source_db_conn_str, self.config.source_table_name
-                )
-                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
-                if not rows:
-                    # Wait for remaining futures to complete
-                    for future in futures:
-                        try:
-                            future.result()
-                        except Exception as e:
-                            logger.error(f"Critical error encountered: {str(e)}")
-                            executor.shutdown(wait=False)
-                            raise
-                    break
+                ) as source_db:
+                    rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
+                    if not rows:
+                        # Wait for remaining futures to complete
+                        for future in futures:
+                            try:
+                                future.result()
+                            except Exception as e:
+                                logger.error(f"Critical error encountered: {str(e)}")
+                                executor.shutdown(wait=False)
+                                raise
+                        break
 
                 total_processed += len(rows)
                 logger.info(
