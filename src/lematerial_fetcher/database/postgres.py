@@ -1,6 +1,8 @@
 # Copyright 2025 Entalpic
+import itertools
 import json
-from typing import Any, List, Optional
+import time
+from typing import Any, Generator, List, Optional
 
 import psycopg2
 from psycopg2.extras import Json, execute_values
@@ -57,67 +59,6 @@ class Database:
             );"""
             cur.execute(query)
             self.conn.commit()
-
-    def fetch_items_with_ids(
-        self, ids: List[str], table_name: Optional[str] = None
-    ) -> List[RawStructure]:
-        """
-        Fetch items from the database that match the given list of IDs.
-
-        Parameters
-        ----------
-        ids : List[str]
-            List of IDs to retrieve from the database
-
-        Returns
-        -------
-        List[RawStructure]
-            List of RawStructure objects matching the requested IDs
-        table_name : str, optional
-            Name of the table to fetch items from, by default None
-
-        Raises
-        ------
-        Exception
-            If there's an error during database query execution
-        """
-        if not ids:
-            return []
-
-        if not table_name:
-            table_name = self.table_name
-
-        with self.conn.cursor() as cur:
-            # Use parameterized query with ANY to safely handle the list of IDs
-            placeholders = ",".join(["%s"] * len(ids))
-            query = f"""
-            SELECT id, type, attributes, last_modified
-            FROM {table_name}
-            WHERE id IN ({placeholders});
-            """
-
-            try:
-                cur.execute(query, ids)
-                results = []
-                for row in cur.fetchall():
-                    id_val, type_val, attributes_json, last_modified = row
-                    # Parse the JSON attributes
-                    attributes = (
-                        json.loads(attributes_json)
-                        if isinstance(attributes_json, str)
-                        else attributes_json
-                    )
-                    results.append(
-                        RawStructure(
-                            id=id_val,
-                            type=type_val,
-                            attributes=attributes,
-                            last_modified=last_modified,
-                        )
-                    )
-                return results
-            except (json.JSONDecodeError, psycopg2.Error) as e:
-                raise Exception(f"Error fetching items with IDs: {str(e)}")
 
     def count_items(self) -> int:
         """
@@ -239,11 +180,89 @@ class StructuresDatabase(Database):
                 except (json.JSONDecodeError, psycopg2.Error) as e:
                     raise Exception(f"Error during batch insert: {str(e)}")
 
-    def fetch_items(
-        self, offset: int = 0, batch_size: int = 100, table_name: Optional[str] = None
-    ) -> list[RawStructure]:
+    def fetch_items_iter(
+        self,
+        offset: int = 0,
+        batch_size: int = 100,
+        table_name: Optional[str] = None,
+        cursor_name: Optional[str] = None,
+    ) -> Generator[RawStructure, None, None]:
         """
-        Fetch items from the database with pagination support.
+        Fetch items from the database using a server-side cursor, yielding results one at a time.
+        This is memory efficient for large result sets as it doesn't load all results into memory at once.
+
+        Parameters
+        ----------
+        offset : int, optional
+            Number of items to skip, by default 0
+        batch_size : int, optional
+            Number of items to fetch in each database round-trip, by default 100
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
+        cursor_name : str, optional
+            Name for the server-side cursor, by default None (auto-generated)
+
+        Yields
+        ------
+        RawStructure
+            One structure at a time from the result set
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query execution
+        """
+        if not table_name:
+            table_name = self.table_name
+
+        # Create a unique cursor name if none provided
+        if cursor_name is None:
+            cursor_name = f"fetch_items_cursor_{id(self)}_{time.time_ns()}"
+
+        try:
+            with self.conn.cursor(name=cursor_name) as cur:  # Server-side cursor
+                query = f"""
+                SELECT id, type, attributes, last_modified
+                FROM {table_name}
+                ORDER BY id
+                OFFSET %s
+                LIMIT %s
+                """
+
+                cur.execute(query, (offset, batch_size))
+
+                while True:
+                    rows = cur.fetchmany(batch_size)
+                    if not rows:
+                        break
+
+                    for row in rows:
+                        id_val, type_val, attributes_json, last_modified = row
+                        # Parse the JSON attributes
+                        attributes = (
+                            json.loads(attributes_json)
+                            if isinstance(attributes_json, str)
+                            else attributes_json
+                        )
+                        yield RawStructure(
+                            id=id_val,
+                            type=type_val,
+                            attributes=attributes,
+                            last_modified=last_modified,
+                        )
+
+        except (json.JSONDecodeError, psycopg2.Error) as e:
+            raise Exception(f"Error fetching items: {str(e)}")
+
+    def fetch_items(
+        self,
+        offset: int = 0,
+        batch_size: int = 100,
+        table_name: Optional[str] = None,
+    ) -> List[RawStructure]:
+        """
+        Fetch a batch of items from the database.
+        This method uses fetch_items_iter internally but returns a list for backward compatibility.
 
         Parameters
         ----------
@@ -251,50 +270,88 @@ class StructuresDatabase(Database):
             Number of items to skip, by default 0
         batch_size : int, optional
             Maximum number of items to return, by default 100
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
 
         Returns
         -------
-        list[RawStructure]
-            List of Structure objects
+        List[RawStructure]
+            List of RawStructure objects
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query execution
+        """
+        return list(
+            itertools.islice(
+                self.fetch_items_iter(
+                    offset=offset, batch_size=batch_size, table_name=table_name
+                ),
+                batch_size,
+            )
+        )
+
+    def fetch_items_with_ids(
+        self, ids: List[str], table_name: Optional[str] = None
+    ) -> List[RawStructure]:
+        """
+        Fetch items from the database that match the given list of IDs.
+
+        Parameters
+        ----------
+        ids : List[str]
+            List of IDs to retrieve from the database
+
+        Returns
+        -------
+        List[RawStructure]
+            List of RawStructure objects matching the requested IDs
         table_name : str, optional
             Name of the table to fetch items from, by default None
 
         Raises
         ------
         Exception
-            If there's an error during database query or JSON decoding
+            If there's an error during database query execution
         """
+        if not ids:
+            return []
+
         if not table_name:
             table_name = self.table_name
 
         with self.conn.cursor() as cur:
-            columns = ", ".join(self.columns.keys())
+            # Use parameterized query with ANY to safely handle the list of IDs
+            placeholders = ",".join(["%s"] * len(ids))
             query = f"""
-            SELECT {columns}
+            SELECT id, type, attributes, last_modified
             FROM {table_name}
-            ORDER BY id
-            LIMIT %s OFFSET %s;"""
+            WHERE id IN ({placeholders});
+            """
 
             try:
-                cur.execute(query, (batch_size, offset))
-                rows = cur.fetchall()
-
-                structures = []
-                for row in rows:
-                    id_, type_, attributes, last_modified = row
-
-                    structures.append(
+                cur.execute(query, ids)
+                results = []
+                for row in cur:
+                    id_val, type_val, attributes_json, last_modified = row
+                    # Parse the JSON attributes
+                    attributes = (
+                        json.loads(attributes_json)
+                        if isinstance(attributes_json, str)
+                        else attributes_json
+                    )
+                    results.append(
                         RawStructure(
-                            id=id_,
-                            type=type_,
+                            id=id_val,
+                            type=type_val,
                             attributes=attributes,
                             last_modified=last_modified,
                         )
                     )
-
-                return structures
+                return results
             except (json.JSONDecodeError, psycopg2.Error) as e:
-                raise Exception(f"Error fetching items: {str(e)}")
+                raise Exception(f"Error fetching items with IDs: {str(e)}")
 
 
 class OptimadeDatabase(StructuresDatabase):
