@@ -290,7 +290,7 @@ class BaseFetcher(ABC):
                 )
 
                 # Submit initial batches
-                initial_batches = min(self.config.num_workers * 2, 10)
+                initial_batches = self.config.num_workers
                 for _ in range(initial_batches):
                     if current_index >= len(items_info.items):
                         break
