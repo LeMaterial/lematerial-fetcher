@@ -190,6 +190,7 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
 
         trajectories = []
 
+        current_relaxation_number = 0
         for relaxation_number, calc in enumerate(raw_structure.attributes):
             relaxation_steps = calc["steps"]
             for relaxation_step, relaxation_step_dict in enumerate(relaxation_steps):
@@ -204,7 +205,7 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
 
                 trajectory = Trajectory(
                     immutable_id=raw_structure.id,
-                    id=f"{raw_structure.id}",
+                    id=f"{raw_structure.id}-{calc['functional']}-{current_relaxation_number}",
                     source="alexandria",
                     last_modified=raw_structure.last_modified,
                     **optimade_structure_dict,
@@ -215,5 +216,6 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
                 )
 
                 trajectories.append(trajectory)
+                current_relaxation_number += 1
 
         return trajectories
