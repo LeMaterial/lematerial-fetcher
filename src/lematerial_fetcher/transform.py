@@ -22,7 +22,8 @@ TStructure = TypeVar("TStructure")
 
 def process_batch(
     batch_id: int,
-    rows: list[RawStructure],
+    offset: int,
+    batch_size: int,
     task_table_name: Optional[str],
     config: TransformerConfig,
     database_class: Type[TDatabase],
@@ -37,8 +38,10 @@ def process_batch(
     ----------
     batch_id : int
         Identifier for the batch
-    rows : list[RawStructure]
-        List of raw structures to process
+    offset : int
+        The offset to start fetching rows from
+    batch_size : int
+        The number of rows to fetch
     task_table_name : Optional[str]
         Task table name to read targets or trajectories from.
         This is only used for Materials Project.
@@ -60,6 +63,11 @@ def process_batch(
         )
         target_db = database_class(config.dest_db_conn_str, config.dest_table_name)
 
+        # Fetch the rows in the worker process
+        rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
+        if not rows:
+            return
+
         # transform the rows into TStructure objects
         transformer = transformer_class(
             config=config,
@@ -76,8 +84,8 @@ def process_batch(
                 for structure in structures:
                     target_db.insert_data(structure)
 
-                if (batch_id * len(rows) + i) % config.log_every == 0:
-                    logger.info(f"Transformed {batch_id * len(rows) + i} records")
+                if (batch_id * batch_size + i) % config.log_every == 0:
+                    logger.info(f"Transformed {batch_id * batch_size + i} records")
 
             except Exception as e:
                 logger.warning(f"Error processing {raw_structure.id} row: {str(e)}")
@@ -238,29 +246,18 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
             If a critical error occurs during processing
         """
         batch_size = self.config.batch_size
-        offset = 0
+        offset = self.config.page_offset
         total_processed = 0
         task_table_name = self.config.mp_task_table_name
 
         if self.debug:
             # Debug mode: process in main process
             while True:
-                source_db = StructuresDatabase(
-                    self.config.source_db_conn_str, self.config.source_table_name
-                )
-                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
-                if not rows:
-                    break
-
-                total_processed += len(rows)
-                logger.info(
-                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
-                )
-
                 # Process batch in main process
                 process_batch(
                     offset // batch_size,  # batch_id
-                    rows,
+                    offset,
+                    batch_size,
                     task_table_name,
                     self.config,
                     self._database_class,
@@ -269,6 +266,17 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
                     self.manager_dict,
                 )
 
+                # Check if we should continue
+                source_db = StructuresDatabase(
+                    self.config.source_db_conn_str, self.config.source_table_name
+                )
+                rows = source_db.fetch_items(offset=offset + batch_size, batch_size=1)
+                source_db.close()
+                if not rows:
+                    break
+
+                total_processed += batch_size
+                logger.info(f"Total processed: {total_processed}")
                 offset += batch_size
 
             logger.info(f"Completed processing {total_processed} total rows")
@@ -278,70 +286,98 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
         with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
             futures = set()
 
-            while True:
-                # Check for completed futures and remove them
-                done, futures = futures, set()
-                for future in done:
-                    try:
-                        future.result()  # Check for any exceptions
-                    except Exception as e:
-                        logger.error(f"Critical error encountered: {str(e)}")
-                        executor.shutdown(wait=False)
-                        raise
-
-                # Check for critical errors across processes
-                if self.manager_dict.get("occurred", False):
-                    logger.critical(
-                        "Critical error detected, shutting down process pool"
-                    )
-                    executor.shutdown(wait=False)
-                    raise RuntimeError("Critical error occurred during processing")
-
-                # Get next batch of rows
-                source_db = StructuresDatabase(
-                    self.config.source_db_conn_str, self.config.source_table_name
+            # Submit initial batch of tasks
+            for i in range(self.config.num_workers):
+                future = executor.submit(
+                    process_batch,
+                    offset // batch_size,  # batch_id
+                    offset + (i * batch_size),
+                    batch_size,
+                    task_table_name,
+                    self.config,
+                    self._database_class,
+                    self._structure_class,
+                    self.__class__,
+                    self.manager_dict,
                 )
-                rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
-                if not rows:
-                    # Wait for remaining futures to complete
-                    for future in futures:
+                futures.add((offset + (i * batch_size), future))
+                total_processed += batch_size
+
+            offset += batch_size * self.config.num_workers
+            more_data = True
+
+            while futures and more_data:
+                # Check for completed futures and remove them
+                done_futures = set()
+                for current_offset, future in futures:
+                    if future.done():
                         try:
                             future.result()
+
+                            if self.manager_dict.get("occurred", False):
+                                logger.critical(
+                                    "Critical error detected, shutting down process pool"
+                                )
+                                executor.shutdown(wait=False)
+                                raise RuntimeError(
+                                    "Critical error occurred during processing"
+                                )
+
+                            # Check if there might be more data
+                            source_db = StructuresDatabase(
+                                self.config.source_db_conn_str,
+                                self.config.source_table_name,
+                            )
+                            check_rows = source_db.fetch_items(
+                                offset=offset, batch_size=1
+                            )
+                            source_db.close()
+
+                            if check_rows:
+                                # Submit new task
+                                next_future = executor.submit(
+                                    process_batch,
+                                    offset // batch_size,  # batch_id
+                                    offset,
+                                    batch_size,
+                                    task_table_name,
+                                    self.config,
+                                    self._database_class,
+                                    self._structure_class,
+                                    self.__class__,
+                                    self.manager_dict,
+                                )
+                                futures.add((offset, next_future))
+                                offset += batch_size
+                            else:
+                                more_data = False
+
+                            logger.info(
+                                f"Successfully processed batch at offset {current_offset}"
+                            )
+
                         except Exception as e:
                             logger.error(f"Critical error encountered: {str(e)}")
                             executor.shutdown(wait=False)
                             raise
-                    break
 
-                total_processed += len(rows)
-                logger.info(
-                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
-                )
+                        done_futures.add((current_offset, future))
+                        break
 
-                # Split the batch into smaller chunks for parallel processing
-                chunk_size = max(1, len(rows) // self.config.num_workers)
-                chunks = [
-                    rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)
-                ]
+                futures -= done_futures
 
-                # Submit new tasks for each chunk
-                for chunk in chunks:
-                    future = executor.submit(
-                        process_batch,
-                        offset // batch_size,  # batch_id
-                        chunk,
-                        task_table_name,
-                        self.config,
-                        self._database_class,
-                        self._structure_class,
-                        self.__class__,
-                        self.manager_dict,
+            # Wait for remaining futures
+            for current_offset, future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(
+                        f"Error processing batch at offset {current_offset}: {str(e)}"
                     )
-                    futures.add(future)
 
-                offset += batch_size
-
-            logger.info(f"Completed processing {total_processed} total rows")
+            logger.info(
+                f"Completed processing approximately {total_processed} total rows"
+            )
 
     @staticmethod
     def is_critical_error(error: Exception) -> bool:
@@ -397,4 +433,4 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
             List of transformed structure objects.
             If the list is empty, the row will be skipped.
         """
-        breakpoint()
+        pass

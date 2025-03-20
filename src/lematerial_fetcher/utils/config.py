@@ -34,6 +34,7 @@ class TransformerConfig(BaseConfig):
     dest_db_conn_str: str
     source_table_name: str
     dest_table_name: str
+    page_offset: int
     batch_size: int
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
@@ -165,6 +166,7 @@ def load_transformer_config() -> TransformerConfig:
         source_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
         dest_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
         batch_size=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
+        page_offset=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_PAGE_OFFSET", "0")),
         mp_task_table_name=os.getenv(
             "LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
         ),
