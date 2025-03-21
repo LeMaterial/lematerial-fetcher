@@ -34,12 +34,7 @@ class Database:
     def __init__(self, conn_str: str, table_name: str):
         self.conn = psycopg2.connect(conn_str)
         self.table_name = table_name
-        self.columns = {
-            "id": "TEXT PRIMARY KEY",
-            "type": "TEXT",
-            "attributes": "JSONB",
-            "last_modified": "TIMESTAMP NULL",
-        }
+        self.columns = {"id": "TEXT PRIMARY KEY", "type": "TEXT", "attributes": "JSONB"}
 
     def create_table(self) -> None:
         """
@@ -91,7 +86,7 @@ class Database:
             # Use parameterized query with ANY to safely handle the list of IDs
             placeholders = ",".join(["%s"] * len(ids))
             query = f"""
-            SELECT id, type, attributes, last_modified
+            SELECT id, type, attributes
             FROM {table_name}
             WHERE id IN ({placeholders});
             """
@@ -100,7 +95,7 @@ class Database:
                 cur.execute(query, ids)
                 results = []
                 for row in cur.fetchall():
-                    id_val, type_val, attributes_json, last_modified = row
+                    id_val, type_val, attributes_json = row
                     # Parse the JSON attributes
                     attributes = (
                         json.loads(attributes_json)
@@ -108,12 +103,7 @@ class Database:
                         else attributes_json
                     )
                     results.append(
-                        RawStructure(
-                            id=id_val,
-                            type=type_val,
-                            attributes=attributes,
-                            last_modified=last_modified,
-                        )
+                        RawStructure(id=id_val, type=type_val, attributes=attributes)
                     )
                 return results
             except (json.JSONDecodeError, psycopg2.Error) as e:
@@ -159,26 +149,14 @@ class StructuresDatabase(Database):
         with self.conn.cursor() as cur:
             placeholders = ", ".join(["%s"] * len(self.columns))
             columns = ", ".join(self.columns.keys())
-            # Create SET clause for all columns except id
-            set_clause = ", ".join(
-                f"{col} = EXCLUDED.{col}" for col in self.columns.keys() if col != "id"
-            )
             query = f"""
             INSERT INTO {self.table_name} ({columns})
             VALUES ({placeholders})
-            ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+            ON CONFLICT (id) DO NOTHING;"""
 
             try:
                 attributes_json = json.dumps(structure.attributes)
-                cur.execute(
-                    query,
-                    (
-                        structure.id,
-                        structure.type,
-                        attributes_json,
-                        structure.last_modified,
-                    ),
-                )
+                cur.execute(query, (structure.id, structure.type, attributes_json))
                 self.conn.commit()
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
@@ -212,26 +190,13 @@ class StructuresDatabase(Database):
                 values = []
                 for structure in batch:
                     attributes_json = json.dumps(structure.attributes)
-                    values.append(
-                        (
-                            structure.id,
-                            structure.type,
-                            attributes_json,
-                            structure.last_modified,
-                        )
-                    )
+                    values.append((structure.id, structure.type, attributes_json))
 
                 columns = ", ".join(self.columns.keys())
-                # Create SET clause for all columns except id
-                set_clause = ", ".join(
-                    f"{col} = EXCLUDED.{col}"
-                    for col in self.columns.keys()
-                    if col != "id"
-                )
                 query = f"""
                 INSERT INTO {self.table_name} ({columns})
                 VALUES %s
-                ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+                ON CONFLICT (id) DO NOTHING;"""
 
                 try:
                     execute_values(cur, query, values)
@@ -281,15 +246,10 @@ class StructuresDatabase(Database):
 
                 structures = []
                 for row in rows:
-                    id_, type_, attributes, last_modified = row
+                    id_, type_, attributes = row
 
                     structures.append(
-                        RawStructure(
-                            id=id_,
-                            type=type_,
-                            attributes=attributes,
-                            last_modified=last_modified,
-                        )
+                        RawStructure(id=id_, type=type_, attributes=attributes)
                     )
 
                 return structures
@@ -372,14 +332,10 @@ class OptimadeDatabase(StructuresDatabase):
         with self.conn.cursor() as cur:
             placeholders = ", ".join(["%s"] * len(self.columns))
             columns = ", ".join(self.columns.keys())
-            # Create SET clause for all columns except id
-            set_clause = ", ".join(
-                f"{col} = EXCLUDED.{col}" for col in self.columns.keys() if col != "id"
-            )
             query = f"""
             INSERT INTO {self.table_name} ({columns})
             VALUES ({placeholders})
-            ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+            ON CONFLICT (id) DO NOTHING;"""
 
             try:
                 species_data = self._prepare_species_data(structure.species)
@@ -449,14 +405,10 @@ class TrajectoriesDatabase(OptimadeDatabase):
         with self.conn.cursor() as cur:
             placeholders = ", ".join(["%s"] * len(self.columns))
             columns = ", ".join(self.columns.keys())
-            # Create SET clause for all columns except id
-            set_clause = ", ".join(
-                f"{col} = EXCLUDED.{col}" for col in self.columns.keys() if col != "id"
-            )
             query = f"""
             INSERT INTO {self.table_name} ({columns})
             VALUES ({placeholders})
-            ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+            ON CONFLICT (id) DO NOTHING;"""
 
             try:
                 species_data = self._prepare_species_data(structure.species)

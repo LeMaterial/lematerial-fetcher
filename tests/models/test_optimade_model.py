@@ -247,9 +247,7 @@ def test_functional_enum():
     """Test validation of functional enum values."""
     data = VALID_STRUCTURE_DATA.copy()
     data["functional"] = "INVALID"  # Invalid functional
-    with pytest.raises(
-        ValueError, match=r"Input should be 'PBE', 'PBESOL', 'SCAN' or 'INCOMPATIBLE'"
-    ):
+    with pytest.raises(ValueError, match=r"Input should be 'PBE', 'PBESOL' or 'SCAN'"):
         OptimadeStructure(**data)
 
     # Test valid functionals

@@ -11,21 +11,14 @@ Learn how to use with:
 
 import click
 
-from lematerial_fetcher.fetcher.alexandria.fetch import (
-    AlexandriaFetcher,
-    AlexandriaTrajectoryFetcher,
-)
-from lematerial_fetcher.fetcher.alexandria.transform import (
-    AlexandriaTrajectoryTransformer,
-    AlexandriaTransformer,
-)
+from lematerial_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
+from lematerial_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
 from lematerial_fetcher.fetcher.mp.fetch import MPFetcher
 from lematerial_fetcher.fetcher.mp.transform import (
     MPTrajectoryTransformer,
     MPTransformer,
 )
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
-from lematerial_fetcher.fetcher.oqmd.transform import OQMDTransformer
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -100,18 +93,10 @@ def mp_transform(ctx, traj):
 
 @alexandria_cli.command(name="fetch")
 @click.pass_context
-@click.option(
-    "--traj",
-    is_flag=True,
-    help="Fetch trajectory data from Alexandria.",
-)
-def alexandria_fetch(ctx, traj):
+def alexandria_fetch(ctx):
     """Fetch materials from Alexandria."""
     try:
-        if traj:
-            fetcher = AlexandriaTrajectoryFetcher(debug=ctx.obj["debug"])
-        else:
-            fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
+        fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -119,18 +104,10 @@ def alexandria_fetch(ctx, traj):
 
 @alexandria_cli.command(name="transform")
 @click.pass_context
-@click.option(
-    "--traj",
-    is_flag=True,
-    help="Transform trajectory data from Alexandria.",
-)
-def alexandria_transform(ctx, traj):
+def alexandria_transform(ctx):
     """Transform materials from Alexandria."""
     try:
-        if traj:
-            transformer = AlexandriaTrajectoryTransformer(debug=ctx.obj["debug"])
-        else:
-            transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
+        transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -143,17 +120,6 @@ def oqmd_fetch(ctx):
     try:
         fetcher = OQMDFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
-    except KeyboardInterrupt:
-        logger.fatal("\nAborted.", exit=1)
-
-
-@oqmd_cli.command(name="transform")
-@click.pass_context
-def oqmd_transform(ctx):
-    """Transform materials from OQMD."""
-    try:
-        transformer = OQMDTransformer(debug=ctx.obj["debug"])
-        transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

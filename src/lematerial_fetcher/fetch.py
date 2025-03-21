@@ -282,7 +282,6 @@ class BaseFetcher(ABC):
                 futures = set()
                 current_index = items_info.start_offset
                 more_data = True
-                worker_id = 0  # Initialize worker counter
 
                 process_func = functools.partial(
                     self.__class__._process_batch,
@@ -291,20 +290,15 @@ class BaseFetcher(ABC):
                 )
 
                 # Submit initial batches
-                initial_batches = self.config.num_workers
+                initial_batches = min(self.config.num_workers * 2, 10)
                 for _ in range(initial_batches):
                     if current_index >= len(items_info.items):
                         break
                     future = executor.submit(
-                        process_func,
-                        items_info.items[current_index],
-                        worker_id=worker_id,
+                        process_func, items_info.items[current_index]
                     )
                     futures.add((items_info.items[current_index], future))
                     current_index += 1
-                    worker_id = (
-                        worker_id + 1
-                    ) % self.config.num_workers  # Cycle through worker IDs
 
                 # Process remaining batches with work stealing
                 while futures and more_data:
@@ -329,17 +323,12 @@ class BaseFetcher(ABC):
 
                                 if current_index < len(items_info.items):
                                     next_future = executor.submit(
-                                        process_func,
-                                        items_info.items[current_index],
-                                        worker_id=worker_id,
+                                        process_func, items_info.items[current_index]
                                     )
                                     futures.add(
                                         (items_info.items[current_index], next_future)
                                     )
                                     current_index += 1
-                                    worker_id = (
-                                        (worker_id + 1) % self.config.num_workers
-                                    )  # Cycle through worker IDs
                                 else:
                                     more_data = False
 
@@ -354,15 +343,10 @@ class BaseFetcher(ABC):
 
                                 if current_index < len(items_info.items):
                                     next_future = executor.submit(
-                                        process_func,
-                                        items_info.items[current_index],
-                                        worker_id=worker_id,
+                                        process_func, items_info.items[current_index]
                                     )
                                     futures.add((current_index, next_future))
                                     current_index += 1
-                                    worker_id = (
-                                        (worker_id + 1) % self.config.num_workers
-                                    )  # Cycle through worker IDs
                                 else:
                                     more_data = False
 
@@ -436,7 +420,6 @@ class BaseFetcher(ABC):
                 futures = set()
                 current_index = items_info.start_offset
                 more_data = True
-                worker_id = 0  # Initialize worker counter
 
                 process_func = functools.partial(
                     self.__class__._process_batch,
@@ -450,14 +433,9 @@ class BaseFetcher(ABC):
                     batch_info = BatchInfo(
                         offset=current_index, limit=self.config.page_limit
                     )
-                    future = executor.submit(
-                        process_func, batch_info, worker_id=worker_id
-                    )
+                    future = executor.submit(process_func, batch_info)
                     futures.add((current_index, future))
                     current_index += self.config.page_limit
-                    worker_id = (
-                        worker_id + 1
-                    ) % self.config.num_workers  # Cycle through worker IDs
 
                 # Process remaining batches with work stealing
                 while futures and more_data:
@@ -485,20 +463,16 @@ class BaseFetcher(ABC):
                                     f"Successfully processed batch at offset {index}"
                                 )
 
-                                # Submit next batch if more data is available
                                 if has_more_data:
                                     batch_info = BatchInfo(
                                         offset=current_index,
                                         limit=self.config.page_limit,
                                     )
                                     next_future = executor.submit(
-                                        process_func, batch_info, worker_id=worker_id
+                                        process_func, batch_info
                                     )
                                     futures.add((current_index, next_future))
                                     current_index += self.config.page_limit
-                                    worker_id = (
-                                        worker_id + 1
-                                    ) % self.config.num_workers
                                 else:
                                     more_data = False
 
@@ -519,13 +493,10 @@ class BaseFetcher(ABC):
                                         limit=self.config.page_limit,
                                     )
                                     next_future = executor.submit(
-                                        process_func, batch_info, worker_id=worker_id
+                                        process_func, batch_info
                                     )
                                     futures.add((current_index, next_future))
                                     current_index += self.config.page_limit
-                                    worker_id = (
-                                        worker_id + 1
-                                    ) % self.config.num_workers
                                 else:
                                     more_data = False
 
@@ -547,9 +518,7 @@ class BaseFetcher(ABC):
 
     @staticmethod
     @abstractmethod
-    def _process_batch(
-        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
-    ) -> bool:
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
         """
         Process a single batch. Must be implemented by subclasses.
 
@@ -561,8 +530,6 @@ class BaseFetcher(ABC):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
-        worker_id: int
-            The id of the worker executing the task
 
         Returns
         -------

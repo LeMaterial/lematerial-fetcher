@@ -1,6 +1,5 @@
 import logging
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 import mysql.connector
 from mysql.connector import Error
@@ -11,15 +10,7 @@ logger = logging.getLogger(__name__)
 class MySQLDatabase:
     """A minimal MySQL database handler for dumping and fetching data."""
 
-    def __init__(
-        self,
-        host: str,
-        user: str,
-        password: str,
-        database: str,
-        table_name: Optional[str] = None,
-        cert_path: Optional[str] = None,
-    ):
+    def __init__(self, host: str, user: str, password: str, database: str):
         """
         Initialize the MySQL database connection.
 
@@ -33,45 +24,20 @@ class MySQLDatabase:
             The database password
         database : str
             The database name
-        table_name : Optional[str]
-            The table name to fetch items from
-        cert_path : Optional[str]
-            The path to the SSL certificate
         """
         self.host = host
         self.user = user
         self.password = password
         self.database = database
-        self.table_name = table_name
         self.connection = None
-        self.cert_path = cert_path
 
     def connect(self) -> None:
         """Establish connection to the database."""
         try:
-            ssl_ca = (
-                str((Path(self.cert_path) / "server-ca.pem").resolve())
-                if self.cert_path
-                else None
-            )
-            ssl_cert = (
-                str((Path(self.cert_path) / "client-cert.pem").resolve())
-                if self.cert_path
-                else None
-            )
-            ssl_key = (
-                str((Path(self.cert_path) / "client-key.pem").resolve())
-                if self.cert_path
-                else None
-            )
             self.connection = mysql.connector.connect(
-                host=self.host,
-                user=self.user,
-                password=self.password,
-                ssl_ca=ssl_ca,
-                ssl_cert=ssl_cert,
-                ssl_key=ssl_key,
+                host=self.host, user=self.user, password=self.password
             )
+            logger.info("Successfully connected to MySQL server")
         except Error as e:
             logger.error(f"Error connecting to MySQL server: {e}")
             raise
@@ -155,32 +121,23 @@ class MySQLDatabase:
             cursor.close()
 
     def fetch_items(
-        self,
-        offset: Optional[int] = 0,
-        batch_size: Optional[int] = 100,
-        table_name: Optional[str] = None,
-        query: str = "",
-        params: tuple = None,
-    ) -> list[dict[str, Any]]:
+        self, query_or_table: str, params: tuple = None, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
         Fetch items from the database using either a custom query or table name.
 
         Parameters
         ----------
-        offset : Optional[int]
-            The offset to start fetching items from
-        batch_size : Optional[int]
-            The number of items to fetch in each batch
-        table_name : Optional[str]
-            The name of the table to fetch items from (overrides self.table_name if provided)
-        query : str
-            Custom SQL query to execute (takes precedence over table_name)
+        query_or_table : str
+            Either a complete SQL query or just a table name
         params : tuple, optional
             Query parameters to substitute if using a custom query
+        limit : Optional[int]
+            Maximum number of items to fetch. Only used if query_or_table is a table name.
 
         Returns
         -------
-        list[dict[str, Any]]
+        List[Dict[str, Any]]
             List of fetched items
         """
         if not self.connection:
@@ -190,33 +147,17 @@ class MySQLDatabase:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute(f"USE {self.database}")
 
-            if query:
-                # Custom query takes precedence
+            # Check if input is just a table name or a complete query
+            if " " not in query_or_table:  # Simple table name
+                query = f"SELECT * FROM {query_or_table}"
+                if limit:
+                    query += f" LIMIT {limit}"
+                cursor.execute(query)
+            else:  # Custom query
                 if params:
-                    cursor.execute(query, params)
+                    cursor.execute(query_or_table, params)
                 else:
-                    cursor.execute(query)
-            else:
-                # Use table-based query if no custom query provided
-                effective_table = table_name or self.table_name
-
-                if not effective_table:
-                    raise ValueError(
-                        "Either table_name, self.table_name, or query must be provided"
-                    )
-
-                # Build the SQL query based on provided parameters
-                sql_query = f"SELECT * FROM {effective_table}"
-
-                # Add LIMIT and OFFSET clauses if provided
-                if offset is not None and batch_size is not None:
-                    sql_query += f" LIMIT {batch_size} OFFSET {offset}"
-                elif batch_size is not None:
-                    sql_query += f" LIMIT {batch_size}"
-                elif offset is not None:
-                    raise ValueError("Offset is not supported without batch_size")
-
-                cursor.execute(sql_query)
+                    cursor.execute(query_or_table)
 
             items = cursor.fetchall()
             return items
@@ -247,6 +188,7 @@ class MySQLDatabase:
         if self.connection:
             self.connection.close()
             self.connection = None
+            logger.info("Database connection closed")
 
 
 def execute_sql_file(

@@ -4,11 +4,11 @@ import tempfile
 from datetime import datetime
 from typing import Optional
 
+import requests
+from bs4 import BeautifulSoup
+
 from lematerial_fetcher.database.mysql import MySQLDatabase, execute_sql_file
-from lematerial_fetcher.utils.io import (
-    download_file,
-    list_download_links_from_page,
-)
+from lematerial_fetcher.utils.io import create_session, download_file
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -28,8 +28,13 @@ def download_and_process_oqmd_sql(
         Directory for temporary files if needed. If None, uses a temporary directory
     """
 
+    # Create a session for downloading
+    session = create_session()
+
     # Get the latest available version URL
-    latest_url = get_latest_sql_file_url_from_oqmd(download_page_url=download_page_url)
+    latest_url = get_latest_sql_file_url_from_oqmd(
+        session=session, download_page_url=download_page_url
+    )
 
     # Connect to database to check version
     db = MySQLDatabase(**db_config)
@@ -65,8 +70,9 @@ def download_and_process_oqmd_sql(
             sql_path = download_file(
                 latest_url,
                 sql_gz_path,
+                session,
                 "Downloading OQMD database. Progress bar shows uncompressed size so may be misleading.",
-                decompress="gz",
+                decompress_gzip=True,
             )
         else:
             logger.info("SQL database file already exists. Skipping download.")
@@ -201,24 +207,34 @@ def update_oqmd_version(
 
 
 def get_latest_sql_file_url_from_oqmd(
+    session: Optional[requests.Session] = None,
     download_page_url: str = "https://oqmd.org/download/",
 ) -> str:
     """Get the latest SQL file URL from the OQMD download page."""
 
+    if session is None:
+        session = create_session()
+
     logger.info(f"Fetching OQMD download page: {download_page_url}")
+    response = session.get(download_page_url, timeout=10)  # timeout 10 seconds
+    response.raise_for_status()
+
+    # Parse the page to find SQL download links
+    soup = BeautifulSoup(response.text, "html.parser")
+    sql_links = []
+
     # Look for links containing SQL database files
-    sql_links = list_download_links_from_page(
-        download_page_url,
-        pattern=r"\.sql\.gz\s*$",
-    )
-    sql_links = [link["url"] for link in sql_links]
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        if re.search(r"\.sql\.gz\s*$", href, re.IGNORECASE):
+            sql_links.append(href)
 
     if not sql_links:
         raise ValueError("No SQL database files found on the download page")
 
     # Sort links by version if possible, otherwise take the first one
     def extract_version(url):
-        match = re.search(r"v(\d+)_(\d+)", url)  # this matches v1_0, v1_1, etc.
+        match = re.search(r"v(\d+)_(\d+)", url)
         if match:
             return (int(match.group(1)), int(match.group(2)))
         return (0, 0)

@@ -1,9 +1,6 @@
-import bz2
 import gzip
 import os
 import re
-import tempfile
-from datetime import datetime
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
@@ -32,10 +29,10 @@ def create_session() -> requests.Session:
 
 def download_file(
     url: str,
-    path: Optional[str] = None,
+    path: str,
+    session: requests.Session | None = None,
     desc: Optional[str] = None,
-    decompress: str = None,
-    position: int = 0,
+    decompress_gzip: bool = False,
 ) -> str:
     """
     Download a file from a URL and save it to a local path. Optionally decompress gzipped content on the fly.
@@ -44,28 +41,22 @@ def download_file(
     ----------
     url : str
         The URL to download the file from.
-    path : Optional[str]
-        The path to save the file to. If None, the file will be saved to a temporary directory.
+    path : str
+        The path to save the file to.
+    session : requests.Session | None
+        The session to use for the download. If None, a new session will be created.
     desc : Optional[str]
         The description to display in the progress bar.
-    decompress : str
-        The type of compression to decompress. If None, the file will not be decompressed.
-        Supported types are "gz" and "bz2".
-    position : int
-        The position of the worker in the pool. Used to have different tqdm progress bars for different workers.
+    decompress_gzip : bool
+        Whether to decompress gzipped content while downloading. Default is False.
 
     Returns
     -------
     str
         The path to the downloaded file.
     """
-    if path is None:
-        # Create temporary directory if none provided
-        temp_dir = tempfile.mkdtemp()
-        os.makedirs(temp_dir, exist_ok=True)
-        path = os.path.join(temp_dir, os.path.basename(url))
-
-    session = create_session()
+    if session is None:
+        session = create_session()
 
     response = session.get(url, stream=True)
     response.raise_for_status()
@@ -73,16 +64,12 @@ def download_file(
     total_size = int(response.headers.get("content-length", 0))
     block_size = 8192
 
-    if decompress == "gz":
+    if decompress_gzip:
         path = path.replace(".gz", "")
-    elif decompress == "bz2":
-        path = path.replace(".bz2", "")
 
     with open(path, "wb") as f:
-        with tqdm(
-            total=total_size, unit="iB", unit_scale=True, desc=desc, position=position
-        ) as pbar:
-            if decompress == "gz":
+        with tqdm(total=total_size, unit="iB", unit_scale=True, desc=desc) as pbar:
+            if decompress_gzip:
                 decompressor = gzip.GzipFile(fileobj=response.raw, mode="rb")
                 while True:
                     chunk = decompressor.read(block_size)
@@ -90,16 +77,6 @@ def download_file(
                         break
                     size = f.write(chunk)
                     pbar.update(size)
-            elif decompress == "bz2":
-                decompressor = bz2.BZ2Decompressor()
-                for chunk in response.iter_content(block_size):
-                    if chunk:  # keep-alive chunks are ignored
-                        try:
-                            decompressed = decompressor.decompress(chunk)
-                            size = f.write(decompressed)
-                            pbar.update(size)
-                        except EOFError:  # end of file
-                            break
             else:
                 for data in response.iter_content(block_size):
                     size = f.write(data)
@@ -108,20 +85,18 @@ def download_file(
     return path
 
 
-def list_download_links_from_page(
-    url: str, pattern: str = None
+def list_download_links_from_index_page(
+    url: str, session: Optional[requests.Session] = None, pattern: str = None
 ) -> list[dict[str, str]]:
     """
-    List all download links from an HTML page.
-
-    If the page is an index page, the function will try to find the latest
-    modified date and the size of the files. Otherwise, it will return the
-    links from the page as is.
+    List all download links from an HTML index page.
 
     Parameters
     ----------
     url : str
         The URL of the index page to parse
+    session : Optional[requests.Session]
+        An existing session to use for the request. If None, creates a new one.
     pattern : str, optional
         Regex pattern to filter files. If None, all links are returned.
 
@@ -134,7 +109,8 @@ def list_download_links_from_page(
         - size: File size if available (or None)
         - last_modified: Last modification date if available (or None)
     """
-    session = create_session()
+    if session is None:
+        session = create_session()
 
     logger.info(f"Fetching index page: {url}")
     response = session.get(url, timeout=10)
@@ -166,12 +142,12 @@ def list_download_links_from_page(
         if pattern and not pattern.search(filename):
             continue
 
-        # We are trying to find size and last modified date
+        # Try to find size and last modified date
+        # Look for parent tr element that might contain this info
+        tr = link.find_parent("tr")
         size = None
         last_modified = None
 
-        # Case 1: table cells format
-        tr = link.find_parent("tr")
         if tr:
             # Common formats in index pages
             size_td = tr.find("td", text=re.compile(r"\d+[KMG]?B"))
@@ -179,31 +155,10 @@ def list_download_links_from_page(
                 size = size_td.text.strip()
 
             date_td = tr.find(
-                "td", text=re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}|\d{4}-\d{2}-\d{2}")
+                "td", text=re.compile(r"\d{4}-\d{2}-\d{2}|\d{2}-[A-Za-z]{3}-\d{4}")
             )
             if date_td:
-                date_str = date_td.text.strip()
-                try:
-                    last_modified = datetime.strptime(
-                        date_str, "%d-%b-%Y %H:%M"
-                    ).isoformat()
-                except ValueError:
-                    last_modified = date_str
-
-        # Case 2: direct text node format (cf. Alexandria)
-        if not (size and last_modified):  # Only try if we haven't found them yet
-            next_text = link.next_sibling
-            if next_text and isinstance(next_text, str):
-                parts = next_text.strip().split()
-                if len(parts) >= 3:
-                    try:
-                        date_str = f"{parts[0]} {parts[1]}"  # "21-Mar-2024 09:20"
-                        last_modified = datetime.strptime(
-                            date_str, "%d-%b-%Y %H:%M"
-                        ).isoformat()
-                        size = parts[2]
-                    except (ValueError, IndexError):
-                        logger.warning(f"Could not parse date/size from: {next_text}")
+                last_modified = date_td.text.strip()
 
         download_links.append(
             {
