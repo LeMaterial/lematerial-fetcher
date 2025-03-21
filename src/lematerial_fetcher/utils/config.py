@@ -14,6 +14,7 @@ class BaseConfig:
     num_workers: int
     retry_delay: int
     log_every: int
+    cache_dir: str | None = None
 
 
 @dataclass
@@ -58,6 +59,7 @@ def _load_base_config() -> Dict[str, Any]:
         "LEMATERIALFETCHER_RETRY_DELAY": 2,
         "LEMATERIALFETCHER_LOG_EVERY": 1000,
         "LEMATERIALFETCHER_PAGE_OFFSET": 0,
+        "LEMATERIALFETCHER_CACHE_DIR": None,
     }
 
     # apply defaults
@@ -71,6 +73,7 @@ def _load_base_config() -> Dict[str, Any]:
         "num_workers": int(os.getenv("LEMATERIALFETCHER_NUM_WORKERS")),
         "retry_delay": int(os.getenv("LEMATERIALFETCHER_RETRY_DELAY")),
         "log_every": int(os.getenv("LEMATERIALFETCHER_LOG_EVERY")),
+        "cache_dir": os.getenv("LEMATERIALFETCHER_CACHE_DIR"),
     }
 
 
@@ -189,4 +192,8 @@ def load_push_config() -> PushConfig:
 
     base_config = _load_base_config()
 
-    return functools.partial(PushConfig, **base_config)
+    defaults_kwargs = {
+        "chunk_size": int(os.getenv("LEMATERIALFETCHER_PUSH_CHUNK_SIZE", "1000")),
+    }
+
+    return functools.partial(PushConfig, **base_config, **defaults_kwargs)
