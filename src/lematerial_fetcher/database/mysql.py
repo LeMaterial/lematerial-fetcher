@@ -157,7 +157,7 @@ class MySQLDatabase:
     def fetch_items(
         self,
         offset: Optional[int] = 0,
-        batch_size: Optional[int] = 100,
+        batch_size: Optional[int] = None,
         table_name: Optional[str] = None,
         query: str = "",
         params: tuple = None,
