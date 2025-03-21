@@ -341,7 +341,7 @@ class MPTrajectoryTransformer(
         )
 
     def transform_tasks(
-        self, task: RawStructure, functional: Functional
+        self, task: RawStructure, functional: Functional, material_id: str
     ) -> list[Trajectory]:
         """
         Transform a raw Materials Project structure into Trajectory objects.
@@ -352,6 +352,8 @@ class MPTrajectoryTransformer(
             The task to extract the trajectories from.
         functional : Functional
             The functional to use for the transformation.
+        material_id : str
+            The material id of the task.
 
         Returns
         -------
@@ -374,9 +376,9 @@ class MPTrajectoryTransformer(
                 output_targets = self._get_ionic_step_targets(ionic_step)
 
                 trajectory = Trajectory(
-                    id=f"{task.id}-{functional}-{relaxation_step}",
+                    id=f"{material_id}-{functional}-{relaxation_step}",
                     source="mp",
-                    immutable_id=task.id,
+                    immutable_id=material_id,
                     **input_structure_fields,
                     **output_targets,
                     functional=functional,
@@ -437,6 +439,8 @@ class MPTrajectoryTransformer(
 
         trajectories = []
         for functional, task in functionals.items():
-            trajectories.extend(self.transform_tasks(task, functional))
+            trajectories.extend(
+                self.transform_tasks(task, functional, raw_structure.id)
+            )
 
         return trajectories

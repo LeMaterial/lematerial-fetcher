@@ -157,14 +157,13 @@ class MySQLDatabase:
     def fetch_items(
         self,
         offset: Optional[int] = 0,
-        batch_size: Optional[int] = 100,
+        batch_size: Optional[int] = None,
         table_name: Optional[str] = None,
         query: str = "",
         params: tuple = None,
     ) -> list[dict[str, Any]]:
         """
         Fetch items from the database using either a custom query or table name.
-
         Parameters
         ----------
         offset : Optional[int]
@@ -177,7 +176,6 @@ class MySQLDatabase:
             Custom SQL query to execute (takes precedence over table_name)
         params : tuple, optional
             Query parameters to substitute if using a custom query
-
         Returns
         -------
         list[dict[str, Any]]
