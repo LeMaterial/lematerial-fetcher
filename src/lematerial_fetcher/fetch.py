@@ -385,7 +385,7 @@ class BaseFetcher(ABC):
             more_data = True
             self.manager_dict = {"occurred": False, "latest_modified": None}
 
-            while more_data:
+            while more_data and current_index < items_info.total_count:
                 try:
                     batch_info = BatchInfo(
                         offset=current_index, limit=self.config.page_limit
@@ -419,7 +419,8 @@ class BaseFetcher(ABC):
             with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
                 futures = set()
                 current_index = items_info.start_offset
-                more_data = True
+                more_data = True and (current_index <= items_info.total_count)
+                worker_id = 0  # Initialize worker counter
 
                 process_func = functools.partial(
                     self.__class__._process_batch,
@@ -428,8 +429,10 @@ class BaseFetcher(ABC):
                 )
 
                 # Submit initial batches
-                initial_batches = min(self.config.num_workers * 2, 10)
+                initial_batches = self.config.num_workers
                 for _ in range(initial_batches):
+                    if current_index > items_info.total_count:
+                        break
                     batch_info = BatchInfo(
                         offset=current_index, limit=self.config.page_limit
                     )
@@ -493,10 +496,13 @@ class BaseFetcher(ABC):
                                         limit=self.config.page_limit,
                                     )
                                     next_future = executor.submit(
-                                        process_func, batch_info
+                                        process_func, batch_info, worker_id=worker_id
                                     )
                                     futures.add((current_index, next_future))
                                     current_index += self.config.page_limit
+                                    worker_id = (
+                                        worker_id + 1
+                                    ) % self.config.num_workers
                                 else:
                                     more_data = False
 
@@ -518,7 +524,9 @@ class BaseFetcher(ABC):
 
     @staticmethod
     @abstractmethod
-    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
+    def _process_batch(
+        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+    ) -> bool:
         """
         Process a single batch. Must be implemented by subclasses.
 
@@ -530,6 +538,8 @@ class BaseFetcher(ABC):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
+        worker_id: int
+            The id of the worker executing the task
 
         Returns
         -------
