@@ -371,6 +371,83 @@ class OptimadeDatabase(StructuresDatabase):
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
 
+    def batch_insert_data(
+        self, structures: List[OptimadeStructure], batch_size: int = 1000
+    ) -> None:
+        """
+        Insert multiple OPTIMADE structures into the database in batches using execute_values.
+
+        Parameters
+        ----------
+        structures : List[OptimadeStructure]
+            List of OptimadeStructure objects to insert
+        batch_size : int, optional
+            Number of structures to insert in each batch, by default 1000
+
+        Raises
+        ------
+        Exception
+            If there's an error during data insertion or JSON encoding
+        """
+        if not structures:
+            return
+
+        with self.conn.cursor() as cur:
+            # Process structures in batches
+            for i in range(0, len(structures), batch_size):
+                batch = structures[i : i + batch_size]
+                # Create a list of value tuples for the batch
+                values = []
+                for structure in batch:
+                    species_data = self._prepare_species_data(structure.species)
+                    values.append(
+                        (
+                            structure.id,
+                            structure.source,
+                            structure.elements,
+                            structure.nelements,
+                            structure.elements_ratios,
+                            structure.nsites,
+                            structure.cartesian_site_positions,
+                            structure.species_at_sites,
+                            species_data,
+                            structure.chemical_formula_anonymous,
+                            structure.chemical_formula_descriptive,
+                            structure.dimension_types,
+                            structure.nperiodic_dimensions,
+                            structure.immutable_id,
+                            structure.last_modified,
+                            structure.stress_tensor,
+                            structure.energy,
+                            structure.magnetic_moments,
+                            structure.forces,
+                            structure.total_magnetization,
+                            structure.dos_ef,
+                            structure.functional,
+                            structure.cross_compatibility,
+                            structure.entalpic_fingerprint,
+                        )
+                    )
+
+                columns = ", ".join(self.columns.keys())
+                # Create SET clause for all columns except id
+                set_clause = ", ".join(
+                    f"{col} = EXCLUDED.{col}"
+                    for col in self.columns.keys()
+                    if col != "id"
+                )
+                # Update all columns except id on conflict with the new values
+                query = f"""
+                INSERT INTO {self.table_name} ({columns})
+                VALUES %s
+                ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+
+                try:
+                    execute_values(cur, query, values)
+                    self.conn.commit()
+                except (json.JSONDecodeError, psycopg2.Error) as e:
+                    raise Exception(f"Error during batch insert: {str(e)}")
+
 
 class TrajectoriesDatabase(OptimadeDatabase):
     """
@@ -446,6 +523,86 @@ class TrajectoriesDatabase(OptimadeDatabase):
                 self.conn.commit()
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
+
+    def batch_insert_data(
+        self, structures: List[Trajectory], batch_size: int = 1000
+    ) -> None:
+        """
+        Insert multiple Trajectory objects into the database in batches using execute_values.
+
+        Parameters
+        ----------
+        structures : List[Trajectory]
+            List of Trajectory objects to insert
+        batch_size : int, optional
+            Number of structures to insert in each batch, by default 1000
+
+        Raises
+        ------
+        Exception
+            If there's an error during data insertion or JSON encoding
+        """
+        if not structures:
+            return
+
+        with self.conn.cursor() as cur:
+            # Process structures in batches
+            for i in range(0, len(structures), batch_size):
+                batch = structures[i : i + batch_size]
+                # Create a list of value tuples for the batch
+                values = []
+                for structure in batch:
+                    species_data = self._prepare_species_data(structure.species)
+                    values.append(
+                        (
+                            structure.id,
+                            structure.source,
+                            structure.elements,
+                            structure.nelements,
+                            structure.elements_ratios,
+                            structure.nsites,
+                            structure.cartesian_site_positions,
+                            structure.species_at_sites,
+                            species_data,
+                            structure.chemical_formula_anonymous,
+                            structure.chemical_formula_descriptive,
+                            structure.dimension_types,
+                            structure.nperiodic_dimensions,
+                            structure.immutable_id,
+                            structure.last_modified,
+                            structure.stress_tensor,
+                            structure.energy,
+                            structure.magnetic_moments,
+                            structure.forces,
+                            structure.total_magnetization,
+                            structure.dos_ef,
+                            structure.functional,
+                            structure.cross_compatibility,
+                            structure.entalpic_fingerprint,
+                            # trajectory-specific fields
+                            structure.relaxation_step,
+                            structure.relaxation_number,
+                        )
+                    )
+
+                columns = ", ".join(self.columns.keys())
+                # Create SET clause for all columns except id
+                set_clause = ", ".join(
+                    f"{col} = EXCLUDED.{col}"
+                    for col in self.columns.keys()
+                    if col != "id"
+                )
+                # Update all columns except id on conflict with the new values
+                query = f"""
+                INSERT INTO {self.table_name} ({columns})
+                VALUES %s
+                ON CONFLICT (id) DO UPDATE SET {set_clause};"""
+
+                try:
+                    execute_values(cur, query, values)
+                    self.conn.commit()
+                except (json.JSONDecodeError, psycopg2.Error) as e:
+                    raise Exception(f"Error during batch insert: {str(e)}")
 
 
 class DatasetVersions(Database):

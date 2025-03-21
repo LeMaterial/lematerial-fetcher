@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import mysql.connector
 from mysql.connector import Error
@@ -121,23 +121,30 @@ class MySQLDatabase:
             cursor.close()
 
     def fetch_items(
-        self, query_or_table: str, params: tuple = None, limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+        self,
+        offset: Optional[int] = 0,
+        batch_size: Optional[int] = None,
+        table_name: Optional[str] = None,
+        query: str = "",
+        params: tuple = None,
+    ) -> list[dict[str, Any]]:
         """
         Fetch items from the database using either a custom query or table name.
-
         Parameters
         ----------
-        query_or_table : str
-            Either a complete SQL query or just a table name
+        offset : Optional[int]
+            The offset to start fetching items from
+        batch_size : Optional[int]
+            The number of items to fetch in each batch
+        table_name : Optional[str]
+            The name of the table to fetch items from (overrides self.table_name if provided)
+        query : str
+            Custom SQL query to execute (takes precedence over table_name)
         params : tuple, optional
             Query parameters to substitute if using a custom query
-        limit : Optional[int]
-            Maximum number of items to fetch. Only used if query_or_table is a table name.
-
         Returns
         -------
-        List[Dict[str, Any]]
+        list[dict[str, Any]]
             List of fetched items
         """
         if not self.connection:
@@ -147,17 +154,33 @@ class MySQLDatabase:
             cursor = self.connection.cursor(dictionary=True)
             cursor.execute(f"USE {self.database}")
 
-            # Check if input is just a table name or a complete query
-            if " " not in query_or_table:  # Simple table name
-                query = f"SELECT * FROM {query_or_table}"
-                if limit:
-                    query += f" LIMIT {limit}"
-                cursor.execute(query)
-            else:  # Custom query
+            if query:
+                # Custom query takes precedence
                 if params:
-                    cursor.execute(query_or_table, params)
+                    cursor.execute(query, params)
                 else:
-                    cursor.execute(query_or_table)
+                    cursor.execute(query)
+            else:
+                # Use table-based query if no custom query provided
+                effective_table = table_name or self.table_name
+
+                if not effective_table:
+                    raise ValueError(
+                        "Either table_name, self.table_name, or query must be provided"
+                    )
+
+                # Build the SQL query based on provided parameters
+                sql_query = f"SELECT * FROM {effective_table}"
+
+                # Add LIMIT and OFFSET clauses if provided
+                if offset is not None and batch_size is not None:
+                    sql_query += f" LIMIT {batch_size} OFFSET {offset}"
+                elif batch_size is not None:
+                    sql_query += f" LIMIT {batch_size}"
+                elif offset is not None:
+                    raise ValueError("Offset is not supported without batch_size")
+
+                cursor.execute(sql_query)
 
             items = cursor.fetchall()
             return items
