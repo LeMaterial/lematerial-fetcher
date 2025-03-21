@@ -113,7 +113,9 @@ class MPFetcher(BaseFetcher):
         )
 
     @staticmethod
-    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
+    def _process_batch(
+        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+    ) -> bool:
         """
         Process a single S3 object batch.
 
@@ -125,6 +127,8 @@ class MPFetcher(BaseFetcher):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
+        worker_id : int
+            The id of the worker executing the task
 
         Returns
         -------
