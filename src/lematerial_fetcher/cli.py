@@ -26,6 +26,9 @@ from lematerial_fetcher.fetcher.mp.transform import (
 )
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
 from lematerial_fetcher.fetcher.oqmd.transform import OQMDTransformer
+from lematerial_fetcher.push import Push
+from lematerial_fetcher.utils.cli import add_db_options
+from lematerial_fetcher.utils.config import load_push_config
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -154,6 +157,51 @@ def oqmd_transform(ctx):
     try:
         transformer = OQMDTransformer(debug=ctx.obj["debug"])
         transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@cli.command(name="push")
+@click.pass_context
+@click.option(
+    "--data-type",
+    type=str,
+    default="optimade",
+    help="Type of data to push, one of ['optimade', 'trajectories', 'any'].",
+)
+@click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
+@add_db_options
+def push(
+    ctx,
+    data_type,
+    hf_repo_id,
+    db_user,
+    db_password,
+    db_host,
+    db_port,
+    db_name,
+    table_name,
+):
+    """Push materials to Hugging Face."""
+    try:
+        default_push_config = load_push_config()
+        db_conn_str = (
+            f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        )
+
+        config = default_push_config(
+            hf_repo_id=hf_repo_id,
+            source_db_conn_str=db_conn_str,
+            source_table_name=table_name,
+        )
+
+        push = Push(
+            config=config,
+            data_type=data_type,
+            debug=ctx.obj["debug"],
+        )
+
+        push.push()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

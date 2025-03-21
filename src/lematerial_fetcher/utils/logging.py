@@ -1,8 +1,16 @@
 # Copyright 2025 Entalpic
 import logging
 import os
+from pathlib import Path
 
 from rich.logging import RichHandler
+
+
+def get_cache_dir():
+    """Get the cache directory path, creating it if it doesn't exist."""
+    cache_dir = Path.home() / ".cache" / "lematerial_fetcher"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 class Logger:

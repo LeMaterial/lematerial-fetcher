@@ -1,4 +1,5 @@
 # Copyright 2025 Entalpic
+import functools
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -38,6 +39,15 @@ class TransformerConfig(BaseConfig):
     batch_size: int
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
+
+
+@dataclass
+class PushConfig(BaseConfig):
+    source_db_conn_str: str
+    source_table_name: str
+    hf_repo_id: str
+    data_dir: str | None = None
+    chunk_size: int = 1000
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -172,3 +182,11 @@ def load_transformer_config() -> TransformerConfig:
         ),
         mysql_config=mysql_config,
     )
+
+
+def load_push_config() -> PushConfig:
+    load_dotenv(override=True)
+
+    base_config = _load_base_config()
+
+    return functools.partial(PushConfig, **base_config)
