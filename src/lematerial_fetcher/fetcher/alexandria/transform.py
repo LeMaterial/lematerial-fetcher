@@ -1,10 +1,17 @@
 # Copyright 2025 Entalpic
 from typing import Optional
 
-from lematerial_fetcher.database.postgres import StructuresDatabase
+from pymatgen.core import Structure
+
+from lematerial_fetcher.database.postgres import (
+    StructuresDatabase,
+    TrajectoriesDatabase,
+)
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.trajectories import Trajectory
 from lematerial_fetcher.transform import BaseTransformer
+from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
 
 class AlexandriaTransformer(BaseTransformer):
@@ -112,3 +119,103 @@ class AlexandriaTransformer(BaseTransformer):
             raise ValueError(
                 f"Unknown functional: {raw_structure.attributes['_alexandria_xc_functional']}"
             )
+
+
+class AlexandriaTrajectoryTransformer(BaseTransformer):
+    """
+    Alexandria trajectory transformer implementation.
+    Transforms raw Alexandria trajectory data into Trajectory objects.
+    """
+
+    def __init__(self, *args, **kwargs):
+        if "structure_class" in kwargs:
+            del kwargs["structure_class"]
+        if "database_class" in kwargs:
+            del kwargs["database_class"]
+        super().__init__(
+            *args,
+            **kwargs,
+            structure_class=Trajectory,
+            database_class=TrajectoriesDatabase,
+        )
+
+    def get_new_transform_version(self) -> str:
+        """
+        Get the new transform version based on the latest processed data.
+
+        Returns
+        -------
+        str
+            New transform version in YYYY-MM-DD format
+        """
+        try:
+            with self.target_db.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT MAX(last_modified::date)::text
+                    FROM {self.config.dest_table_name}
+                    """
+                )
+                latest_date = cur.fetchone()[0]
+                return (
+                    latest_date if latest_date else super().get_new_transform_version()
+                )
+        except Exception:
+            return super().get_new_transform_version()
+
+    def transform_row(
+        self,
+        raw_structure: RawStructure,
+        source_db: StructuresDatabase,
+        task_table_name: Optional[str] = None,
+    ) -> list[Trajectory]:
+        """
+        Transform a raw Alexandria structure into OptimadeStructures.
+
+        Parameters
+        ----------
+        raw_structure : RawStructure
+            RawStructure object from the dumped database
+        source_db : Optional[StructuresDatabase]
+            Source database connection
+        task_table_name : Optional[str]
+            Task table name to read targets or trajectories from
+
+        Returns
+        -------
+        list[OptimadeStructure]
+            The transformed OptimadeStructure objects.
+                  If the list is empty, nothing from the structure should be included in the database.
+        """
+
+        trajectories = []
+
+        current_relaxation_number = 0
+        for relaxation_number, calc in enumerate(raw_structure.attributes):
+            relaxation_steps = calc["steps"]
+            for relaxation_step, relaxation_step_dict in enumerate(relaxation_steps):
+                structure = Structure.from_dict(relaxation_step_dict["structure"])
+                optimade_structure_dict = get_optimade_from_pymatgen(structure)
+
+                targets = {
+                    "energy": relaxation_step_dict["energy"],
+                    "forces": relaxation_step_dict["forces"],
+                    "stress_tensor": relaxation_step_dict["stress"],
+                }
+
+                trajectory = Trajectory(
+                    immutable_id=raw_structure.id,
+                    id=f"{raw_structure.id}-{calc['functional']}-{current_relaxation_number}",
+                    source="alexandria",
+                    last_modified=raw_structure.last_modified,
+                    **optimade_structure_dict,
+                    **targets,
+                    relaxation_number=relaxation_number,
+                    relaxation_step=relaxation_step,
+                    functional=Functional(calc["functional"]),
+                )
+
+                trajectories.append(trajectory)
+                current_relaxation_number += 1
+
+        return trajectories
