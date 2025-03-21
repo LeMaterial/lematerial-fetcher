@@ -205,6 +205,10 @@ class Push:
                     offset = i * chunk_size
                     chunk_file = output_path / f"chunk_{i}.csv"
 
+                    if chunk_file.exists():
+                        logger.info(f"Skipping chunk {i} because it already exists")
+                        continue
+
                     # Will copy all columns if data_type is "any"
                     if self.columns is None:
                         columns = "*"

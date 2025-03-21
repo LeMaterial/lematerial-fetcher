@@ -14,7 +14,7 @@ class BaseConfig:
     num_workers: int
     retry_delay: int
     log_every: int
-    cache_dir: str | None = None
+    cache_dir: str
 
 
 @dataclass
