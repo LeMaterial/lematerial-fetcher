@@ -25,7 +25,10 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTransformer,
 )
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
-from lematerial_fetcher.fetcher.oqmd.transform import OQMDTransformer
+from lematerial_fetcher.fetcher.oqmd.transform import (
+    OQMDTrajectoryTransformer,
+    OQMDTransformer,
+)
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -149,10 +152,18 @@ def oqmd_fetch(ctx):
 
 @oqmd_cli.command(name="transform")
 @click.pass_context
-def oqmd_transform(ctx):
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Transform trajectory data from OQMD.",
+)
+def oqmd_transform(ctx, traj):
     """Transform materials from OQMD."""
     try:
-        transformer = OQMDTransformer(debug=ctx.obj["debug"])
+        if traj:
+            transformer = OQMDTrajectoryTransformer(debug=ctx.obj["debug"])
+        else:
+            transformer = OQMDTransformer(debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
