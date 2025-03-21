@@ -14,12 +14,12 @@ As Entalpic, the objective is to retrieve information from various OPTIMADE sour
 
 LeMaterial Fetcher uses the following environment variables for configuration:
 
-- `LEMATERIAL_FETCHER_API_BASE_URL`: The base URL of the API to fetch data from. **(Required)**
-- `LEMATERIAL_FETCHER_DB_USER`: The username for the PostgreSQL database. **(Required)**
-- `LEMATERIAL_FETCHER_DB_PASSWORD`: The password for the PostgreSQL database. **(Required)**
-- `LEMATERIAL_FETCHER_DB_NAME`: The name of the PostgreSQL database. **(Required)**
-- `LEMATERIAL_FETCHER_TABLE_NAME`: The name of the table in the database where data will be stored. **(Required)**
-- `LEMATERIAL_FETCHER_LOG_DIR`: The directory where log files will be stored. Defaults to `./logs`.
+- `LEMATERIALFETCHER_API_BASE_URL`: The base URL of the API to fetch data from. **(Required)**
+- `LEMATERIALFETCHER_DB_USER`: The username for the PostgreSQL database. **(Required)**
+- `LEMATERIALFETCHER_DB_PASSWORD`: The password for the PostgreSQL database. **(Required)**
+- `LEMATERIALFETCHER_DB_NAME`: The name of the PostgreSQL database. **(Required)**
+- `LEMATERIALFETCHER_TABLE_NAME`: The name of the table in the database where data will be stored. **(Required)**
+- `LEMATERIALFETCHER_LOG_DIR`: The directory where log files will be stored. Defaults to `./logs`.
 
 ## Installation
 
@@ -33,20 +33,20 @@ LeMaterial Fetcher uses the following environment variables for configuration:
 2. Set up your environment variables. You can use a `.env` file or export them directly in your shell. For example:
 
    ```bash
-   LEMATERIAL_FETCHER_API_BASE_URL=https://alexandria.icams.rub.de/pbe/v1/structures
-   LEMATERIAL_FETCHER_DB_NAME=alexandria
-   LEMATERIAL_FETCHER_DB_USER=myus€r
-   LEMATERIAL_FETCHER_DB_PASSWORD=mypa$$word
-   LEMATERIAL_FETCHER_TABLE_NAME=structures_pbe
-   LEMATERIAL_FETCHER_LOG_DIR=./logs
+   LEMATERIALFETCHER_API_BASE_URL=https://alexandria.icams.rub.de/pbe/v1/structures
+   LEMATERIALFETCHER_DB_NAME=alexandria
+   LEMATERIALFETCHER_DB_USER=myus€r
+   LEMATERIALFETCHER_DB_PASSWORD=mypa$$word
+   LEMATERIALFETCHER_TABLE_NAME=structures_pbe
+   LEMATERIALFETCHER_LOG_DIR=./logs
    ```
 
    For the `lematerial-fetcher mp fetch` command, you need to set the following environment variables:
 
    ```bash
-   LEMATERIAL_FETCHER_MP_BUCKET_NAME=materialsproject-build
-   LEMATERIAL_FETCHER_MP_BUCKET_PREFIX=collections
-   LEMATERIAL_FETCHER_MP_COLLECTIONS_PREFIX=materials
+   LEMATERIALFETCHER_MP_BUCKET_NAME=materialsproject-build
+   LEMATERIALFETCHER_MP_BUCKET_PREFIX=collections
+   LEMATERIALFETCHER_MP_COLLECTIONS_PREFIX=materials
    ```
 
 3. Build the program:

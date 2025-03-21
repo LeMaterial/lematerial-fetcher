@@ -1,12 +1,22 @@
 # Copyright 2025 Entalpic
+import functools
 from abc import ABC, abstractmethod
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from threading import local
+from multiprocessing import Manager
 from typing import Any, List, Optional
 
 from lematerial_fetcher.database.postgres import DatasetVersions, StructuresDatabase
 from lematerial_fetcher.utils.config import FetcherConfig
 from lematerial_fetcher.utils.logging import logger
+
+
+@dataclass
+class BatchInfo:
+    """Information about a batch to be processed."""
+
+    offset: int
+    limit: int
 
 
 @dataclass
@@ -32,7 +42,7 @@ class BaseFetcher(ABC):
     while allowing specific implementations to define their own data retrieval logic.
     """
 
-    def __init__(self, config: FetcherConfig):
+    def __init__(self, config: FetcherConfig, debug: bool = False):
         """
         Initialize the fetcher with configuration.
 
@@ -40,39 +50,29 @@ class BaseFetcher(ABC):
         ----------
         config : FetcherConfig
             Configuration object containing necessary parameters for the fetcher
+        debug : bool
+            If True, all processing will be done in the main process for debugging
         """
         self.config = config
-        self._thread_local = local()
+        self.debug = debug
+        self._db = None
+        self.version_db = DatasetVersions(self.config.db_conn_str)
+        self.version_db.create_table()
 
     @property
     def db(self) -> StructuresDatabase:
         """
-        Get the database connection for the current thread.
+        Get the database connection.
         Creates a new connection if one doesn't exist.
 
         Returns
         -------
         StructuresDatabase
-            Database connection for the current thread
+            Database connection
         """
-        if not hasattr(self._thread_local, "db"):
-            self._thread_local.db = self._create_db_connection()
-        return self._thread_local.db
-
-    @property
-    def version_db(self) -> DatasetVersions:
-        """
-        Get the version tracking database connection for the current thread.
-        Creates a new connection if one doesn't exist.
-
-        Returns
-        -------
-        DatasetVersions
-            Version tracking database connection for the current thread
-        """
-        if not hasattr(self._thread_local, "version_db"):
-            self._thread_local.version_db = DatasetVersions(self.config.db_conn_str)
-        return self._thread_local.version_db
+        if self._db is None:
+            self._db = self._create_db_connection()
+        return self._db
 
     def _create_db_connection(
         self, table_name: Optional[str] = None
@@ -225,15 +225,316 @@ class BaseFetcher(ABC):
         """
         pass
 
-    @abstractmethod
     def process_items(self, items_info: ItemsInfo) -> None:
         """
-        Process items in parallel, starting from the given offset.
+        Process items using either pagination or list-based processing depending on context.
+        This is a template method that can be overridden by subclasses if needed.
 
         Parameters
         ----------
         items_info : ItemsInfo
             Information about where to start processing
+        """
+        if items_info.items is not None:
+            self._process_list(items_info)
+        else:
+            self._process_pagination(items_info)
+
+    def _process_list(self, items_info: ItemsInfo) -> None:
+        """
+        Process items in either parallel or debug mode for list-based processing.
+
+        Parameters
+        ----------
+        items_info : ItemsInfo
+            Information about items to process
+        """
+        logger.info(
+            f"Starting {'debug' if self.debug else 'parallel'} list processing from offset {items_info.start_offset}"
+        )
+
+        if self.debug:
+            # Debug mode - process sequentially in main process
+            self.manager_dict = {"occurred": False, "latest_modified": None}
+            for i in range(items_info.start_offset, len(items_info.items)):
+                try:
+                    has_more_data = self._process_batch(
+                        items_info.items[i], self.config, self.manager_dict
+                    )
+                    if not has_more_data:
+                        logger.warning(f"Failed to process item at index {i}")
+                    logger.info(
+                        f"Successfully processed item at index {i} containing {items_info.items[i]}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing item at index {i}: {str(e)}")
+                    if BaseFetcher.is_critical_error(e):
+                        raise
+        else:
+            # Parallel mode - process using process pool
+            if not hasattr(self, "manager"):
+                self.manager = Manager()
+                self.manager_dict = self.manager.dict()
+                self.manager_dict["occurred"] = False
+                self.manager_dict["latest_modified"] = None
+
+            with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
+                futures = set()
+                current_index = items_info.start_offset
+                more_data = True
+
+                process_func = functools.partial(
+                    self.__class__._process_batch,
+                    config=self.config,
+                    manager_dict=self.manager_dict,
+                )
+
+                # Submit initial batches
+                initial_batches = min(self.config.num_workers * 2, 10)
+                for _ in range(initial_batches):
+                    if current_index >= len(items_info.items):
+                        break
+                    future = executor.submit(
+                        process_func, items_info.items[current_index]
+                    )
+                    futures.add((items_info.items[current_index], future))
+                    current_index += 1
+
+                # Process remaining batches with work stealing
+                while futures and more_data:
+                    done_futures = set()
+                    for key, future in futures:
+                        if future.done():
+                            try:
+                                has_more_data = future.result()
+                                if not has_more_data:
+                                    logger.warning(f"Failed to process batch {key}")
+
+                                if self.manager_dict.get("occurred", False):
+                                    logger.critical(
+                                        "Critical error detected, shutting down process pool"
+                                    )
+                                    executor.shutdown(wait=False)
+                                    raise RuntimeError(
+                                        "Critical error occurred during processing"
+                                    )
+
+                                logger.info(f"Successfully processed batch {key}")
+
+                                if current_index < len(items_info.items):
+                                    next_future = executor.submit(
+                                        process_func, items_info.items[current_index]
+                                    )
+                                    futures.add(
+                                        (items_info.items[current_index], next_future)
+                                    )
+                                    current_index += 1
+                                else:
+                                    more_data = False
+
+                            except Exception as e:
+                                logger.error(f"Error processing batch {key}: {str(e)}")
+                                if BaseFetcher.is_critical_error(e):
+                                    logger.critical(
+                                        "Critical error detected, shutting down"
+                                    )
+                                    executor.shutdown(wait=False)
+                                    raise
+
+                                if current_index < len(items_info.items):
+                                    next_future = executor.submit(
+                                        process_func, items_info.items[current_index]
+                                    )
+                                    futures.add((current_index, next_future))
+                                    current_index += 1
+                                else:
+                                    more_data = False
+
+                            done_futures.add((key, future))
+                            break
+
+                    futures -= done_futures
+
+                # Wait for remaining futures
+                for index, future in futures:
+                    try:
+                        result = future.result()
+                        if not result:
+                            logger.warning(f"Failed to process batch at index {index}")
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing batch at index {index}: {str(e)}"
+                        )
+
+    def _process_pagination(self, items_info: ItemsInfo) -> None:
+        """
+        Process items in either parallel or debug mode for pagination-based processing.
+
+        Parameters
+        ----------
+        items_info : ItemsInfo
+            Information about items to process
+        """
+        logger.info(
+            f"Starting {'debug' if self.debug else 'parallel'} pagination processing from offset {items_info.start_offset}"
+        )
+
+        if self.debug:
+            # Debug mode - process sequentially in main process
+            current_index = items_info.start_offset
+            more_data = True
+            self.manager_dict = {"occurred": False, "latest_modified": None}
+
+            while more_data:
+                try:
+                    batch_info = BatchInfo(
+                        offset=current_index, limit=self.config.page_limit
+                    )
+                    has_more_data = self._process_batch(
+                        batch_info, self.config, self.manager_dict
+                    )
+                    if not has_more_data:
+                        logger.warning(
+                            f"Failed to process batch at offset {current_index}"
+                        )
+                        more_data = False
+                    logger.info(
+                        f"Successfully processed batch at offset {current_index}"
+                    )
+                    current_index += self.config.page_limit
+                except Exception as e:
+                    logger.error(
+                        f"Error processing batch at offset {current_index}: {str(e)}"
+                    )
+                    if BaseFetcher.is_critical_error(e):
+                        raise
+                    more_data = False
+        else:
+            # Parallel mode - process using process pool
+            if not hasattr(self, "manager"):
+                self.manager = Manager()
+                self.manager_dict = self.manager.dict()
+                self.manager_dict["occurred"] = False
+
+            with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
+                futures = set()
+                current_index = items_info.start_offset
+                more_data = True
+
+                process_func = functools.partial(
+                    self.__class__._process_batch,
+                    config=self.config,
+                    manager_dict=self.manager_dict,
+                )
+
+                # Submit initial batches
+                initial_batches = min(self.config.num_workers * 2, 10)
+                for _ in range(initial_batches):
+                    batch_info = BatchInfo(
+                        offset=current_index, limit=self.config.page_limit
+                    )
+                    future = executor.submit(process_func, batch_info)
+                    futures.add((current_index, future))
+                    current_index += self.config.page_limit
+
+                # Process remaining batches with work stealing
+                while futures and more_data:
+                    done_futures = set()
+                    for index, future in futures:
+                        if future.done():
+                            try:
+                                has_more_data = future.result()
+                                if not has_more_data:
+                                    logger.warning(
+                                        f"Failed to process batch at offset {index}"
+                                    )
+                                    more_data = False
+
+                                if self.manager_dict.get("occurred", False):
+                                    logger.critical(
+                                        "Critical error detected, shutting down process pool"
+                                    )
+                                    executor.shutdown(wait=False)
+                                    raise RuntimeError(
+                                        "Critical error occurred during processing"
+                                    )
+
+                                logger.info(
+                                    f"Successfully processed batch at offset {index}"
+                                )
+
+                                if has_more_data:
+                                    batch_info = BatchInfo(
+                                        offset=current_index,
+                                        limit=self.config.page_limit,
+                                    )
+                                    next_future = executor.submit(
+                                        process_func, batch_info
+                                    )
+                                    futures.add((current_index, next_future))
+                                    current_index += self.config.page_limit
+                                else:
+                                    more_data = False
+
+                            except Exception as e:
+                                logger.error(
+                                    f"Error processing batch at offset {index}: {str(e)}"
+                                )
+                                if BaseFetcher.is_critical_error(e):
+                                    logger.critical(
+                                        "Critical error detected, shutting down"
+                                    )
+                                    executor.shutdown(wait=False)
+                                    raise
+
+                                if more_data:
+                                    batch_info = BatchInfo(
+                                        offset=current_index,
+                                        limit=self.config.page_limit,
+                                    )
+                                    next_future = executor.submit(
+                                        process_func, batch_info
+                                    )
+                                    futures.add((current_index, next_future))
+                                    current_index += self.config.page_limit
+                                else:
+                                    more_data = False
+
+                            done_futures.add((index, future))
+                            break
+
+                    futures -= done_futures
+
+                # Wait for remaining futures
+                for index, future in futures:
+                    try:
+                        result = future.result()
+                        if not result:
+                            logger.warning(f"Failed to process batch at index {index}")
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing batch at index {index}: {str(e)}"
+                        )
+
+    @staticmethod
+    @abstractmethod
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
+        """
+        Process a single batch. Must be implemented by subclasses.
+
+        Parameters
+        ----------
+        batch : Any
+            The batch to process (e.g., S3 object key, API batch info)
+        config : FetcherConfig
+            Configuration object
+        manager_dict : dict
+            Shared dictionary for inter-process communication
+
+        Returns
+        -------
+        bool
+            True if successful and more data is available, False if failed or no more data
         """
         pass
 
@@ -255,7 +556,5 @@ class BaseFetcher(ABC):
         Clean up any resources that were created during the fetch process.
         Must be implemented by subclasses.
         """
-        if hasattr(self._thread_local, "db"):
-            delattr(self._thread_local, "db")
-        if hasattr(self._thread_local, "version_db"):
-            delattr(self._thread_local, "version_db")
+        self._db = None
+        self._version_db = None

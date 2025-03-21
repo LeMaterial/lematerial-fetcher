@@ -1,10 +1,10 @@
 # Copyright 2025 Entalpic
 import logging
+import os
 
 from rich.logging import RichHandler
 
 
-# TODO: add experiment manager or file handler
 class Logger:
     """Entaflownet's custom logger. Handles logging to the console.
 
@@ -21,11 +21,21 @@ class Logger:
     """
 
     def __init__(self, level: str = "NOTSET"):
+        if os.environ.get("LEMATERIALFETCHER_LOG_DIR", None):
+            log_file = os.path.join(
+                os.environ.get("LEMATERIALFETCHER_LOG_DIR"), "lematerial_fetcher.log"
+            )
+            self.file_logger = logging.getLogger("lematerial_fetcher")
+            self.file_logger.setLevel(level)
+            self.file_logger.addHandler(logging.FileHandler(log_file))
+        else:
+            self.file_logger = None
+
         format = "%(message)s"
         datefmt = "[%X]"
         handlers = [RichHandler(rich_tracebacks=True)]
-        self.term_logger = logging.getLogger("entaflownet")
-        """Logger to the terminal (vs experiment manager or file handler)."""
+        self.term_logger = logging.getLogger("lematerial_fetcher")
+
         self.set_level(level)
         self.term_logger.handlers = handlers
         self.term_logger.propagate = False

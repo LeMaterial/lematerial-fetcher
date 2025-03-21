@@ -1,14 +1,14 @@
 # Copyright 2025 Entalpic
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
-from threading import Lock
-from typing import Any, Optional
+from multiprocessing import Manager
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
@@ -23,161 +23,142 @@ class BatchInfo:
     limit: int
 
 
-class AlexandriaFetcher(BaseFetcher):
+def create_session() -> requests.Session:
+    """Create a session with retry capability."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def read_item(item: Any, latest_modified: datetime) -> RawStructure:
     """
-    Alexandria API data fetcher implementation.
-    Fetches structure data from the Alexandria API endpoint.
+    Convert an API item to a RawStructure.
 
     Parameters
     ----------
-    config : FetcherConfig, optional
-        Configuration for the fetcher. If None, loads from default location.
-    """
+    item : Any
+        The API item to convert
+    latest_modified : datetime
+        The latest modified date
 
-    def __init__(self, config: FetcherConfig = None):
-        super().__init__(config or load_fetcher_config())
-        self._latest_modified_date: Optional[datetime] = None
-        self._lock = Lock()  # For thread-safe updates
+    Returns
+    -------
+    RawStructure
+        The converted structure
+    """
+    last_modified = item["attributes"].get("last_modified", None)
+    if last_modified:
+        last_modified = datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
+        # update the last modified date if it's the latest
+        if latest_modified is None or last_modified > latest_modified:
+            latest_modified = last_modified
+        last_modified = last_modified.strftime("%Y-%m-%d")
+    return RawStructure(
+        id=item["id"],
+        type=item["type"],
+        attributes=item["attributes"],
+        last_modified=last_modified,
+    ), latest_modified
+
+
+class AlexandriaFetcher(BaseFetcher):
+    """Fetcher for the Alexandria API."""
+
+    def __init__(self, config: FetcherConfig = None, debug: bool = False):
+        """Initialize the fetcher."""
+        super().__init__(config or load_fetcher_config(), debug)
+        self.manager = Manager()
+        self.manager_dict = self.manager.dict()
+        self.manager_dict["latest_modified"] = None
+        self.manager_dict["occurred"] = False
 
     def setup_resources(self) -> None:
-        """Set up database connection."""
+        """Set up necessary resources."""
+        logger.info("Setting up Alexandria fetcher resources")
         self.setup_database()
 
     def get_items_to_process(self) -> ItemsInfo:
-        """Get information about items to process."""
+        """Get information about batches to process."""
+        # For Alexandria we just return a starting offset
+        # Actual batches will be generated dynamically during processing
         return ItemsInfo(start_offset=self.config.page_offset)
 
-    def process_items(self, items_info: ItemsInfo) -> None:
-        """Process items in parallel, starting from the given offset."""
-        with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
-            futures = []
-            offset = items_info.start_offset
-
-            while True:
-                future = executor.submit(
-                    self._process_batch, offset, self.config.page_limit
-                )
-                futures.append((offset, future))
-                offset += self.config.page_limit
-
-                # Check if we've reached the end of data
-                try:
-                    if not future.result():
-                        break
-                except Exception as e:
-                    logger.error(f"Error processing batch at offset {offset}: {str(e)}")
-                    continue
-
-            # Process remaining futures
-            for batch_offset, future in futures:
-                if not future.done():
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing batch at offset {batch_offset}: {str(e)}"
-                        )
-
-    def _process_batch(self, offset: int, limit: int) -> bool:
+    @staticmethod
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
         """
-        Process a single batch from the API.
+        Process a single batch from the Alexandria API.
 
         Parameters
         ----------
-        offset : int
-            Offset for the batch
-        limit : int
-            Limit for the batch
+        batch : BatchInfo
+            Information about the batch to process
+        config : FetcherConfig
+            Configuration object
+        manager_dict : dict
+            Shared dictionary for inter-process communication
 
         Returns
         -------
         bool
-            True if the batch was processed successfully, False if it's the end of data
+            True if successful and more data is available, False if failed or no more data
         """
-        session = self._create_session()
-
         try:
-            # Fetch the batch
-            url = f"{self.config.base_url}?page_limit={limit}&sort=id&page_offset={offset}"
-            response = session.get(url)
-            response.raise_for_status()
-            data = response.json()
+            db = StructuresDatabase(config.db_conn_str, config.table_name)
+            session = create_session()
 
-            # Process and store items
-            for item in data.get("data", []):
-                try:
-                    structure = self.read_item(item)
-                    self.db.insert_data(structure)
-                except Exception as e:
-                    logger.warning(
-                        f"Error processing item {item.get('id', 'unknown')}: {str(e)}"
-                    )
-                    continue
+            try:
+                # Fetch the batch
+                url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
+                response = session.get(url)
+                response.raise_for_status()
+                data = response.json()
 
-            logger.info(f"Successfully processed batch at offset {offset}")
-            return True
+                # Process and store items
+                structures = []
+                for api_item in data.get("data", []):
+                    try:
+                        structure, last_modified = read_item(
+                            api_item, manager_dict["latest_modified"]
+                        )
+                        manager_dict["latest_modified"] = last_modified
+                        structures.append(structure)
+                    except Exception as e:
+                        logger.warning(
+                            f"Error processing item {api_item.get('id', 'unknown')}: {str(e)}"
+                        )
+                        continue
+
+                # Insert all structures in a batch
+                if structures:
+                    db.batch_insert_data(structures)
+
+                return len(data.get("data", [])) > 0
+
+            except Exception as e:
+                # Check if this is a critical error
+                shared_critical_error = BaseFetcher.is_critical_error(e)
+                if shared_critical_error and manager_dict is not None:
+                    manager_dict["occurred"] = True  # shared across processes
+
+                return False
+            finally:
+                session.close()
 
         except Exception as e:
-            logger.error(f"Error processing batch at offset {offset}: {str(e)}")
+            logger.error(f"Process initialization error: {str(e)}")
             return False
-        finally:
-            session.close()
-
-    def _create_session(self) -> requests.Session:
-        """
-        Create a requests session with retry configuration.
-
-        Returns
-        -------
-        requests.Session
-            Configured session object
-        """
-        retry_strategy = Retry(
-            total=self.config.max_retries,
-            backoff_factor=self.config.retry_delay,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session = requests.Session()
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        return session
 
     def cleanup_resources(self) -> None:
-        """Clean up database connections."""
-        if hasattr(self._thread_local, "db"):
-            delattr(self._thread_local, "db")
-
-    def read_item(self, item: Any) -> RawStructure:
-        """Transform a raw API item into a RawStructure."""
-        last_modified = item["attributes"].get("last_modified", None)
-        if last_modified:
-            last_modified = datetime.fromisoformat(last_modified.replace("Z", "+00:00"))
-            # update the last modified date if it's the latest
-            with self._lock:
-                if (
-                    self._latest_modified_date is None
-                    or last_modified > self._latest_modified_date
-                ):
-                    self._latest_modified_date = last_modified
-            last_modified = last_modified.strftime("%Y-%m-%d")
-        return RawStructure(
-            id=item["id"],
-            type=item["type"],
-            attributes=item["attributes"],
-            last_modified=last_modified,
-        )
+        """Clean up resources."""
+        logger.info("Cleaning up Alexandria fetcher resources")
 
     def get_new_version(self) -> str:
-        """
-        Get the new version identifier for the Alexandria dataset.
-        Uses the API version or timestamp from the API response.
-
-        Returns
-        -------
-        str
-            New version identifier in YYYY-MM-DD format
-        """
-        if self.last_modified:
-            return self.last_modified.strftime("%Y-%m-%d")
-        return self.get_current_version()
+        """Get a new version string."""
+        return datetime.utcnow().isoformat()

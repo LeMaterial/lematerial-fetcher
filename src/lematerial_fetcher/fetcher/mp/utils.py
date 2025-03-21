@@ -76,6 +76,7 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
     Failed records are logged but do not stop the processing.
     """
     processed = 0
+    structures = []
 
     for line in gzipped_file:
         processed += 1
@@ -101,10 +102,14 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
                     last_modified=last_modified,
                 )
 
-            db.insert_data(structure)
+            structures.append(structure)
 
             if processed % log_every == 0:
                 logger.info(f"Processed {processed} records")
+                # Insert batch when we hit the log_every threshold
+                if structures:
+                    db.batch_insert_data(structures)
+                    structures = []
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse JSON line: {e}")
@@ -112,6 +117,10 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
         except Exception as e:
             logger.warning(f"Failed to insert data: {e}")
             continue
+
+    # Insert any remaining structures
+    if structures:
+        db.batch_insert_data(structures)
 
     logger.info(f"Completed processing {processed} records")
 
@@ -142,11 +151,20 @@ def extract_structure_optimization_tasks(
         - The second dictionary maps task IDs to the calculation type.
     """
 
-    structure_optimization_tasks = [
-        mp_id
-        for mp_id, task_type in raw_structure.attributes["task_types"].items()
-        if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
-    ]
+    # This means that the raw structure is a material
+    if "task_types" in raw_structure.attributes:
+        structure_optimization_tasks = [
+            mp_id
+            for mp_id, task_type in raw_structure.attributes["task_types"].items()
+            if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
+        ]
+    else:
+        raise ValueError(
+            "Invalid raw structure type: "
+            + raw_structure.type
+            + ". Expected 'task_types' in the attributes."
+        )
+
     non_deprecated_task_ids = [
         mp_id
         for mp_id in structure_optimization_tasks
@@ -214,6 +232,13 @@ def map_tasks_to_functionals(
 
     for task_id, calc_type in task_calc_types.items():
         functional = calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
+        if task_id not in tasks:
+            logger.warning(
+                f"Task {task_id} was not found in your tasks databases, "
+                + "this task will be ignored"
+            )
+            continue
+
         if functional in MP_FUNCTIONAL_MAPPING:
             if functional == Functional.PBE and calc_type == "GGA+U":
                 functional_tasks["GGA+U"].append(tasks[task_id])

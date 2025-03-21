@@ -3,7 +3,7 @@ import json
 from typing import Any, List, Optional
 
 import psycopg2
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import OptimadeStructure
@@ -109,6 +109,20 @@ class Database:
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error fetching items with IDs: {str(e)}")
 
+    def count_items(self) -> int:
+        """
+        Count the number of items in the table.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {self.table_name}")
+            return cur.fetchone()[0]
+
+    def close(self) -> None:
+        """
+        Close the database connection.
+        """
+        self.conn.close()
+
 
 class StructuresDatabase(Database):
     """
@@ -146,6 +160,49 @@ class StructuresDatabase(Database):
                 self.conn.commit()
             except (json.JSONDecodeError, psycopg2.Error) as e:
                 raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
+
+    def batch_insert_data(
+        self, structures: List[RawStructure], batch_size: int = 1000
+    ) -> None:
+        """
+        Insert multiple structures into the database in batches using execute_values.
+
+        Parameters
+        ----------
+        structures : List[RawStructure]
+            List of structure objects to insert
+        batch_size : int, optional
+            Number of structures to insert in each batch, by default 1000
+
+        Raises
+        ------
+        Exception
+            If there's an error during JSON encoding or database insertion
+        """
+        if not structures:
+            return
+
+        with self.conn.cursor() as cur:
+            # Process structures in batches
+            for i in range(0, len(structures), batch_size):
+                batch = structures[i : i + batch_size]
+                # Create a list of value tuples for the batch
+                values = []
+                for structure in batch:
+                    attributes_json = json.dumps(structure.attributes)
+                    values.append((structure.id, structure.type, attributes_json))
+
+                columns = ", ".join(self.columns.keys())
+                query = f"""
+                INSERT INTO {self.table_name} ({columns})
+                VALUES %s
+                ON CONFLICT (id) DO NOTHING;"""
+
+                try:
+                    execute_values(cur, query, values)
+                    self.conn.commit()
+                except (json.JSONDecodeError, psycopg2.Error) as e:
+                    raise Exception(f"Error during batch insert: {str(e)}")
 
     def fetch_items(
         self, offset: int = 0, batch_size: int = 100, table_name: Optional[str] = None
@@ -327,8 +384,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
         self.columns.update(
             {
                 "relaxation_step": "INTEGER",
-                "trajectory_step": "INTEGER[]",
-                "trajectory_number": "INTEGER[]",
+                "relaxation_number": "INTEGER",
             }
         )
 
@@ -384,8 +440,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
                     structure.entalpic_fingerprint,
                     # trajectory-specific fields
                     structure.relaxation_step,
-                    structure.trajectory_step,
-                    structure.trajectory_number,
+                    structure.relaxation_number,
                 )
                 cur.execute(query, input_data)
                 self.conn.commit()

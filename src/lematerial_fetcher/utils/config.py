@@ -71,7 +71,7 @@ def _create_db_conn_str(user_env: str, password_env: str, dbname_env: str) -> st
 
 
 def load_fetcher_config() -> FetcherConfig:
-    load_dotenv()
+    load_dotenv(override=True)
 
     # check required variables
     required_vars = [
@@ -106,7 +106,7 @@ def load_fetcher_config() -> FetcherConfig:
 
 
 def load_transformer_config() -> TransformerConfig:
-    load_dotenv()
+    load_dotenv(override=True)
 
     required_vars = [
         "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",

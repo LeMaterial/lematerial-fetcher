@@ -1,7 +1,9 @@
 # Copyright 2025 Entalpic
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from multiprocessing import Manager
+from typing import Any
 
+from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
 from lematerial_fetcher.fetcher.mp.utils import add_s3_object_to_db
 from lematerial_fetcher.utils.aws import (
@@ -23,9 +25,13 @@ class MPFetcher(BaseFetcher):
         Configuration for the fetcher. If None, loads from default location.
     """
 
-    def __init__(self, config: FetcherConfig = None):
-        super().__init__(config or load_fetcher_config())
+    def __init__(self, config: FetcherConfig = None, debug: bool = False):
+        super().__init__(config or load_fetcher_config(), debug)
         self.aws_client = None
+        # Create a Manager for sharing state between processes
+        self.manager = Manager()
+        self.manager_dict = self.manager.dict()
+        self.manager_dict["occurred"] = False
 
     def setup_resources(self) -> None:
         """Set up AWS client and database connection."""
@@ -106,70 +112,54 @@ class MPFetcher(BaseFetcher):
             items=filtered_keys,
         )
 
-    def process_items(self, items_info: ItemsInfo) -> None:
+    @staticmethod
+    def _process_batch(batch: Any, config: FetcherConfig, manager_dict: dict) -> bool:
         """
-        Process S3 objects in parallel using a thread pool.
+        Process a single S3 object batch.
 
         Parameters
         ----------
-        items_info : ItemsInfo
-            Information about S3 objects to process
+        batch : str
+            The S3 object key to process
+        config : FetcherConfig
+            Configuration object
+        manager_dict : dict
+            Shared dictionary for inter-process communication
+
+        Returns
+        -------
+        bool
+            True if successful, False if failed
         """
-        if not items_info.items:
-            logger.warning("No items to process")
-            return
+        try:
+            # Create new AWS client for this process
+            aws_client = get_aws_client()
 
-        with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
-            futures = []
+            # Create new database connection for this process
+            db = StructuresDatabase(config.db_conn_str, config.table_name)
 
-            for key in items_info.items:  # Use the stored keys directly
-                future = executor.submit(
-                    self._process_s3_object, self.config.mp_bucket_name, key
-                )
-                futures.append((key, future))
+            add_s3_object_to_db(
+                aws_client, config.mp_bucket_name, batch, db, config.log_every
+            )
+            return True
+        except Exception as e:
+            shared_critical_error = BaseFetcher.is_critical_error(e)
+            if shared_critical_error and manager_dict is not None:
+                manager_dict["occurred"] = True  # shared across processes
 
-            for key, future in futures:
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.error(f"Error processing S3 object {key}: {str(e)}")
-                    if self.is_critical_error(e):
-                        logger.error("Critical error encountered, shutting down")
-                        executor.shutdown(wait=False)
-                        raise
+            return False
 
     def cleanup_resources(self) -> None:
-        """Clean up AWS client and database connection."""
+        """Clean up AWS client, database connection, and process manager."""
         if self.aws_client:
             # AWS client doesn't need explicit cleanup
             self.aws_client = None
+
+        # Clean up the manager
+        if hasattr(self, "manager"):
+            self.manager.shutdown()
+
         super().cleanup_resources()
-
-    def _process_s3_object(self, bucket_name: str, object_key: str) -> None:
-        """
-        Process a single S3 object in a worker thread.
-
-        Parameters
-        ----------
-        bucket_name : str
-            Name of the S3 bucket
-        object_key : str
-            Key of the S3 object to process
-
-        Raises
-        ------
-        Exception
-            If a critical error occurs during processing
-        """
-        logger.info(f"Processing file: {object_key}")
-        try:
-            add_s3_object_to_db(
-                self.aws_client, bucket_name, object_key, self.db, self.config.log_every
-            )
-        except Exception as e:
-            logger.error(f"Error processing {object_key}: {str(e)}")
-            if self.is_critical_error(e):
-                raise
 
     def get_new_version(self) -> str:
         """
