@@ -18,36 +18,55 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTrajectoryTransformer,
     MPTransformer,
 )
+from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
 from lematerial_fetcher.utils.logging import logger
 
 
 @click.group()
-def cli():
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Run all operations in the main process for debugging purposes.",
+)
+@click.pass_context
+def cli(ctx, debug):
     """A CLI tool to fetch materials from various sources."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["debug"] = debug
 
 
 @click.group(name="mp")
-def mp_cli():
+@click.pass_context
+def mp_cli(ctx):
     """Commands for fetching data from Materials Project."""
     pass
 
 
 @click.group(name="alexandria")
-def alexandria_cli():
+@click.pass_context
+def alexandria_cli(ctx):
     """Commands for fetching data from Alexandria."""
+    pass
+
+
+@click.group(name="oqmd")
+@click.pass_context
+def oqmd_cli(ctx):
+    """Commands for fetching data from OQMD."""
     pass
 
 
 cli.add_command(mp_cli)
 cli.add_command(alexandria_cli)
+cli.add_command(oqmd_cli)
 
 
 @mp_cli.command(name="fetch")
-def mp_fetch():
+@click.pass_context
+def mp_fetch(ctx):
     """Fetch materials from Materials Project."""
     try:
-        fetcher = MPFetcher()
+        fetcher = MPFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -59,44 +78,48 @@ def mp_fetch():
     is_flag=True,
     help="Transform trajectory data from Material Project.",
 )
-@click.option(
-    "--debug",
-    is_flag=True,
-    help="Run transformations in the main process for debugging purposes.",
-)
-def mp_transform(traj, debug):
+@click.pass_context
+def mp_transform(ctx, traj):
     """Transform materials from Material Project."""
     try:
         if traj:
-            transformer = MPTrajectoryTransformer(debug=debug)
+            transformer = MPTrajectoryTransformer(debug=ctx.obj["debug"])
         else:
-            transformer = MPTransformer(debug=debug)
+            transformer = MPTransformer(debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
 
 @alexandria_cli.command(name="fetch")
-def alexandria_fetch():
+@click.pass_context
+def alexandria_fetch(ctx):
     """Fetch materials from Alexandria."""
     try:
-        fetcher = AlexandriaFetcher()
+        fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
 
 @alexandria_cli.command(name="transform")
-@click.option(
-    "--debug",
-    is_flag=True,
-    help="Run transformations in the main process for debugging purposes.",
-)
-def alexandria_transform(debug):
+@click.pass_context
+def alexandria_transform(ctx):
     """Transform materials from Alexandria."""
     try:
-        transformer = AlexandriaTransformer(debug=debug)
+        transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
         transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@oqmd_cli.command(name="fetch")
+@click.pass_context
+def oqmd_fetch(ctx):
+    """Fetch materials from OQMD."""
+    try:
+        fetcher = OQMDFetcher(debug=ctx.obj["debug"])
+        fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

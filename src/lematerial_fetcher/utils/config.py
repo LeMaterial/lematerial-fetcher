@@ -24,6 +24,8 @@ class FetcherConfig(BaseConfig):
     page_offset: int
     mp_bucket_name: str
     mp_bucket_prefix: str
+    mysql_config: Optional[dict] = None
+    oqmd_download_dir: Optional[str] = None
 
 
 @dataclass
@@ -93,6 +95,13 @@ def load_fetcher_config() -> FetcherConfig:
 
     base_config = _load_base_config()
 
+    mysql_config = {
+        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
+        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
+        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
+        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
+    }
+
     return FetcherConfig(
         **base_config,
         base_url=os.getenv("LEMATERIALFETCHER_API_BASE_URL"),
@@ -102,6 +111,8 @@ def load_fetcher_config() -> FetcherConfig:
         page_offset=int(os.getenv("LEMATERIALFETCHER_PAGE_OFFSET")),
         mp_bucket_name=os.getenv("LEMATERIALFETCHER_MP_BUCKET_NAME"),
         mp_bucket_prefix=os.getenv("LEMATERIALFETCHER_MP_BUCKET_PREFIX"),
+        oqmd_download_dir=os.getenv("LEMATERIALFETCHER_OQMD_DOWNLOAD_DIR"),
+        mysql_config=mysql_config,
     )
 
 

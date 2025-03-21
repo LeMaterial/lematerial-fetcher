@@ -17,6 +17,8 @@ dependencies = [
     "psycopg2-binary>=2.9.10",
     "pydantic>=2.10.6",
     "pymatgen>=2025.1.24",
+    "mysql-connector-python>=9.2.0",
+    "beautifulsoup4>=4.13.3",
 ]
 
 [build-system]
