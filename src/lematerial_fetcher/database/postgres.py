@@ -312,7 +312,11 @@ class OptimadeDatabase(StructuresDatabase):
 
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
-        self.columns = {
+        self.columns = OptimadeDatabase.columns()
+
+    @classmethod
+    def columns(cls) -> dict[str, str]:
+        return {
             "id": "TEXT PRIMARY KEY",
             "source": "TEXT",
             "elements": "TEXT[]",
@@ -320,6 +324,7 @@ class OptimadeDatabase(StructuresDatabase):
             "elements_ratios": "FLOAT[]",
             "nsites": "INTEGER",
             "cartesian_site_positions": "FLOAT[][]",
+            "lattice_vectors": "FLOAT[][]",
             "species_at_sites": "TEXT[][]",
             "species": "TEXT[]",
             "chemical_formula_anonymous": "TEXT",
@@ -392,6 +397,7 @@ class OptimadeDatabase(StructuresDatabase):
                     structure.elements_ratios,
                     structure.nsites,
                     structure.cartesian_site_positions,
+                    structure.lattice_vectors,
                     structure.species_at_sites,
                     species_data,
                     structure.chemical_formula_anonymous,
@@ -453,6 +459,7 @@ class OptimadeDatabase(StructuresDatabase):
                             structure.elements_ratios,
                             structure.nsites,
                             structure.cartesian_site_positions,
+                            structure.lattice_vectors,
                             structure.species_at_sites,
                             species_data,
                             structure.chemical_formula_anonymous,
@@ -502,12 +509,14 @@ class TrajectoriesDatabase(OptimadeDatabase):
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
         # trajectory-specific columns
-        self.columns.update(
-            {
-                "relaxation_step": "INTEGER",
-                "relaxation_number": "INTEGER",
-            }
-        )
+        self.columns = TrajectoriesDatabase.columns()
+
+    @classmethod
+    def columns(cls) -> dict[str, str]:
+        return OptimadeDatabase.columns() | {
+            "relaxation_step": "INTEGER",
+            "relaxation_number": "INTEGER",
+        }
 
     def insert_data(self, structure: Trajectory) -> None:
         """
@@ -546,6 +555,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
                     structure.elements_ratios,
                     structure.nsites,
                     structure.cartesian_site_positions,
+                    structure.lattice_vectors,
                     structure.species_at_sites,
                     species_data,
                     structure.chemical_formula_anonymous,
@@ -610,6 +620,7 @@ class TrajectoriesDatabase(OptimadeDatabase):
                             structure.elements_ratios,
                             structure.nsites,
                             structure.cartesian_site_positions,
+                            structure.lattice_vectors,
                             structure.species_at_sites,
                             species_data,
                             structure.chemical_formula_anonymous,
