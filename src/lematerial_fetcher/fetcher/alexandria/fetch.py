@@ -235,9 +235,9 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
                 filtered_keys.append((url["url"], url["last_modified"]))
 
         filtered_keys = sorted(filtered_keys, key=lambda x: x[1])
-        if self.config.page_offset > 0:
+        if len(filtered_keys) > 0 and self.config.page_offset > 0:
             logger.info(
-                f"Skipping {self.config.page_offset} files, starting from {filtered_keys[0][0]}"
+                f"Skipping {self.config.page_offset} files, starting from {filtered_keys[0]}"
             )
         filtered_keys = [(x[0], x[1], i) for i, x in enumerate(filtered_keys)]
 

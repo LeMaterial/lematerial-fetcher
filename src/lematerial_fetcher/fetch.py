@@ -401,7 +401,13 @@ class BaseFetcher(ABC):
             more_data = True
             self.manager_dict = {"occurred": False, "latest_modified": None}
 
-            while more_data and current_index < items_info.total_count:
+            while more_data:
+                if (
+                    items_info.total_count is not None
+                    and current_index >= items_info.total_count
+                ):
+                    more_data = False
+                    break
                 try:
                     batch_info = BatchInfo(
                         offset=current_index, limit=self.config.page_limit
@@ -435,7 +441,9 @@ class BaseFetcher(ABC):
             with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
                 futures = set()
                 current_index = items_info.start_offset
-                more_data = True and (current_index <= items_info.total_count)
+                more_data = True
+                if items_info.total_count is not None:
+                    more_data = more_data and (current_index <= items_info.total_count)
                 worker_id = 0  # Initialize worker counter
 
                 process_func = functools.partial(
@@ -447,7 +455,10 @@ class BaseFetcher(ABC):
                 # Submit initial batches
                 initial_batches = self.config.num_workers
                 for _ in range(initial_batches):
-                    if current_index > items_info.total_count:
+                    if (
+                        items_info.total_count is not None
+                        and current_index > items_info.total_count
+                    ):
                         break
                     batch_info = BatchInfo(
                         offset=current_index, limit=self.config.page_limit
