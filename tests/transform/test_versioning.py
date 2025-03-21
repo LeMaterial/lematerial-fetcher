@@ -52,6 +52,7 @@ def transformer(mock_source_db, mock_target_db):
         source_table_name="test_source",
         dest_table_name="test_dest",
         batch_size=100,
+        page_offset=0,
         log_every=100,
         log_dir="./logs",
         max_retries=3,
