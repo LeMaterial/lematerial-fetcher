@@ -7,6 +7,7 @@ from psycopg2.extras import Json
 
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import OptimadeStructure
+from lematerial_fetcher.models.trajectories import Trajectory
 
 
 class Database:
@@ -201,10 +202,8 @@ class StructuresDatabase(Database):
 
 class OptimadeDatabase(StructuresDatabase):
     """
-    Database class for handling OPTIMADE-compliant structure data.
-
-    Inherits from StructuresDatabase and implements specific functionality
-    for OPTIMADE structure storage and retrieval.
+    Base database class for handling OPTIMADE-compliant structure data.
+    Contains common functionality shared between OptimadeDatabase and TrajectoriesDatabase.
 
     Parameters
     ----------
@@ -309,6 +308,84 @@ class OptimadeDatabase(StructuresDatabase):
                     structure.functional,
                     structure.cross_compatibility,
                     structure.entalpic_fingerprint,
+                )
+                cur.execute(query, input_data)
+                self.conn.commit()
+            except (json.JSONDecodeError, psycopg2.Error) as e:
+                raise Exception(f"Error inserting data for ID {structure.id}: {str(e)}")
+
+
+class TrajectoriesDatabase(OptimadeDatabase):
+    """
+    Database class for handling trajectory data.
+    Inherits common functionality from OptimadeDatabase.
+    """
+
+    def __init__(self, conn_str: str, table_name: str):
+        super().__init__(conn_str, table_name)
+        # trajectory-specific columns
+        self.columns.update(
+            {
+                "relaxation_step": "INTEGER",
+                "trajectory_step": "INTEGER[]",
+                "trajectory_number": "INTEGER[]",
+            }
+        )
+
+    def insert_data(self, structure: Trajectory) -> None:
+        """
+        Insert a trajectory structure into the database.
+
+        Parameters
+        ----------
+        structure : Trajectory
+            Trajectory structure object containing all required fields including trajectory-specific ones
+
+        Raises
+        ------
+        Exception
+            If there's an error during data insertion or JSON encoding
+        """
+        with self.conn.cursor() as cur:
+            placeholders = ", ".join(["%s"] * len(self.columns))
+            columns = ", ".join(self.columns.keys())
+            query = f"""
+            INSERT INTO {self.table_name} ({columns})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO NOTHING;"""
+
+            try:
+                species_data = self._prepare_species_data(structure.species)
+
+                input_data = (
+                    structure.id,
+                    structure.source,
+                    structure.elements,
+                    structure.nelements,
+                    structure.elements_ratios,
+                    structure.nsites,
+                    structure.cartesian_site_positions,
+                    structure.species_at_sites,
+                    species_data,
+                    structure.chemical_formula_anonymous,
+                    structure.chemical_formula_descriptive,
+                    structure.dimension_types,
+                    structure.nperiodic_dimensions,
+                    structure.immutable_id,
+                    structure.last_modified,
+                    structure.stress_tensor,
+                    structure.energy,
+                    structure.magnetic_moments,
+                    structure.forces,
+                    structure.total_magnetization,
+                    structure.dos_ef,
+                    structure.functional,
+                    structure.cross_compatibility,
+                    structure.entalpic_fingerprint,
+                    # trajectory-specific fields
+                    structure.relaxation_step,
+                    structure.trajectory_step,
+                    structure.trajectory_number,
                 )
                 cur.execute(query, input_data)
                 self.conn.commit()

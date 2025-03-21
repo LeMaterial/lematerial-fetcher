@@ -14,7 +14,10 @@ import click
 from lematerial_fetcher.fetcher.alexandria.fetch import AlexandriaFetcher
 from lematerial_fetcher.fetcher.alexandria.transform import AlexandriaTransformer
 from lematerial_fetcher.fetcher.mp.fetch import MPFetcher
-from lematerial_fetcher.fetcher.mp.transform import MPTransformer
+from lematerial_fetcher.fetcher.mp.transform import (
+    MPTrajectoryTransformer,
+    MPTransformer,
+)
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -51,10 +54,18 @@ def mp_fetch():
 
 
 @mp_cli.command(name="transform")
-def mp_transform():
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Transform trajectory data from Material Project.",
+)
+def mp_transform(traj):
     """Transform materials from Material Project."""
     try:
-        transformer = MPTransformer()
+        if traj:
+            transformer = MPTrajectoryTransformer()
+        else:
+            transformer = MPTransformer()
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)

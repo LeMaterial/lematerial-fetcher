@@ -3,6 +3,7 @@ import gzip
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Optional
 
 from botocore.client import BaseClient
@@ -18,6 +19,11 @@ MP_FUNCTIONAL_MAPPING = {
     "PBESol": Functional.PBESOL,
     "SCAN": Functional.SCAN,
 }
+
+
+class TaskType(Enum):
+    STRUCTURE_OPTIMIZATION = "Structure Optimization"
+    DEPRECATED = "Deprecated"
 
 
 def add_s3_object_to_db(
@@ -139,7 +145,7 @@ def extract_structure_optimization_tasks(
     structure_optimization_tasks = [
         mp_id
         for mp_id, task_type in raw_structure.attributes["task_types"].items()
-        if task_type == "Structure Optimization"
+        if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
     ]
     non_deprecated_task_ids = [
         mp_id
@@ -155,6 +161,34 @@ def extract_structure_optimization_tasks(
     tasks = {task.id: task for task in tasks}
 
     return tasks, calc_types
+
+
+def map_task_to_functional(
+    task: RawStructure, task_calc_type: Optional[str] = None
+) -> Functional | str:
+    """
+    Map a task to a functional by looking at the calculation type.
+
+    Parameters
+    ----------
+    task : RawStructure
+        The task to map to a functional.
+    task_calc_type : Optional[str]
+        The calculation type of the task.
+
+    Returns
+    -------
+    Functional | str
+        The functional mapped to the task, or the calculation type if no functional is found.
+    """
+    if task_calc_type is None:
+        task_calc_type = task.attributes["calc_type"]
+
+    functional = task_calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
+    if functional in MP_FUNCTIONAL_MAPPING:
+        return MP_FUNCTIONAL_MAPPING[functional]
+    else:
+        return task_calc_type
 
 
 def map_tasks_to_functionals(
@@ -179,7 +213,7 @@ def map_tasks_to_functionals(
     functional_tasks = defaultdict(list)
 
     for task_id, calc_type in task_calc_types.items():
-        functional = calc_type.split(" Structure Optimization")[0]
+        functional = calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
         if functional in MP_FUNCTIONAL_MAPPING:
             if functional == Functional.PBE and calc_type == "GGA+U":
                 functional_tasks["GGA+U"].append(tasks[task_id])

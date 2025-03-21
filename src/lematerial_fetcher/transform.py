@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import local
-from typing import Optional
+from typing import Generic, Optional, Type, TypeVar
 
 from lematerial_fetcher.database.postgres import (
     DatasetVersions,
@@ -15,8 +15,12 @@ from lematerial_fetcher.models.optimade import OptimadeStructure
 from lematerial_fetcher.utils.config import TransformerConfig, load_transformer_config
 from lematerial_fetcher.utils.logging import logger
 
+# type variables for the database and structure types
+TDatabase = TypeVar("TDatabase")
+TStructure = TypeVar("TStructure")
 
-class BaseTransformer(ABC):
+
+class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
     """
     Abstract base class for all material data transformers.
 
@@ -28,13 +32,23 @@ class BaseTransformer(ABC):
     ----------
     config : TransformerConfig, optional
         Configuration object containing necessary parameters for the transformer.
-        If None, loads from default location.
+    database_class : Type[TDatabase]
+        The class to use for the target database
+    structure_class : Type[TStructure]
+        The class to use for the transformed structures
     """
 
-    def __init__(self, config: Optional[TransformerConfig] = None):
+    def __init__(
+        self,
+        config: Optional[TransformerConfig] = None,
+        database_class: Type[TDatabase] = OptimadeDatabase,
+        structure_class: Type[TStructure] = OptimadeStructure,
+    ):
         self.config = config or load_transformer_config()
         self._thread_local = local()
         self._transform_version = None
+        self._database_class = database_class
+        self._structure_class = structure_class
 
     @property
     def source_db(self) -> StructuresDatabase:
@@ -44,7 +58,7 @@ class BaseTransformer(ABC):
 
         Returns
         -------
-        StructuresDatabase
+        TDatabase
             Source database connection for the current thread
         """
         if not hasattr(self._thread_local, "source_db"):
@@ -54,25 +68,25 @@ class BaseTransformer(ABC):
         return self._thread_local.source_db
 
     @property
-    def target_db(self) -> OptimadeDatabase:
+    def target_db(self) -> TDatabase:
         """
         Get the target database connection for the current thread.
         Creates a new connection if one doesn't exist.
 
         Returns
         -------
-        OptimadeDatabase
+        TDatabase
             Target database connection for the current thread
         """
         if not hasattr(self._thread_local, "target_db"):
-            self._thread_local.target_db = OptimadeDatabase(
+            self._thread_local.target_db = self._database_class(
                 self.config.dest_db_conn_str, self.config.dest_table_name
             )
         return self._thread_local.target_db
 
     def setup_databases(self) -> None:
         """Set up source and target database tables."""
-        target_db = OptimadeDatabase(
+        target_db = self._database_class(
             self.config.dest_db_conn_str, self.config.dest_table_name
         )
         target_db.create_table()
@@ -249,11 +263,11 @@ class BaseTransformer(ABC):
             If an error occurs during transformation or database insertion
         """
         try:
-            # transform the row into OptimadeStructures
-            optimade_structures = self.transform_row(raw_structure, task_table_name)
+            # transform the row into TStructure objects
+            structures = self.transform_row(raw_structure, task_table_name)
 
-            for optimade_structure in optimade_structures:
-                self.target_db.insert_data(optimade_structure)
+            for structure in structures:
+                self.target_db.insert_data(structure)
 
             if worker_id % self.config.log_every == 0:
                 logger.info(f"Transformed {worker_id} records")
@@ -268,9 +282,9 @@ class BaseTransformer(ABC):
         self,
         raw_structure: RawStructure,
         task_table_name: Optional[str] = None,
-    ) -> list[OptimadeStructure]:
+    ) -> list[TStructure]:
         """
-        Transform a raw structure into OptimadeStructures.
+        Transform a raw structure into structures of type TStructure.
         Must be implemented by subclasses.
 
         Parameters
@@ -283,8 +297,8 @@ class BaseTransformer(ABC):
 
         Returns
         -------
-        list[OptimadeStructure]
-            List of transformed OptimadeStructure objects.
+        list[TStructure]
+            List of transformed structure objects.
             If the list is empty, the row will be skipped.
         """
         pass
