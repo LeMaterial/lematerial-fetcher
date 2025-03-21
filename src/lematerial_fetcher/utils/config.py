@@ -34,8 +34,10 @@ class TransformerConfig(BaseConfig):
     dest_db_conn_str: str
     source_table_name: str
     dest_table_name: str
+    page_offset: int
     batch_size: int
     mp_task_table_name: Optional[str] = None
+    mysql_config: Optional[dict] = None
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -72,6 +74,16 @@ def _create_db_conn_str(user_env: str, password_env: str, dbname_env: str) -> st
     )
 
 
+def _load_mysql_config() -> dict:
+    return {
+        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
+        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
+        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
+        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
+        "cert_path": os.getenv("LEMATERIALFETCHER_MYSQL_CERT_PATH"),
+    }
+
+
 def load_fetcher_config() -> FetcherConfig:
     load_dotenv(override=True)
 
@@ -95,12 +107,7 @@ def load_fetcher_config() -> FetcherConfig:
 
     base_config = _load_base_config()
 
-    mysql_config = {
-        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
-        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
-        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
-        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
-    }
+    mysql_config = _load_mysql_config()
 
     return FetcherConfig(
         **base_config,
@@ -150,6 +157,8 @@ def load_transformer_config() -> TransformerConfig:
 
     base_config = _load_base_config()
 
+    mysql_config = _load_mysql_config()
+
     return TransformerConfig(
         **base_config,
         source_db_conn_str=source_db_conn_str,
@@ -157,7 +166,9 @@ def load_transformer_config() -> TransformerConfig:
         source_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
         dest_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
         batch_size=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
+        page_offset=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_PAGE_OFFSET", "0")),
         mp_task_table_name=os.getenv(
             "LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
         ),
+        mysql_config=mysql_config,
     )

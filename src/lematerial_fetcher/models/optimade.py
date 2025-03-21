@@ -12,6 +12,7 @@ class Functional(str, Enum):
     PBE = "PBE"
     PBESOL = "PBESOL"
     SCAN = "SCAN"
+    INCOMPATIBLE = "INCOMPATIBLE"
 
 
 class OptimadeStructure(BaseModel):
