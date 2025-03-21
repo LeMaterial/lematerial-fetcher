@@ -19,7 +19,8 @@ dependencies = [
     "pymatgen>=2025.1.24",
     "mysql-connector-python>=9.2.0",
     "beautifulsoup4>=4.13.3",
-    "ijson>=3.3.0",
+    "ijson[yajl]>=3.3.0",
+    "cffi>=1.17.1",
 ]
 
 [build-system]

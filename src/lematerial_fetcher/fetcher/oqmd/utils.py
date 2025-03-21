@@ -42,6 +42,7 @@ def download_and_process_oqmd_sql(
         version_db_config = db_config.copy()
         version_db_config["database"] = f"{db_config['database']}_version"
         version_db = MySQLDatabase(**version_db_config)
+        version_db.create_database()
         current_url = get_oqmd_version_if_exists(version_db)
 
         if current_url == latest_url:
@@ -75,6 +76,15 @@ def download_and_process_oqmd_sql(
 
         # Create fresh database
         logger.info("Setting up MySQL database")
+
+        user_input = input(
+            f"Warning: This will drop the existing database to replace it with the new one from {latest_url}. "
+            "Are you sure you want to continue? If you press N, the script will execute with your current database. (y/N): "
+        )
+        if user_input.lower() != "y":
+            logger.info("Database update cancelled by user")
+            return
+
         db.drop_database()
         db.create_database()
 
@@ -151,7 +161,7 @@ def get_oqmd_version_if_exists(
     """)
 
     result = version_db.fetch_items(
-        f"SELECT download_url FROM {version_db_name} ORDER BY last_updated DESC LIMIT 1"
+        query=f"SELECT download_url FROM {version_db_name} ORDER BY last_updated DESC LIMIT 1"
     )
     version_db.close()
 
