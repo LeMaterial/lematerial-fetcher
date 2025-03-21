@@ -6,7 +6,8 @@ from datetime import datetime
 from multiprocessing import Manager
 from typing import Any
 
-import ijson
+import orjson
+from tqdm import tqdm
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
@@ -240,6 +241,12 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             )
         filtered_keys = [(x[0], x[1], i) for i, x in enumerate(filtered_keys)]
 
+        logger.warning(
+            f"Running the Alexandria Trajectory fetcher with {len(filtered_keys)} files "
+            "to download. This will load whole JSON files into memory, make sure you have enough RAM "
+            "for the number of workers that you are spinning up."
+        )
+
         return ItemsInfo(
             start_offset=self.config.page_offset,
             total_count=len(urls),
@@ -271,10 +278,9 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
         """
         try:
             db = StructuresDatabase(config.db_conn_str, config.table_name)
-
             file_url, last_modified, offset = batch
 
-            # Download and process the JSON BZ2 file
+            # Download and process the JSON BZ2 file - this can happen in parallel
             file_path = download_file(
                 file_url,
                 desc=f"Downloading {file_url}",
@@ -285,33 +291,33 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             # This is a hack to get the functional from the URL
             functional = get_functional_from_url(file_url)
 
-            # Read and parse the JSON iteratively using ijson
             structures = []
-            with open(file_path, "r") as f:
-                f.seek(0)
+            file_json = orjson.loads(open(file_path, "rb").read())
+            # Get all keys at the root level
+            for key, item in tqdm(
+                file_json.items(),
+                position=worker_id + 1,
+                desc=f"Processing {file_url.split('/')[-1]}",
+            ):
+                item = sanitize_json(item)
+                for trajectory in item:
+                    trajectory["functional"] = functional
 
-                # Get all keys at the root level
-                for key, item in ijson.kvitems(f, "", use_float=True):
-                    sanitized_item = sanitize_json(
-                        item
-                    )  # Replace NaN values with null in JSON data
-                    for trajectory in sanitized_item:
-                        trajectory["functional"] = functional
+                raw_structure = RawStructure(
+                    id=key,
+                    type="trajectory",
+                    attributes=item,
+                    last_modified=last_modified,
+                )
+                structures.append(raw_structure)
 
-                    raw_structure = RawStructure(
-                        id=key,
-                        type="trajectory",
-                        attributes=sanitized_item,
-                        last_modified=last_modified,
-                    )
-                    structures.append(raw_structure)
-
-                    if len(structures) % config.log_every == 0:
-                        db.batch_insert_data(structures)
-                        structures = []
-
-                if structures:
+                if len(structures) % config.log_every == 0:
                     db.batch_insert_data(structures)
+                    structures = []
+
+            # Insert all remaining structures in a batch
+            if structures:
+                db.batch_insert_data(structures)
 
             os.remove(file_path)
 
