@@ -175,23 +175,14 @@ def push(
     ctx,
     data_type,
     hf_repo_id,
-    db_user,
-    db_password,
-    db_host,
-    db_port,
-    db_name,
     table_name,
 ):
     """Push materials to Hugging Face."""
     try:
         default_push_config = load_push_config()
-        db_conn_str = (
-            f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-        )
 
         config = default_push_config(
             hf_repo_id=hf_repo_id,
-            source_db_conn_str=db_conn_str,
             source_table_name=table_name,
         )
 

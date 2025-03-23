@@ -14,7 +14,7 @@ class BaseConfig:
     num_workers: int
     retry_delay: int
     log_every: int
-    cache_dir: str
+    cache_dir: str | None
 
 
 @dataclass
@@ -196,4 +196,15 @@ def load_push_config() -> PushConfig:
         "chunk_size": int(os.getenv("LEMATERIALFETCHER_PUSH_CHUNK_SIZE", "1000")),
     }
 
-    return functools.partial(PushConfig, **base_config, **defaults_kwargs)
+    conn_str = _create_db_conn_str(
+        "LEMATERIALFETCHER_PUSH_DB_USER",
+        "LEMATERIALFETCHER_PUSH_DB_PASSWORD",
+        "LEMATERIALFETCHER_PUSH_DB_NAME",
+    )
+
+    return functools.partial(
+        PushConfig,
+        **base_config,
+        **defaults_kwargs,
+        source_db_conn_str=conn_str,
+    )

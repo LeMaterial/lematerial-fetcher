@@ -1,5 +1,4 @@
 from pathlib import Path
-from urllib.parse import urlparse
 
 import psycopg2
 from datasets import Features, Sequence, Value, load_dataset
@@ -59,18 +58,11 @@ class Push:
             self.features = None
 
         self.debug = debug
+        self.conn_str = self.config.source_db_conn_str
 
-        parsed = urlparse(self.config.source_db_conn_str)
-        self.dbname = parsed.path[1:]
-        self.user = parsed.username
-        self.password = parsed.password
-        self.host = parsed.hostname
-        self.port = parsed.port or 5432
-
+        breakpoint()
         if self.config.data_dir is None:
-            self.data_dir = (
-                get_cache_dir() / f"push/{self.dbname}/{self.config.source_table_name}"
-            )
+            self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
             self.data_dir = Path(self.config.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -181,16 +173,10 @@ class Push:
         output_path = Path(self.data_dir)
         chunk_size = self.config.chunk_size
 
-        conn = psycopg2.connect(
-            dbname=self.dbname,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port,
-        )
+        conn = psycopg2.connect(self.conn_str)
 
         logger.info(
-            f"Downloading {self.config.source_table_name} from {self.dbname}@{self.host}:{self.port}"
+            f"Downloading from {self.config.source_table_name}."
             f" Will save to {output_path}"
         )
 
