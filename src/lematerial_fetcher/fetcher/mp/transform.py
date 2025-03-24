@@ -294,7 +294,7 @@ class MPTransformer(
         }
 
         input_structure_fields = self._transform_structure(
-            raw_structure.attributes["structure"]
+            raw_structure, raw_structure.attributes["structure"]
         )
 
         optimade_structures = []
