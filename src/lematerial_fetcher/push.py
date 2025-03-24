@@ -86,7 +86,6 @@ class Push:
         """
         features = Features(
             {
-                "id": Value("string"),
                 "elements": Sequence(Value("string")),
                 "nelements": Value("int8"),
                 "elements_ratios": Sequence(Value("float64")),
@@ -132,7 +131,8 @@ class Push:
                 "relaxation_number": Sequence(Value("int32")),
             }
         )
-        # del features['total_magnetization']
+        # We do not have magnetic moments in trajectories
+        del features["magnetic_moments"]
         # del features['dos_ef']
 
         return features
