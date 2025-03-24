@@ -51,16 +51,15 @@ class Push:
             "must be one of ['optimade', 'trajectories', 'any']"
         )
         if self.data_type == "optimade":
-            self.features = self._get_trajectories_features()
-        elif self.data_type == "trajectories":
             self.features = self._get_optimade_features()
+        elif self.data_type == "trajectories":
+            self.features = self._get_trajectories_features()
         elif self.data_type == "any":
             self.features = None
 
         self.debug = debug
         self.conn_str = self.config.source_db_conn_str
 
-        breakpoint()
         if self.config.data_dir is None:
             self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
