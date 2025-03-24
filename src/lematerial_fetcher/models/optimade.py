@@ -151,11 +151,8 @@ class OptimadeStructure(BaseModel):
     functional: Optional[Functional] = Field(
         None, description="Exchange-correlation functional"
     )
-    cross_compatibility: Optional[bool] = Field(
-        None, description="Cross-compatibility flag"
-    )
-    entalpic_fingerprint: Optional[list[float]] = Field(
-        None,
+    cross_compatibility: bool = Field(description="Cross-compatibility flag")
+    entalpic_fingerprint: Optional[str] = Field(
         min_length=1,
         description="Entalpic fingerprint hash",
     )
