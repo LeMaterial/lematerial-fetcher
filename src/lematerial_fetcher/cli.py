@@ -170,12 +170,25 @@ def oqmd_transform(ctx):
     help="Type of data to push, one of ['optimade', 'trajectories', 'any'].",
 )
 @click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
+@click.option(
+    "--max-rows",
+    default=-1,
+    type=int,
+    help="Maximum number of rows to push. Will shuffle the data with a deterministic seed. If -1 (default), all rows will be pushed.",
+)
+@click.option(
+    "--force-refresh",
+    is_flag=False,
+    help="Force refresh the cache.",
+)
 @add_db_options
 def push(
     ctx,
     data_type,
     hf_repo_id,
     table_name,
+    max_rows,
+    force_refresh,
 ):
     """Push materials to Hugging Face."""
     try:
@@ -184,6 +197,8 @@ def push(
         config = default_push_config(
             hf_repo_id=hf_repo_id,
             source_table_name=table_name,
+            max_rows=max_rows,
+            force_refresh=force_refresh,
         )
 
         push = Push(

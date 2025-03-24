@@ -49,6 +49,8 @@ class PushConfig(BaseConfig):
     hf_repo_id: str
     data_dir: str | None = None
     chunk_size: int = 1000
+    max_rows: int = -1
+    force_refresh: bool = False
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -194,6 +196,8 @@ def load_push_config() -> PushConfig:
 
     defaults_kwargs = {
         "chunk_size": int(os.getenv("LEMATERIALFETCHER_PUSH_CHUNK_SIZE", "1000")),
+        "max_rows": int(os.getenv("LEMATERIALFETCHER_PUSH_MAX_ROWS", -1)),
+        "force_refresh": bool(os.getenv("LEMATERIALFETCHER_PUSH_FORCE_REFRESH", False)),
     }
 
     conn_str = _create_db_conn_str(

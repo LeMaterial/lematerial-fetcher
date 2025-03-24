@@ -1,7 +1,9 @@
+import shutil
+import tempfile
 from pathlib import Path
 
 import psycopg2
-from datasets import Features, Sequence, Value, load_dataset
+from datasets import Dataset, Features, Sequence, Value, load_dataset
 
 from lematerial_fetcher.utils.config import PushConfig
 from lematerial_fetcher.utils.logging import get_cache_dir, logger
@@ -27,6 +29,10 @@ class Push:
             The number of rows to process in each chunk
         - data_dir: str, default=$HOME/.cache/lematerial_fetcher/push/database/table_name
             The directory to store the data
+        - max_rows: int, default=-1
+            The maximum number of rows to push. If -1, all rows will be pushed.
+        - force_refresh: bool, default=False
+            If True, will clear existing cache before downloading
     data_type : str, default="optimade"
         The type of data to push. Can be any of ['optimade', 'trajectories', 'any'].
         If 'any', the data will be pushed as is without any type or column enforcement.
@@ -59,12 +65,18 @@ class Push:
 
         self.debug = debug
         self.conn_str = self.config.source_db_conn_str
+        self.max_rows = self.config.max_rows
 
         if self.config.data_dir is None:
             self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
             self.data_dir = Path(self.config.data_dir)
+        if self.max_rows is not None:
+            # This replaces the data_dir with a temporary directory
+            self.use_temp_cache()
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+        self.force_refresh = self.config.force_refresh
 
         self.push_kwargs = kwargs
         if "private" not in self.push_kwargs:
@@ -109,7 +121,7 @@ class Push:
                 "dos_ef": Value("float64"),
                 "functional": Value("string"),
                 "cross_compatibility": Value("bool"),
-                "entalpic_fingerprint": Value("string"),
+                # "entalpic_fingerprint": Value("string"), # TODO(Ramlaoui): Add this back in later
             }
         )
 
@@ -131,9 +143,9 @@ class Push:
                 "relaxation_number": Sequence(Value("int32")),
             }
         )
-        # We do not have magnetic moments in trajectories
+        # We do not have magnetic moments and dos_ef in trajectories
         del features["magnetic_moments"]
-        # del features['dos_ef']
+        del features["dos_ef"]
 
         return features
 
@@ -151,24 +163,40 @@ class Push:
 
         dataset.push_to_hub(self.config.hf_repo_id, **self.push_kwargs)
 
-    def download_db_as_csv(self):
+    def clear_cache(self) -> None:
+        """
+        Clear the cache directory.
+        Useful for CI/CD pipelines or to force a fresh download.
+        """
+        if self.data_dir.exists():
+            shutil.rmtree(self.data_dir)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Cleared cache directory: {self.data_dir}")
+
+    def use_temp_cache(self) -> None:
+        """
+        Use a temporary directory for caching.
+        Useful for testing with a small number of rows.
+        """
+        self.data_dir = Path(tempfile.mkdtemp())
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using temporary cache directory: {self.data_dir}")
+
+    def download_db_as_csv(self) -> Dataset:
         """
         Downloads the database directly as CSV files using PostgreSQL COPY command.
 
         Returns a HuggingFace dataset created from the CSV files and casted to the correct features.
         The dataset is stored in the data_dir attribute.
 
-        Parameters
-        ----------
-        output_dir : str
-            Directory where CSV files will be stored
-        chunk_size : int
-            Number of rows to process in each chunk
-
         Returns
         -------
         Dataset: HuggingFace dataset created from the CSV files
         """
+
+        if self.force_refresh:
+            self.clear_cache()
+
         output_path = Path(self.data_dir)
         chunk_size = self.config.chunk_size
 
@@ -181,8 +209,13 @@ class Push:
 
         try:
             with conn.cursor("cursor") as cur:
-                cur.execute(f"SELECT COUNT(id) FROM {self.config.source_table_name}")
-                total_rows = cur.fetchone()[0]
+                if self.max_rows is not None:
+                    cur.execute(
+                        f"SELECT COUNT(id) FROM {self.config.source_table_name}"
+                    )
+                    total_rows = cur.fetchone()[0]
+                else:
+                    total_rows = self.max_rows
 
                 num_chunks = (total_rows + chunk_size - 1) // chunk_size
 
