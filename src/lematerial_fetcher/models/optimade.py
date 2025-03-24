@@ -9,10 +9,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Functional(str, Enum):
-    PBE = "PBE"
-    PBESOL = "PBESOL"
-    SCAN = "SCAN"
-    INCOMPATIBLE = "INCOMPATIBLE"
+    PBE = "pbe"
+    PBESOL = "pbesol"
+    SCAN = "scan"
 
 
 class OptimadeStructure(BaseModel):
