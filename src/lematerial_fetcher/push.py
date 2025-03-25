@@ -143,7 +143,7 @@ class Push:
                 "relaxation_number": Sequence(Value("int32")),
             }
         )
-        # We do not have magnetic moments and dos_ef in trajectories
+        # We do not have magnetic moments, and dos_ef in trajectories
         del features["magnetic_moments"]
         del features["dos_ef"]
 
@@ -161,7 +161,9 @@ class Push:
         """
         dataset = self.download_db_as_csv()
 
-        dataset.push_to_hub(self.config.hf_repo_id, **self.push_kwargs)
+        dataset.push_to_hub(
+            self.config.hf_repo_id, token=self.config.hf_token, **self.push_kwargs
+        )
 
     def clear_cache(self) -> None:
         """

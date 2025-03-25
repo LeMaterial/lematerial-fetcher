@@ -47,6 +47,7 @@ class PushConfig(BaseConfig):
     source_db_conn_str: str
     source_table_name: str
     hf_repo_id: str
+    hf_token: str | None = None
     data_dir: str | None = None
     chunk_size: int = 1000
     max_rows: int = -1

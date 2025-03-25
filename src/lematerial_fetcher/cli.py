@@ -181,6 +181,11 @@ def oqmd_transform(ctx):
     is_flag=False,
     help="Force refresh the cache.",
 )
+@click.option(
+    "--hf-token",
+    type=str,
+    help="Hugging Face token.",
+)
 @add_db_options
 def push(
     ctx,
@@ -189,6 +194,7 @@ def push(
     table_name,
     max_rows,
     force_refresh,
+    hf_token,
 ):
     """Push materials to Hugging Face."""
     try:
@@ -199,6 +205,7 @@ def push(
             source_table_name=table_name,
             max_rows=max_rows,
             force_refresh=force_refresh,
+            hf_token=hf_token,
         )
 
         push = Push(
