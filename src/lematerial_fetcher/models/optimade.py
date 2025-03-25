@@ -153,6 +153,7 @@ class OptimadeStructure(BaseModel):
     )
     cross_compatibility: bool = Field(description="Cross-compatibility flag")
     entalpic_fingerprint: Optional[str] = Field(
+        None,
         min_length=1,
         description="Entalpic fingerprint hash",
     )
