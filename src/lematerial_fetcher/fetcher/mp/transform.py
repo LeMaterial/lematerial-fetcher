@@ -130,9 +130,7 @@ class BaseMPTransformer:
             "lattice_vectors": lattice_vectors,
         }
 
-    def _get_calc_targets(
-        self, calc_output: dict[str, Any], composition_reduced: dict[str, float]
-    ) -> dict[str, Any]:
+    def _get_calc_targets(self, calc_output: dict[str, Any]) -> dict[str, Any]:
         """
         Get the targets of a calculation.
         These targets include:
@@ -177,14 +175,35 @@ class BaseMPTransformer:
             logger.warning("No stress tensor")
             targets["stress_tensor"] = None
 
-        targets["cross_compatible"] = True
+        return targets
+
+    def _get_cross_compatibility_from_composition(
+        self, composition_reduced: dict[str, float]
+    ) -> bool:
+        """
+        Get the cross-compatibility of a material from its composition.
+        This is based on the fact that some elements are not cross-compatible
+        because of the pseudopotential used with the rest of the database.
+
+        Parameters
+        ----------
+        composition_reduced : dict[str, float]
+            The composition of the material in reduced form.
+
+        Returns
+        -------
+        bool
+            True if the material is cross-compatible, False otherwise.
+        """
+
+        cross_compatible = True
         non_compatible_elements = ["V", "Cs"]
         # TODO(msiron): What about Yb?
         for element in non_compatible_elements:
             if element in composition_reduced.keys():
-                targets["cross_compatible"] = False
+                cross_compatible = False
 
-        return targets
+        return cross_compatible
 
     def _get_ionic_step_targets(self, ionic_step: dict[str, Any]) -> dict[str, Any]:
         """
@@ -293,6 +312,10 @@ class MPTransformer(
             for functional, task in functionals.items()
         }
 
+        cross_compatibility = self._get_cross_compatibility_from_composition(
+            raw_structure.attributes["composition_reduced"]
+        )
+
         input_structure_fields = self._transform_structure(
             raw_structure, raw_structure.attributes["structure"]
         )
@@ -311,6 +334,7 @@ class MPTransformer(
                     "$date"
                 ],
                 functional=functional,
+                cross_compatibility=cross_compatibility,
                 # targets
                 **targets,
             )
@@ -375,6 +399,10 @@ class MPTrajectoryTransformer(
                 )
                 output_targets = self._get_ionic_step_targets(ionic_step)
 
+                cross_compatibility = self._get_cross_compatibility_from_composition(
+                    task.attributes["composition_reduced"]
+                )
+
                 trajectory = Trajectory(
                     id=f"{material_id}-{functional}-{relaxation_step}",
                     source="mp",
@@ -385,6 +413,7 @@ class MPTrajectoryTransformer(
                     last_modified=task.attributes["last_updated"]["$date"],
                     relaxation_step=relaxation_step,
                     relaxation_number=i,
+                    cross_compatibility=cross_compatibility,
                 )
 
                 trajectories.append(trajectory)
@@ -434,7 +463,9 @@ class MPTrajectoryTransformer(
             return []
 
         if not functionals:
-            logger.warning(f"Material {raw_structure.id} has no functionals, skipping")
+            logger.warning(
+                f"Material {raw_structure.id} has no task found in your tasks database, will be skipped"
+            )
             return []
 
         trajectories = []
