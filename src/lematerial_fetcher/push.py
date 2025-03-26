@@ -228,14 +228,17 @@ class Push:
 
         try:
             with conn.cursor("cursor") as cur:
-                if self.max_rows is not None:
+                if self.max_rows is None or self.max_rows == -1:
                     cur.execute(
                         f"SELECT COUNT(id) FROM {self.config.source_table_name}"
                     )
                     total_rows = cur.fetchone()[0]
                 else:
+                    # dummy query to spawn the cursor
+                    cur.execute("SELECT 1")
                     total_rows = self.max_rows
 
+                chunk_size = min(chunk_size, total_rows)
                 num_chunks = (total_rows + chunk_size - 1) // chunk_size
 
                 for i in range(num_chunks):
