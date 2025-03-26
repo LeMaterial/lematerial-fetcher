@@ -250,15 +250,7 @@ class Push:
                     if self.columns is None:
                         columns = "*"
                     else:
-                        columns = ""
-                        # Format species
-                        for column in self.columns:
-                            if column == "species":
-                                # Cast to jsonb to avoid escaping issues
-                                columns += f"{column}::jsonb as {column}, "
-                            else:
-                                columns += f"{column}, "
-                        columns = columns[:-2]  # Remove the last comma
+                        columns = ", ".join(self.columns)
 
                     copy_sql = f"""
                         COPY (
