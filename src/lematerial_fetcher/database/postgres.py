@@ -326,7 +326,7 @@ class OptimadeDatabase(StructuresDatabase):
             "cartesian_site_positions": "FLOAT[][]",
             "lattice_vectors": "FLOAT[][]",
             "species_at_sites": "TEXT[][]",
-            "species": "TEXT[]",
+            "species": "JSONB",
             "chemical_formula_anonymous": "TEXT",
             "chemical_formula_reduced": "TEXT",
             "chemical_formula_descriptive": "TEXT",
@@ -356,10 +356,10 @@ class OptimadeDatabase(StructuresDatabase):
 
         Returns
         -------
-        list[Json]
-            List of species data converted to PostgreSQL JSONB format
+        Json
+            Species data converted to PostgreSQL JSONB format
         """
-        return [Json(s) for s in species]
+        return Json(species)
 
     def insert_data(self, structure: OptimadeStructure) -> None:
         """
