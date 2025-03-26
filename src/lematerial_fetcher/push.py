@@ -57,11 +57,14 @@ class Push:
             "must be one of ['optimade', 'trajectories', 'any']"
         )
         if self.data_type == "optimade":
-            self.features = self._get_optimade_features()
+            self.features, self.convert_features_dict = self._get_optimade_features()
         elif self.data_type == "trajectories":
-            self.features = self._get_trajectories_features()
+            self.features, self.convert_features_dict = (
+                self._get_trajectories_features()
+            )
         elif self.data_type == "any":
             self.features = None
+            self.convert_features_dict = None
 
         self.debug = debug
         self.conn_str = self.config.source_db_conn_str
@@ -105,7 +108,7 @@ class Push:
                 "cartesian_site_positions": Sequence(Sequence(Value("float64"))),
                 "lattice_vectors": Sequence(Sequence(Value("float64"))),
                 "species_at_sites": Sequence(Value("string")),
-                "species": Sequence(Value("string")),
+                "species": Value("string"),
                 "chemical_formula_anonymous": Value("string"),
                 "chemical_formula_descriptive": Value("string"),
                 "chemical_formula_reduced": Value("string"),
@@ -125,7 +128,14 @@ class Push:
             }
         )
 
-        return features
+        # Set convert features dict to json for all fields
+        convert_features_dict = {}
+        for key in features.keys():
+            convert_features_dict[key] = "json"
+
+        convert_features_dict["cross_compatibility"] = "bool"
+
+        return features, convert_features_dict
 
     def _get_trajectories_features(self) -> Features:
         """Get the features with the correct types for the trajectories data.
@@ -135,19 +145,26 @@ class Push:
         -------
         Features: The features for the trajectories data
         """
-        features = self._get_optimade_features()
+        features, convert_features_dict = self._get_optimade_features()
 
         features.update(
             {
                 "relaxation_step": Value("int32"),
-                "relaxation_number": Sequence(Value("int32")),
+                "relaxation_number": (Value("int32")),
             }
         )
         # We do not have magnetic moments, and dos_ef in trajectories
         del features["magnetic_moments"]
         del features["dos_ef"]
 
-        return features
+        convert_features_dict.update(
+            {
+                "relaxation_step": "int",
+                "relaxation_number": "int",
+            }
+        )
+
+        return features, convert_features_dict
 
     def push(self):
         """
@@ -223,7 +240,7 @@ class Push:
 
                 for i in range(num_chunks):
                     offset = i * chunk_size
-                    chunk_file = output_path / f"chunk_{i}.csv"
+                    chunk_file = output_path / f"chunk_{i}.jsonl"
 
                     if chunk_file.exists():
                         logger.info(f"Skipping chunk {i} because it already exists")
@@ -233,15 +250,26 @@ class Push:
                     if self.columns is None:
                         columns = "*"
                     else:
-                        columns = ", ".join(self.columns)
+                        columns = ""
+                        # Format species
+                        for column in self.columns:
+                            if column == "species":
+                                # Cast to jsonb to avoid escaping issues
+                                columns += f"{column}::jsonb as {column}, "
+                            else:
+                                columns += f"{column}, "
+                        columns = columns[:-2]  # Remove the last comma
 
                     copy_sql = f"""
                         COPY (
-                            SELECT {columns} 
-                            FROM {self.config.source_table_name}
-                            ORDER BY id
-                            LIMIT {chunk_size} OFFSET {offset}
-                        ) TO STDOUT WITH CSV HEADER
+                            SELECT row_to_json(t)
+                            FROM (
+                                SELECT {columns}
+                                FROM {self.config.source_table_name}
+                                ORDER BY id
+                                LIMIT {chunk_size} OFFSET {offset}
+                            ) t
+                        ) TO STDOUT
                         """
 
                     with open(chunk_file, "w") as f:
@@ -250,10 +278,20 @@ class Push:
         finally:
             conn.close()
 
-        # Recast to the correct features if data_type is not "any"
-        features = self.features if self.data_type != "any" else None
-        dataset = load_dataset(
-            "csv", data_files=str(output_path / "*.csv"), features=features
-        )
+        dataset = load_dataset("json", data_files=str(output_path / "*.jsonl"))
+
+        if "species" in dataset["train"].column_names:
+
+            def convert_species(batch):
+                batch["species"] = [str(species) for species in batch["species"]]
+                return batch
+
+            dataset = dataset.map(
+                convert_species,
+                batched=True,
+                desc="Converting species column to string",
+            )
+
+        dataset = dataset.cast(self.features)
 
         return dataset
