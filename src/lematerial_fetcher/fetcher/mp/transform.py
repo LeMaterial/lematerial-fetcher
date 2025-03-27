@@ -77,7 +77,7 @@ class BaseMPTransformer:
         chemical_formula_reduced_elements = list(chemical_formula_reduced_dict.keys())
         chemical_formula_reduced_ratios = list(chemical_formula_reduced_dict.values())
         chemical_formula_reduced_ratios = [
-            str(ratio) if ratio != 1 else ""
+            str(int(ratio)) if ratio != 1 else ""
             for ratio in chemical_formula_reduced_ratios
         ]
         chemical_formula_reduced_elements_alphabet_sorted = np.argsort(

@@ -58,7 +58,24 @@ class Database:
                 {columns_sql}
             );"""
             cur.execute(query)
+            self.create_indexes(cur)
             self.conn.commit()
+
+    def create_indexes(self, cur) -> None:
+        """
+        Create indexes for the table. Override this method in child classes to add specific indexes.
+
+        Parameters
+        ----------
+        cur : psycopg2.extensions.cursor
+            Database cursor
+        """
+        if "id" in self.columns:
+            query = f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.table_name}_id 
+            ON {self.table_name} (id);
+            """
+            cur.execute(query)
 
     def count_items(self) -> int:
         """
