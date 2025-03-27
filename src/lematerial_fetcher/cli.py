@@ -29,6 +29,9 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTrajectoryTransformer,
     OQMDTransformer,
 )
+from lematerial_fetcher.push import Push
+from lematerial_fetcher.utils.cli import add_db_options
+from lematerial_fetcher.utils.config import load_push_config
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -165,6 +168,73 @@ def oqmd_transform(ctx, traj):
         else:
             transformer = OQMDTransformer(debug=ctx.obj["debug"])
         transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@cli.command(name="push")
+@click.pass_context
+@click.option(
+    "--data-type",
+    type=str,
+    default="optimade",
+    help="Type of data to push, one of ['optimade', 'trajectories', 'any'].",
+)
+@click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
+@click.option(
+    "--hf-token",
+    type=str,
+    help="Hugging Face token.",
+)
+@click.option(
+    "--max-rows",
+    default=-1,
+    type=int,
+    help="Maximum number of rows to push. Will shuffle the data with a deterministic seed. If -1 (default), all rows will be pushed.",
+)
+@click.option(
+    "--force-refresh",
+    is_flag=False,
+    type=bool,
+    help="Force refresh the cache.",
+)
+@click.option(
+    "--chunk-size",
+    default=1000000,
+    type=int,
+    help="Number of rows to export from the database at a time.",
+)
+@add_db_options
+def push(
+    ctx,
+    data_type,
+    hf_repo_id,
+    hf_token,
+    table_name,
+    max_rows,
+    force_refresh,
+    chunk_size,
+):
+    """Push materials to Hugging Face."""
+    try:
+        default_push_config = load_push_config()
+
+        config = default_push_config(
+            hf_repo_id=hf_repo_id,
+            source_table_name=table_name,
+            max_rows=max_rows,
+            force_refresh=force_refresh,
+            hf_token=hf_token,
+            chunk_size=chunk_size,
+        )
+
+        push = Push(
+            config=config,
+            data_type=data_type,
+            debug=ctx.obj["debug"],
+        )
+
+        push.push()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

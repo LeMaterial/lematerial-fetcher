@@ -522,6 +522,8 @@ class OQMDTransformer(BaseOQMDTransformer):
         for key in keep_cols:
             values_dict[key] = optimade_keys_from_structure[key]
 
+        values_dict["functional"] = Functional.PBE
+        # TODO(Ramlaoui): Check that it's only PBE in OQMD
         # Compatibility of the DFT settings
         # dict from string to dict
         settings = ast.literal_eval(static_calculation["settings"])

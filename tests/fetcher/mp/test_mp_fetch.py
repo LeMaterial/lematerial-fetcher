@@ -61,6 +61,7 @@ def mock_config():
         num_workers=2,
         retry_delay=2,
         log_every=100,
+        cache_dir="/tmp/lematerial_fetcher",
     )
 
 

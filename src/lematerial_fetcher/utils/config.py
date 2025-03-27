@@ -1,4 +1,5 @@
 # Copyright 2025 Entalpic
+import functools
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -13,6 +14,7 @@ class BaseConfig:
     num_workers: int
     retry_delay: int
     log_every: int
+    cache_dir: str | None
 
 
 @dataclass
@@ -40,6 +42,18 @@ class TransformerConfig(BaseConfig):
     mysql_config: Optional[dict] = None
 
 
+@dataclass
+class PushConfig(BaseConfig):
+    source_db_conn_str: str
+    source_table_name: str
+    hf_repo_id: str
+    hf_token: str | None = None
+    data_dir: str | None = None
+    chunk_size: int = 1000
+    max_rows: int = -1
+    force_refresh: bool = False
+
+
 def _load_base_config() -> Dict[str, Any]:
     defaults = {
         "LEMATERIALFETCHER_LOG_DIR": "./logs",
@@ -48,6 +62,7 @@ def _load_base_config() -> Dict[str, Any]:
         "LEMATERIALFETCHER_RETRY_DELAY": 2,
         "LEMATERIALFETCHER_LOG_EVERY": 1000,
         "LEMATERIALFETCHER_PAGE_OFFSET": 0,
+        "LEMATERIALFETCHER_CACHE_DIR": None,
     }
 
     # apply defaults
@@ -61,6 +76,7 @@ def _load_base_config() -> Dict[str, Any]:
         "num_workers": int(os.getenv("LEMATERIALFETCHER_NUM_WORKERS")),
         "retry_delay": int(os.getenv("LEMATERIALFETCHER_RETRY_DELAY")),
         "log_every": int(os.getenv("LEMATERIALFETCHER_LOG_EVERY")),
+        "cache_dir": os.getenv("LEMATERIALFETCHER_CACHE_DIR"),
     }
 
 
@@ -171,4 +187,29 @@ def load_transformer_config() -> TransformerConfig:
             "LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
         ),
         mysql_config=mysql_config,
+    )
+
+
+def load_push_config() -> PushConfig:
+    load_dotenv(override=True)
+
+    base_config = _load_base_config()
+
+    defaults_kwargs = {
+        "chunk_size": int(os.getenv("LEMATERIALFETCHER_PUSH_CHUNK_SIZE", "1000")),
+        "max_rows": int(os.getenv("LEMATERIALFETCHER_PUSH_MAX_ROWS", -1)),
+        "force_refresh": bool(os.getenv("LEMATERIALFETCHER_PUSH_FORCE_REFRESH", False)),
+    }
+
+    conn_str = _create_db_conn_str(
+        "LEMATERIALFETCHER_PUSH_DB_USER",
+        "LEMATERIALFETCHER_PUSH_DB_PASSWORD",
+        "LEMATERIALFETCHER_PUSH_DB_NAME",
+    )
+
+    return functools.partial(
+        PushConfig,
+        **base_config,
+        **defaults_kwargs,
+        source_db_conn_str=conn_str,
     )
