@@ -78,9 +78,15 @@ def _load_base_config(
     }
 
 
-def _create_db_conn_str(user_env: str, password_env: str, dbname_env: str) -> str:
+def _create_db_conn_str(
+    host_env: str, user_env: str, password_env: str, dbname_env: str
+) -> str:
     """Create a database connection string from environment variables."""
+    host = os.getenv(host_env)
+    if host is None:
+        host = "localhost"
     return (
+        f"host={host} "
         f"user={os.getenv(user_env)} "
         f"password={os.getenv(password_env)} "
         f"dbname={os.getenv(dbname_env)} "
@@ -115,6 +121,14 @@ def load_fetcher_config(
     required_vars = {
         "base_url": (base_url, "LEMATERIALFETCHER_API_BASE_URL"),
         "table_name": (table_name, "LEMATERIALFETCHER_TABLE_NAME"),
+        "db_conn_str": (
+            db_conn_str,
+            [
+                "LEMATERIALFETCHER_DB_USER",
+                "LEMATERIALFETCHER_DB_PASSWORD",
+                "LEMATERIALFETCHER_DB_NAME",
+            ],
+        ),
     }
 
     config_vars = {}
@@ -130,6 +144,7 @@ def load_fetcher_config(
 
     if db_conn_str is None:
         db_conn_str = _create_db_conn_str(
+            "LEMATERIALFETCHER_DB_HOST",
             "LEMATERIALFETCHER_DB_USER",
             "LEMATERIALFETCHER_DB_PASSWORD",
             "LEMATERIALFETCHER_DB_NAME",
@@ -206,6 +221,7 @@ def load_transformer_config(
 
     if config_vars["source_db_conn_str"] is None:
         config_vars["source_db_conn_str"] = _create_db_conn_str(
+            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_HOST",
             "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
             "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
             "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
@@ -213,6 +229,7 @@ def load_transformer_config(
 
     if config_vars["dest_db_conn_str"] is None:
         config_vars["dest_db_conn_str"] = _create_db_conn_str(
+            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_HOST",
             "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
             "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
             "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
