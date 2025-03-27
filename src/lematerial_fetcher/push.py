@@ -153,9 +153,10 @@ class Push:
                 "relaxation_number": (Value("int32")),
             }
         )
-        # We do not have magnetic moments, and dos_ef in trajectories
+        # We do not have magnetic moments, total magnetization, and dos_ef in trajectories
         del features["magnetic_moments"]
         del features["dos_ef"]
+        del features["total_magnetization"]
 
         convert_features_dict.update(
             {
