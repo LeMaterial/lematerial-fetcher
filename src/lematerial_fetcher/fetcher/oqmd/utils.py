@@ -7,6 +7,7 @@ from typing import Optional
 from lematerial_fetcher.database.mysql import MySQLDatabase, execute_sql_file
 from lematerial_fetcher.utils.io import (
     download_file,
+    get_page_content,
     list_download_links_from_page,
 )
 from lematerial_fetcher.utils.logging import logger
@@ -28,26 +29,27 @@ def download_and_process_oqmd_sql(
         Directory for temporary files if needed. If None, uses a temporary directory
     """
 
-    # Get the latest available version URL
-    latest_url = get_latest_sql_file_url_from_oqmd(download_page_url=download_page_url)
+    # Get the latest available version URL and the update date
+    latest_url, modification_date = get_latest_sql_file_url_from_oqmd(
+        download_page_url=download_page_url
+    )
 
-    # Connect to database to check version
     db = MySQLDatabase(**db_config)
 
     try:
-        # First ensure version tracking table exists
         db.connect()
 
         # Check if we have a stored version and if URLs match we can skip the download
         version_db_config = db_config.copy()
         version_db_config["database"] = f"{db_config['database']}_version"
         version_db = MySQLDatabase(**version_db_config)
-        current_url = get_oqmd_version_if_exists(version_db)
+        current_url, current_modification_date = get_oqmd_version_if_exists(version_db)
 
-        if current_url == latest_url:
+        if current_url == latest_url and current_modification_date == modification_date:
             logger.info(
                 "OQMD database is already at the latest version. Skipping download."
             )
+            update_oqmd_version(version_db, db_config, latest_url, modification_date)
             return
 
         logger.info("New OQMD version detected. Proceeding with download...")
@@ -92,9 +94,8 @@ def download_and_process_oqmd_sql(
             logger.error(f"Error during SQL processing: {str(e)}")
             raise
 
-        # Update version tracking
-        today = datetime.now().strftime("%Y-%m-%d")
-        update_oqmd_version(version_db, db_config, latest_url, today)
+        # Updates the version tracked
+        update_oqmd_version(version_db, db_config, latest_url, modification_date)
 
         logger.info("SQL import completed successfully")
 
@@ -128,8 +129,8 @@ def get_oqmd_version_if_exists(
 
     Returns
     -------
-    str
-        The version of the OQMD database.
+    tuple[str, datetime]
+        A tuple containing (download_url, modification_date)
     """
     assert version_db is not None or db_config is not None, (
         "Either version_db or db_config must be provided"
@@ -151,20 +152,20 @@ def get_oqmd_version_if_exists(
     """)
 
     result = version_db.fetch_items(
-        f"SELECT download_url FROM {version_db_name} ORDER BY last_updated DESC LIMIT 1"
+        f"SELECT download_url, last_updated FROM {version_db_name} ORDER BY last_updated DESC LIMIT 1"
     )
     version_db.close()
 
     if not result:
         return None
-    return result[0]["download_url"]
+    return result[0]["download_url"], result[0]["last_updated"]
 
 
 def update_oqmd_version(
     version_db: Optional[MySQLDatabase] = None,
     db_config: Optional[dict] = None,
     latest_url: str = None,
-    today: str = None,
+    modification_date: datetime = None,
 ) -> None:
     """Update the version of the OQMD database.
 
@@ -176,7 +177,7 @@ def update_oqmd_version(
         Database configuration with keys: host, user, password, database
     latest_url : str, optional
         The URL of the latest SQL file. If None, the latest URL is fetched from the OQMD website.
-    today : str, optional
+    modification_date : datetime, optional
         The date of the update. If None, the current date is used.
     """
     assert version_db is not None or db_config is not None, (
@@ -195,15 +196,21 @@ def update_oqmd_version(
         VALUES (1, %s, %s)
         ON DUPLICATE KEY UPDATE download_url = %s, last_updated = %s;
     """,
-        (latest_url, today, latest_url, today),
+        (latest_url, modification_date, latest_url, modification_date),
     )
     version_db.close()
 
 
 def get_latest_sql_file_url_from_oqmd(
     download_page_url: str = "https://oqmd.org/download/",
-) -> str:
-    """Get the latest SQL file URL from the OQMD download page."""
+) -> tuple[str, datetime]:
+    """Get the latest SQL file URL and its modification date from the OQMD download page.
+
+    Returns
+    -------
+    tuple[str, datetime]
+        A tuple containing (download_url, modification_date)
+    """
 
     logger.info(f"Fetching OQMD download page: {download_page_url}")
     # Look for links containing SQL database files
@@ -235,6 +242,70 @@ def get_latest_sql_file_url_from_oqmd(
             else f"https://oqmd.org/{sql_download_url}"
         )
 
-    logger.info(f"Found SQL database file: {sql_download_url}")
+    # Extract the version from the URL to find the corresponding date
+    version_match = re.search(r"v(\d+)_(\d+)", sql_download_url)
+    if version_match:
+        version = f"v{version_match.group(1)}.{version_match.group(2)}"
+        # Extract the date from the page content
+        page_content = get_page_content(download_page_url)
+        date_pattern = f"OQMD {version}.*?Database updated on: ([^\\n]+)"
+        date_match = re.search(date_pattern, page_content, re.DOTALL)
+        if date_match:
+            date_str = date_match.group(1).strip()
+            modification_date = parse_oqmd_date(date_str)
+        else:
+            modification_date = datetime.now()
+    else:
+        modification_date = datetime.now()
 
-    return sql_download_url
+    logger.info(f"Found SQL database file: {sql_download_url}")
+    logger.info(f"Database last modified: {modification_date.strftime('%Y-%m-%d')}")
+
+    return sql_download_url, modification_date
+
+
+def parse_oqmd_date(date_str: str) -> datetime:
+    """Parse the OQMD date string into a datetime object.
+
+    Parameters
+    ----------
+    date_str : str
+        Date string in the format "Month, Year" (e.g., "November, 2023") with possible HTML tags
+
+    Returns
+    -------
+    datetime
+        Parsed datetime object, or today's date if parsing fails
+    """
+    try:
+        # Convert month name to number
+        month_map = {
+            "January": 1,
+            "February": 2,
+            "March": 3,
+            "April": 4,
+            "May": 5,
+            "June": 6,
+            "July": 7,
+            "August": 8,
+            "September": 9,
+            "October": 10,
+            "November": 11,
+            "December": 12,
+        }
+
+        date_str = re.sub(r"<[^>]+>", "", date_str)  # Remove HTML tags
+        date_str = " ".join(date_str.split())  # Normalize whitespace
+
+        # Split the date string and clean it
+        month_str, year_str = date_str.split(",")
+        month_str = month_str.strip()
+        year_str = year_str.strip()
+
+        # Convert to datetime
+        return datetime(int(year_str), month_map[month_str], 1)
+    except (ValueError, KeyError, AttributeError) as e:
+        logger.warning(
+            f"Could not parse date string: {date_str}. Error: {str(e)}. Using today's date."
+        )
+        return datetime.now()

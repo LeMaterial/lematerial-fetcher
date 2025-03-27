@@ -364,9 +364,9 @@ class OQMDTransformer(BaseOQMDTransformer):
         # dict from string to dict
         settings = ast.literal_eval(static_calculation["settings"])
         if settings["ispin"] in ["1", 1]:
-            values_dict["functional"] = Functional.PBE
+            values_dict["cross_compatibility"] = True
         else:
-            values_dict["functional"] = Functional.INCOMPATIBLE
+            values_dict["cross_compatibility"] = False
         filter_out_elements = [
             "Yb",
             "W",
@@ -394,6 +394,7 @@ class OQMDTransformer(BaseOQMDTransformer):
             source="oqmd",
             # Couldn't find a way to get the last modified date from the source database
             last_modified=datetime.now().isoformat(),
+            functional=Functional.PBE,
         )
 
         return [optimade_structure]
