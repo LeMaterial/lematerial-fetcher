@@ -1,3 +1,4 @@
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -279,7 +280,7 @@ class Push:
         if "species" in dataset["train"].column_names:
 
             def convert_species(batch):
-                batch["species"] = [str(species) for species in batch["species"]]
+                batch["species"] = [json.dumps(species) for species in batch["species"]]
                 return batch
 
             dataset = dataset.map(
