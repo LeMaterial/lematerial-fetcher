@@ -200,7 +200,7 @@ def oqmd_transform(ctx, traj):
 )
 @click.option(
     "--chunk-size",
-    default=10000,
+    default=1000000,
     type=int,
     help="Number of rows to export from the database at a time.",
 )
