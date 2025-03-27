@@ -51,7 +51,7 @@ class OQMDFetcher(BaseFetcher):
 
         try:
             # Get the total count of entries
-            result = db.fetch_items("SELECT COUNT(*) as count FROM entries")[0]
+            result = db.fetch_items(query="SELECT COUNT(id) as count FROM entries")[0]
             total_count = result["count"]
 
             logger.info(
@@ -66,7 +66,7 @@ class OQMDFetcher(BaseFetcher):
 
     @staticmethod
     def _process_batch(
-        batch: BatchInfo, config: FetcherConfig, manager_dict: dict
+        batch: BatchInfo, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
     ) -> bool:
         """Process a batch of entries from the OQMD database.
 
@@ -81,6 +81,8 @@ class OQMDFetcher(BaseFetcher):
             Configuration object
         manager_dict : dict
             Shared dictionary for inter-process communication
+        worker_id : int
+            The id of the worker executing the task
 
         Returns
         -------

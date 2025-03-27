@@ -223,3 +223,21 @@ def list_download_links_from_page(
         logger.info(f"Found {len(download_links)} download links")
 
     return download_links
+
+
+def get_page_content(url: str) -> str:
+    """Fetch the content of a webpage.
+
+    Parameters
+    ----------
+    url : str
+        The URL of the webpage to fetch
+
+    Returns
+    -------
+    str
+        The content of the webpage
+    """
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.text

@@ -101,6 +101,7 @@ class AlexandriaTransformer(BaseTransformer):
             id=raw_structure.id,  # problem, this is empty
             source="alexandria",
             functional=self._alexandria_functional(raw_structure),
+            cross_compatibility=True,  # All Alexandria structures have compatible parameters
         )
 
         return [optimade_structure]
@@ -212,7 +213,8 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
                     **targets,
                     relaxation_number=relaxation_number,
                     relaxation_step=relaxation_step,
-                    functional=Functional(calc["functional"]),
+                    functional=Functional(calc["functional"].lower()),
+                    cross_compatibility=True,
                 )
 
                 trajectories.append(trajectory)

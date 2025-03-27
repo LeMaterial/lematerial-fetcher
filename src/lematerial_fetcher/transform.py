@@ -63,11 +63,6 @@ def process_batch(
         )
         target_db = database_class(config.dest_db_conn_str, config.dest_table_name)
 
-        # Fetch the rows in the worker process
-        rows = source_db.fetch_items(offset=offset, batch_size=batch_size)
-        if not rows:
-            return
-
         # transform the rows into TStructure objects
         transformer = transformer_class(
             config=config,
@@ -75,7 +70,12 @@ def process_batch(
             structure_class=structure_class,
         )
 
-        for i, raw_structure in enumerate(rows, 1):
+        processed_count = 0
+        for raw_structure in source_db.fetch_items_iter(
+            offset=offset,
+            batch_size=batch_size,
+            cursor_name=f"transform_cursor_{batch_id}",
+        ):
             try:
                 structures = transformer.transform_row(
                     raw_structure, source_db=source_db, task_table_name=task_table_name
@@ -84,8 +84,11 @@ def process_batch(
                 for structure in structures:
                     target_db.insert_data(structure)
 
-                if (batch_id * batch_size + i) % config.log_every == 0:
-                    logger.info(f"Transformed {batch_id * batch_size + i} records")
+                processed_count += 1
+                if processed_count % config.log_every == 0:
+                    logger.info(
+                        f"Transformed {batch_id * batch_size + processed_count} records"
+                    )
 
             except Exception as e:
                 logger.warning(f"Error processing {raw_structure.id} row: {str(e)}")

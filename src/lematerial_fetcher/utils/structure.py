@@ -42,7 +42,7 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     )
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?
-    chemical_formula_descriptive = chemical_formula_reduced
+    chemical_formula_descriptive = str(structure.composition)
 
     # Site and position data
     cartesian_site_positions = structure.cart_coords.tolist()
