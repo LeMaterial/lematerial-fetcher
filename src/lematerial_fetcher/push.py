@@ -74,7 +74,7 @@ class Push:
             self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
             self.data_dir = Path(self.config.data_dir)
-        if self.max_rows is not None:
+        if self.max_rows is not None and self.max_rows != -1:
             # This replaces the data_dir with a temporary directory
             self.use_temp_cache()
         self.data_dir.mkdir(parents=True, exist_ok=True)

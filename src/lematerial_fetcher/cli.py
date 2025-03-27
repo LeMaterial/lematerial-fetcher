@@ -25,13 +25,13 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTransformer,
 )
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
-from lematerial_fetcher.push import Push
-from lematerial_fetcher.utils.cli import add_db_options
-from lematerial_fetcher.utils.config import load_push_config
 from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTrajectoryTransformer,
     OQMDTransformer,
 )
+from lematerial_fetcher.push import Push
+from lematerial_fetcher.utils.cli import add_db_options
+from lematerial_fetcher.utils.config import load_push_config
 from lematerial_fetcher.utils.logging import logger
 
 
@@ -182,6 +182,11 @@ def oqmd_transform(ctx, traj):
 )
 @click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
 @click.option(
+    "--hf-token",
+    type=str,
+    help="Hugging Face token.",
+)
+@click.option(
     "--max-rows",
     default=-1,
     type=int,
@@ -190,22 +195,25 @@ def oqmd_transform(ctx, traj):
 @click.option(
     "--force-refresh",
     is_flag=False,
+    type=bool,
     help="Force refresh the cache.",
 )
 @click.option(
-    "--hf-token",
-    type=str,
-    help="Hugging Face token.",
+    "--chunk-size",
+    default=10000,
+    type=int,
+    help="Number of rows to export from the database at a time.",
 )
 @add_db_options
 def push(
     ctx,
     data_type,
     hf_repo_id,
+    hf_token,
     table_name,
     max_rows,
     force_refresh,
-    hf_token,
+    chunk_size,
 ):
     """Push materials to Hugging Face."""
     try:
@@ -217,6 +225,7 @@ def push(
             max_rows=max_rows,
             force_refresh=force_refresh,
             hf_token=hf_token,
+            chunk_size=chunk_size,
         )
 
         push = Push(
