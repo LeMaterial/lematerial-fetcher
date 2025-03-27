@@ -16,13 +16,14 @@ VALID_STRUCTURE_DATA = {
     "species_at_sites": ["Al", "O"],
     "species": [{"name": "Al"}, {"name": "O"}],
     "chemical_formula_anonymous": "A2B3",
-    "chemical_formula_descriptive": "Al2O3",
+    "chemical_formula_descriptive": "Al2 O3",
     "chemical_formula_reduced": "Al2O3",
     "dimension_types": [1, 1, 1],
     "nperiodic_dimensions": 3,
     "lattice_vectors": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     "immutable_id": "test_immutable_id",
     "last_modified": datetime.datetime(2024, 1, 1, 12, 0, 0),
+    "cross_compatibility": True,
 }
 
 
@@ -47,7 +48,7 @@ def test_optional_fields():
             "dos_ef": 0.5,
             "functional": Functional.PBE,
             "cross_compatibility": True,
-            "entalpic_fingerprint": [1.0, 2.0, 3.0],
+            "entalpic_fingerprint": "1.0, 2.0, 3.0",
         }
     )
     structure = OptimadeStructure(**data)

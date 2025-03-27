@@ -21,7 +21,8 @@ from lematerial_fetcher.utils.structure import (
 
 def process_batch(
     batch_id: int,
-    rows: list[RawStructure],
+    offset: int,
+    batch_size: int,
     task_table_name: Optional[str],
     config: TransformerConfig,
     database_class: Type[TDatabase],
@@ -36,8 +37,10 @@ def process_batch(
     ----------
     batch_id : int
         Identifier for the batch
-    rows : list[RawStructure]
-        List of raw structures to process
+    offset : int
+        The offset to start fetching rows from
+    batch_size : int
+        The number of rows to fetch
     task_table_name : Optional[str]
         Task table name to read targets or trajectories from.
         This is only used for Materials Project.
@@ -66,7 +69,12 @@ def process_batch(
             structure_class=structure_class,
         )
 
-        for i, raw_structure in enumerate(rows, 1):
+        processed_count = 0
+        rows = source_db.fetch_items(
+            offset=offset, batch_size=batch_size, table_name="structures"
+        )
+
+        for raw_structure in rows:
             try:
                 structures = transformer.transform_row(
                     raw_structure, source_db=source_db, task_table_name=task_table_name
@@ -75,12 +83,23 @@ def process_batch(
                 for structure in structures:
                     target_db.insert_data(structure)
 
-                if (batch_id * len(rows) + i) % config.log_every == 0:
-                    logger.info(f"Transformed {batch_id * len(rows) + i} records")
+                processed_count += 1
+                if processed_count % config.log_every == 0:
+                    logger.info(
+                        f"Transformed {batch_id * batch_size + processed_count} records"
+                    )
 
             except Exception as e:
-                logger.warning(f"Error processing {raw_structure['id']} row: {str(e)}")
+                logger.warning(
+                    f"Error processing row oqmd-{raw_structure['id']}: {str(e)}"
+                )
                 # Check if this is a critical error
+                import os
+                import pickle
+
+                os.makedirs("errors", exist_ok=True)
+                with open(f"errors/error_{raw_structure['id']}.pkl", "wb") as f:
+                    pickle.dump(e, f)
                 if BaseTransformer.is_critical_error(e):
                     manager_dict["occurred"] = True  # shared across processes
                     return
@@ -137,31 +156,18 @@ class BaseOQMDTransformer(BaseTransformer):
             If a critical error occurs during processing
         """
         batch_size = self.config.batch_size
-        offset = 0
+        offset = self.config.page_offset
         total_processed = 0
         task_table_name = self.config.mp_task_table_name
 
         if self.debug:
             # Debug mode: process in main process
             while True:
-                source_db = MySQLDatabase(
-                    **self.config.mysql_config,
-                )
-                rows = source_db.fetch_items(
-                    offset=offset, batch_size=batch_size, table_name="structures"
-                )
-                if not rows:
-                    break
-
-                total_processed += len(rows)
-                logger.info(
-                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
-                )
-
                 # Process batch in main process
                 process_batch(
                     offset // batch_size,  # batch_id
-                    rows,
+                    offset,
+                    batch_size,
                     task_table_name,
                     self.config,
                     self._database_class,
@@ -170,6 +176,19 @@ class BaseOQMDTransformer(BaseTransformer):
                     self.manager_dict,
                 )
 
+                # Check if we should continue
+                source_db = MySQLDatabase(
+                    **self.config.mysql_config,
+                )
+                rows = source_db.fetch_items(
+                    offset=offset + batch_size, batch_size=1, table_name="structures"
+                )
+                source_db.close()
+                if not rows:
+                    break
+
+                total_processed += batch_size
+                logger.info(f"Total processed: {total_processed}")
                 offset += batch_size
 
             logger.info(f"Completed processing {total_processed} total rows")
@@ -179,80 +198,254 @@ class BaseOQMDTransformer(BaseTransformer):
         with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
             futures = set()
 
-            while True:
+            # Submit initial batch of tasks
+            for i in range(self.config.num_workers):
+                future = executor.submit(
+                    process_batch,
+                    offset // batch_size,  # batch_id
+                    offset + (i * batch_size),
+                    batch_size,
+                    task_table_name,
+                    self.config,
+                    self._database_class,
+                    self._structure_class,
+                    self.__class__,
+                    self.manager_dict,
+                )
+                futures.add((offset + (i * batch_size), future))
+                total_processed += batch_size
+
+            offset += batch_size * self.config.num_workers
+            more_data = True
+
+            while futures and more_data:
                 # Check for completed futures and remove them
-                done, futures = futures, set()
-                for future in done:
-                    try:
-                        future.result()  # Check for any exceptions
-                    except Exception as e:
-                        logger.error(f"Critical error encountered: {str(e)}")
-                        executor.shutdown(wait=False)
-                        raise
-
-                # Check for critical errors across processes
-                if self.manager_dict.get("occurred", False):
-                    logger.critical(
-                        "Critical error detected, shutting down process pool"
-                    )
-                    executor.shutdown(wait=False)
-                    raise RuntimeError("Critical error occurred during processing")
-
-                # Get next batch of rows
-                source_db = MySQLDatabase(
-                    **self.config.mysql_config,
-                )
-                rows = source_db.fetch_items(
-                    offset=offset, batch_size=batch_size, table_name="structures"
-                )
-                if not rows:
-                    # Wait for remaining futures to complete
-                    for future in futures:
+                done_futures = set()
+                for current_offset, future in futures:
+                    if future.done():
                         try:
                             future.result()
+
+                            if self.manager_dict.get("occurred", False):
+                                logger.critical(
+                                    "Critical error detected, shutting down process pool"
+                                )
+                                executor.shutdown(wait=False)
+                                raise RuntimeError(
+                                    "Critical error occurred during processing"
+                                )
+
+                            # Check if there might be more data
+                            source_db = MySQLDatabase(
+                                **self.config.mysql_config,
+                            )
+                            check_rows = source_db.fetch_items(
+                                offset=offset, batch_size=1, table_name="structures"
+                            )
+                            source_db.close()
+
+                            if check_rows:
+                                # Submit new task
+                                next_future = executor.submit(
+                                    process_batch,
+                                    offset // batch_size,  # batch_id
+                                    offset,
+                                    batch_size,
+                                    task_table_name,
+                                    self.config,
+                                    self._database_class,
+                                    self._structure_class,
+                                    self.__class__,
+                                    self.manager_dict,
+                                )
+                                futures.add((offset, next_future))
+                                offset += batch_size
+                            else:
+                                more_data = False
+
+                            logger.info(
+                                f"Successfully processed batch at offset {current_offset}"
+                            )
+
                         except Exception as e:
                             logger.error(f"Critical error encountered: {str(e)}")
                             executor.shutdown(wait=False)
                             raise
-                    break
 
-                total_processed += len(rows)
-                logger.info(
-                    f"Processing batch of {len(rows)} rows (total processed: {total_processed})"
-                )
+                        done_futures.add((current_offset, future))
+                        break
 
-                # Split the batch into smaller chunks for parallel processing
-                chunk_size = max(1, len(rows) // self.config.num_workers)
-                chunks = [
-                    rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)
-                ]
+                futures -= done_futures
 
-                # Submit new tasks for each chunk
-                for chunk in chunks:
-                    future = executor.submit(
-                        process_batch,
-                        offset // batch_size,  # batch_id
-                        chunk,
-                        task_table_name,
-                        self.config,
-                        self._database_class,
-                        self._structure_class,
-                        self.__class__,
-                        self.manager_dict,
+            # Wait for remaining futures
+            for current_offset, future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(
+                        f"Error processing batch at offset {current_offset}: {str(e)}"
                     )
-                    futures.add(future)
 
-                offset += batch_size
+            logger.info(
+                f"Completed processing approximately {total_processed} total rows"
+            )
 
-            logger.info(f"Completed processing {total_processed} total rows")
+    @property
+    def exclude_elements(self) -> list[str]:
+        """
+        Getter for excluded elements.
+        """
+        return [
+            "Yb",
+            "W",
+            "Tl",
+            "Eu",
+            "Ce",
+            "Rh",
+            "Ru",
+            "Mo",
+            "Mn",
+            "Cr",
+            "V",
+            "Ti",
+            "Ca",
+        ]
+
+    def _get_calculations(
+        self,
+        raw_structure: RawStructure,
+        source_db: MySQLDatabase,
+        filter_label: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get the calculations for a raw OQMD structure.
+
+        Parameters
+        ----------
+        raw_structure : RawStructure
+            The raw OQMD structure to get the calculations for
+        source_db : MySQLDatabase
+            The source database to get the calculations from
+        filter_label : Optional[list[str]]
+            The labels to filter the calculations by
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            The calculations for the raw OQMD structure
+        """
+        custom_query = (
+            f"SELECT * FROM calculations WHERE entry_id = {raw_structure['entry_id']}"
+        )
+        calculations = source_db.fetch_items(query=custom_query)
+
+        if filter_label:
+            calculations = [
+                calc for calc in calculations if calc["label"] in filter_label
+            ]
+
+        return calculations
+
+    def _get_atoms_from_structure_id(
+        self, structure_id: int, source_db: MySQLDatabase
+    ) -> list[dict[str, Any]]:
+        """
+        Get the atoms from a structure ID.
+
+        Parameters
+        ----------
+        structure_id : int
+            The ID of the structure to get the atoms from
+        source_db : MySQLDatabase
+            The source database to get the atoms from
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            The atoms from the structure ID
+        """
+
+        atoms = source_db.fetch_items(
+            query=f"SELECT * FROM atoms WHERE structure_id = {structure_id}"
+        )
+
+        return atoms
+
+    def _extract_atoms_attributes(
+        self, atoms: list[dict[str, Any]]
+    ) -> tuple[list[str], list[list[float]], list[list[float]], list[float]]:
+        """
+        Extract the attributes of the atoms from the atoms table.
+
+        Parameters
+        ----------
+        atoms : list[dict[str, Any]]
+            The atoms to extract the attributes from
+
+        Returns
+        -------
+        species_at_sites : list[str]
+            The species at sites
+        frac_coords : list[list[float]]
+            The fractional coordinates of the atoms
+        forces : list[list[float]]
+            The forces on the atoms
+        charges : list[float]
+            The charges on the atoms
+        """
+
+        species_at_sites, frac_coords, forces, charges = [], [], [], []
+        for atom in atoms:
+            species_at_sites.append(atom["element_id"])
+            frac_coords.append([atom["x"], atom["y"], atom["z"]])
+            forces.append([atom["fx"], atom["fy"], atom["fz"]])
+            charges.append(atom["charge"])
+
+        return species_at_sites, frac_coords, None, charges
 
     def _extract_structures_attributes(
-        self, raw_structure: RawStructure
+        self, raw_structure: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Extract the base attributes of a raw OQMD structure.
+        Extract the base attributes of a raw OQMD structure from the structures table.
+
+        Parameters
+        ----------
+        raw_structure : dict[str, Any]
+            The raw OQMD structure to extract the attributes from
+
+        Returns
+        -------
+        dict[str, Any]
+            The base attributes of the raw OQMD structure
         """
-        pass
+
+        stress_tensor_keys = ["sxx", "syy", "szz", "syz", "szx", "sxy"]
+        stress_tensor = [raw_structure[key] for key in stress_tensor_keys]
+        lattice_vectors_keys = [
+            ["x1", "y1", "z1"],
+            ["x2", "y2", "z2"],
+            ["x3", "y3", "z3"],
+        ]
+        lattice_vectors = [
+            [raw_structure[key] for key in keys] for keys in lattice_vectors_keys
+        ]
+
+        structure_mapping_keys = {
+            "chemical_formula_descriptive": "composition_id",
+            "nsites": "nsites",
+            "nelements": "ntypes",
+            "total_magnetization": "magmom",
+        }
+
+        values_dict = {}
+        for key, value in structure_mapping_keys.items():
+            values_dict[key] = raw_structure[value]
+        values_dict["lattice_vectors"] = lattice_vectors
+        values_dict["stress_tensor"] = stress_matrix_from_voigt_6_stress(stress_tensor)
+        values_dict["immutable_id"] = f"oqmd-{raw_structure['id']}"
+
+        return values_dict
 
 
 class OQMDTransformer(BaseOQMDTransformer):
@@ -286,59 +479,28 @@ class OQMDTransformer(BaseOQMDTransformer):
             If the list is empty, nothing from the structure should be included in the database.
         """
 
-        stress_tensor_keys = ["sxx", "syy", "szz", "syz", "szx", "sxy"]
-        stress_tensor = [raw_structure[key] for key in stress_tensor_keys]
-        lattice_vectors_keys = [
-            ["x1", "y1", "z1"],
-            ["x2", "y2", "z2"],
-            ["x3", "y3", "z3"],
-        ]
-        lattice_vectors = [
-            [raw_structure[key] for key in keys] for keys in lattice_vectors_keys
-        ]
+        values_dict = self._extract_structures_attributes(raw_structure)
 
-        structure_mapping_keys = {
-            "chemical_formula_descriptive": "composition_id",
-            "nsites": "nsites",
-            "nelements": "ntypes",
-            "total_magnetization": "magmom",
-        }
-
-        values_dict = {}
-        for key, value in structure_mapping_keys.items():
-            values_dict[key] = raw_structure[value]
-        values_dict["lattice_vectors"] = lattice_vectors
-        values_dict["stress_tensor"] = stress_matrix_from_voigt_6_stress(stress_tensor)
-        values_dict["immutable_id"] = f"oqmd-{raw_structure['id']}"
-
-        custom_query = (
-            f"SELECT * FROM calculations WHERE entry_id = {raw_structure['entry_id']}"
+        calculations = self._get_calculations(
+            raw_structure, source_db, filter_label=["static"]
         )
-        calculations = source_db.fetch_items(query=custom_query)
-        static_calculation = next(
-            (calc for calc in calculations if calc["label"] == "static"), None
-        )
-        if static_calculation is None:
+        if len(calculations) == 0:
             logger.warning(f"No static calculation found for {raw_structure['id']}")
             return []
+        static_calculation = calculations[0]
 
         values_dict["energy"] = static_calculation["energy_pa"] * values_dict["nsites"]
         # TODO(msiron): Agree on band gap
         # values_dict["band_gap_indirect"] = static_calculation["band_gap"]
 
-        atoms = source_db.fetch_items(
-            query=f"SELECT * FROM atoms WHERE structure_id = {raw_structure['id']}"
+        atoms = self._get_atoms_from_structure_id(raw_structure["id"], source_db)
+        species_at_sites, frac_coords, forces, charges = self._extract_atoms_attributes(
+            atoms
         )
-        species_at_sites, frac_coords, forces, charges = [], [], [], []
-        for atom in atoms:
-            species_at_sites.append(atom["element_id"])
-            frac_coords.append([atom["x"], atom["y"], atom["z"]])
-            forces.append([atom["fx"], atom["fy"], atom["fz"]])
-            charges.append(atom["charge"])
         structure = Structure(
             species=species_at_sites,
             coords=frac_coords,
-            lattice=lattice_vectors,
+            lattice=values_dict["lattice_vectors"],
             coords_are_cartesian=False,
         )
         cartesian_site_positions = structure.cart_coords
@@ -365,26 +527,14 @@ class OQMDTransformer(BaseOQMDTransformer):
         # Compatibility of the DFT settings
         # dict from string to dict
         settings = ast.literal_eval(static_calculation["settings"])
-        if settings["ispin"] not in ["1", 1]:
+        if settings["ispin"] in ["1", 1]:
+            values_dict["cross_compatibility"] = True
+        else:
             values_dict["cross_compatibility"] = False
-        filter_out_elements = [
-            "Yb",
-            "W",
-            "Tl",
-            "Eu",
-            "Ce",
-            "Rh",
-            "Ru",
-            "Mo",
-            "Mn",
-            "Cr",
-            "V",
-            "Ti",
-            "Ca",
-        ]
-        if any(element in values_dict["elements"] for element in filter_out_elements):
+
+        if any(element in values_dict["elements"] for element in self.exclude_elements):
             logger.warning(
-                f"Skipping {raw_structure['id']} because it contains filter_out_elements"
+                f"Skipping oqmd-{raw_structure['id']} because it contains excluded elements"
             )
             return []
 
@@ -394,6 +544,7 @@ class OQMDTransformer(BaseOQMDTransformer):
             source="oqmd",
             # Couldn't find a way to get the last modified date from the source database
             last_modified=datetime.now().isoformat(),
+            functional=Functional.PBE,
         )
 
         return [optimade_structure]
@@ -405,10 +556,60 @@ class OQMDTrajectoryTransformer(BaseOQMDTransformer):
     Transforms raw OQMD data into Trajectory objects.
     """
 
+    def _get_structure_from_structure_id(
+        self, structure_id: int, source_db: MySQLDatabase
+    ) -> dict[str, Any]:
+        """
+        Get a structure from a structure ID.
+        """
+        query = f"SELECT * FROM structures WHERE id = {structure_id}"
+        raw_structure = source_db.fetch_items(query=query)[0]
+        return raw_structure
+
     def transform_row(
         self,
         raw_structure: RawStructure | dict[str, Any],
         source_db: Optional[StructuresDatabase] = None,
         task_table_name: Optional[str] = None,
     ) -> list[OptimadeStructure]:
+        raise NotImplementedError("OQMD trajectory transformation not implemented")
+        calculations = self._get_calculations(
+            raw_structure,
+            source_db,
+            filter_label=[
+                "coarse_relax",
+                "relaxation",
+                "fine_relax",
+            ],
+        )
+
+        for calculation in calculations:
+            input_atoms = self._get_atoms_from_structure_id(
+                calculation["input_id"], source_db
+            )
+            input_structure = self._get_structure_from_structure_id(
+                input_atoms[0]["structure_id"], source_db
+            )
+            input_values_dict = self._extract_structures_attributes(input_structure)
+            input_atoms_attributes = self._extract_atoms_attributes(input_atoms)
+            input_values_dict = {
+                **input_values_dict,
+                "species_at_sites": input_atoms_attributes[0],
+                "cartesian_site_positions": input_atoms_attributes[1],
+                "forces": input_atoms_attributes[2],
+                "charges": input_atoms_attributes[3],
+            }
+            breakpoint()
+
+            output_atoms = self._get_atoms_from_structure_id(
+                calculation["output_id"], source_db
+            )
+            output_structure = self._get_structure_from_structure_id(
+                output_atoms[0]["structure_id"], source_db
+            )
+
+            output_values_dict = self._extract_structures_attributes(output_structure)
+
+            return output_values_dict
+
         pass

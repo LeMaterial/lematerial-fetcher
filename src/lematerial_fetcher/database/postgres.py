@@ -1,6 +1,8 @@
 # Copyright 2025 Entalpic
+import itertools
 import json
-from typing import Any, List, Optional
+import time
+from typing import Any, Generator, List, Optional
 
 import psycopg2
 from psycopg2.extras import Json, execute_values
@@ -56,68 +58,24 @@ class Database:
                 {columns_sql}
             );"""
             cur.execute(query)
+            self.create_indexes(cur)
             self.conn.commit()
 
-    def fetch_items_with_ids(
-        self, ids: List[str], table_name: Optional[str] = None
-    ) -> List[RawStructure]:
+    def create_indexes(self, cur) -> None:
         """
-        Fetch items from the database that match the given list of IDs.
+        Create indexes for the table. Override this method in child classes to add specific indexes.
 
         Parameters
         ----------
-        ids : List[str]
-            List of IDs to retrieve from the database
-
-        Returns
-        -------
-        List[RawStructure]
-            List of RawStructure objects matching the requested IDs
-        table_name : str, optional
-            Name of the table to fetch items from, by default None
-
-        Raises
-        ------
-        Exception
-            If there's an error during database query execution
+        cur : psycopg2.extensions.cursor
+            Database cursor
         """
-        if not ids:
-            return []
-
-        if not table_name:
-            table_name = self.table_name
-
-        with self.conn.cursor() as cur:
-            # Use parameterized query with ANY to safely handle the list of IDs
-            placeholders = ",".join(["%s"] * len(ids))
+        if "id" in self.columns:
             query = f"""
-            SELECT id, type, attributes, last_modified
-            FROM {table_name}
-            WHERE id IN ({placeholders});
+            CREATE INDEX IF NOT EXISTS idx_{self.table_name}_id 
+            ON {self.table_name} (id);
             """
-
-            try:
-                cur.execute(query, ids)
-                results = []
-                for row in cur.fetchall():
-                    id_val, type_val, attributes_json, last_modified = row
-                    # Parse the JSON attributes
-                    attributes = (
-                        json.loads(attributes_json)
-                        if isinstance(attributes_json, str)
-                        else attributes_json
-                    )
-                    results.append(
-                        RawStructure(
-                            id=id_val,
-                            type=type_val,
-                            attributes=attributes,
-                            last_modified=last_modified,
-                        )
-                    )
-                return results
-            except (json.JSONDecodeError, psycopg2.Error) as e:
-                raise Exception(f"Error fetching items with IDs: {str(e)}")
+            cur.execute(query)
 
     def count_items(self) -> int:
         """
@@ -239,11 +197,89 @@ class StructuresDatabase(Database):
                 except (json.JSONDecodeError, psycopg2.Error) as e:
                     raise Exception(f"Error during batch insert: {str(e)}")
 
-    def fetch_items(
-        self, offset: int = 0, batch_size: int = 100, table_name: Optional[str] = None
-    ) -> list[RawStructure]:
+    def fetch_items_iter(
+        self,
+        offset: int = 0,
+        batch_size: int = 100,
+        table_name: Optional[str] = None,
+        cursor_name: Optional[str] = None,
+    ) -> Generator[RawStructure, None, None]:
         """
-        Fetch items from the database with pagination support.
+        Fetch items from the database using a server-side cursor, yielding results one at a time.
+        This is memory efficient for large result sets as it doesn't load all results into memory at once.
+
+        Parameters
+        ----------
+        offset : int, optional
+            Number of items to skip, by default 0
+        batch_size : int, optional
+            Number of items to fetch in each database round-trip, by default 100
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
+        cursor_name : str, optional
+            Name for the server-side cursor, by default None (auto-generated)
+
+        Yields
+        ------
+        RawStructure
+            One structure at a time from the result set
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query execution
+        """
+        if not table_name:
+            table_name = self.table_name
+
+        # Create a unique cursor name if none provided
+        if cursor_name is None:
+            cursor_name = f"fetch_items_cursor_{id(self)}_{time.time_ns()}"
+
+        try:
+            with self.conn.cursor(name=cursor_name) as cur:  # Server-side cursor
+                query = f"""
+                SELECT id, type, attributes, last_modified
+                FROM {table_name}
+                ORDER BY id
+                OFFSET %s
+                LIMIT %s
+                """
+
+                cur.execute(query, (offset, batch_size))
+
+                while True:
+                    rows = cur.fetchmany(batch_size)
+                    if not rows:
+                        break
+
+                    for row in rows:
+                        id_val, type_val, attributes_json, last_modified = row
+                        # Parse the JSON attributes
+                        attributes = (
+                            json.loads(attributes_json)
+                            if isinstance(attributes_json, str)
+                            else attributes_json
+                        )
+                        yield RawStructure(
+                            id=id_val,
+                            type=type_val,
+                            attributes=attributes,
+                            last_modified=last_modified,
+                        )
+
+        except (json.JSONDecodeError, psycopg2.Error) as e:
+            raise Exception(f"Error fetching items: {str(e)}")
+
+    def fetch_items(
+        self,
+        offset: int = 0,
+        batch_size: int = 100,
+        table_name: Optional[str] = None,
+    ) -> List[RawStructure]:
+        """
+        Fetch a batch of items from the database.
+        This method uses fetch_items_iter internally but returns a list for backward compatibility.
 
         Parameters
         ----------
@@ -251,50 +287,88 @@ class StructuresDatabase(Database):
             Number of items to skip, by default 0
         batch_size : int, optional
             Maximum number of items to return, by default 100
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
 
         Returns
         -------
-        list[RawStructure]
-            List of Structure objects
+        List[RawStructure]
+            List of RawStructure objects
+
+        Raises
+        ------
+        Exception
+            If there's an error during database query execution
+        """
+        return list(
+            itertools.islice(
+                self.fetch_items_iter(
+                    offset=offset, batch_size=batch_size, table_name=table_name
+                ),
+                batch_size,
+            )
+        )
+
+    def fetch_items_with_ids(
+        self, ids: List[str], table_name: Optional[str] = None
+    ) -> List[RawStructure]:
+        """
+        Fetch items from the database that match the given list of IDs.
+
+        Parameters
+        ----------
+        ids : List[str]
+            List of IDs to retrieve from the database
+
+        Returns
+        -------
+        List[RawStructure]
+            List of RawStructure objects matching the requested IDs
         table_name : str, optional
             Name of the table to fetch items from, by default None
 
         Raises
         ------
         Exception
-            If there's an error during database query or JSON decoding
+            If there's an error during database query execution
         """
+        if not ids:
+            return []
+
         if not table_name:
             table_name = self.table_name
 
         with self.conn.cursor() as cur:
-            columns = ", ".join(self.columns.keys())
+            # Use parameterized query with ANY to safely handle the list of IDs
+            placeholders = ",".join(["%s"] * len(ids))
             query = f"""
-            SELECT {columns}
+            SELECT id, type, attributes, last_modified
             FROM {table_name}
-            ORDER BY id
-            LIMIT %s OFFSET %s;"""
+            WHERE id IN ({placeholders});
+            """
 
             try:
-                cur.execute(query, (batch_size, offset))
-                rows = cur.fetchall()
-
-                structures = []
-                for row in rows:
-                    id_, type_, attributes, last_modified = row
-
-                    structures.append(
+                cur.execute(query, ids)
+                results = []
+                for row in cur:
+                    id_val, type_val, attributes_json, last_modified = row
+                    # Parse the JSON attributes
+                    attributes = (
+                        json.loads(attributes_json)
+                        if isinstance(attributes_json, str)
+                        else attributes_json
+                    )
+                    results.append(
                         RawStructure(
-                            id=id_,
-                            type=type_,
+                            id=id_val,
+                            type=type_val,
                             attributes=attributes,
                             last_modified=last_modified,
                         )
                     )
-
-                return structures
+                return results
             except (json.JSONDecodeError, psycopg2.Error) as e:
-                raise Exception(f"Error fetching items: {str(e)}")
+                raise Exception(f"Error fetching items with IDs: {str(e)}")
 
 
 class OptimadeDatabase(StructuresDatabase):
@@ -312,7 +386,11 @@ class OptimadeDatabase(StructuresDatabase):
 
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
-        self.columns = {
+        self.columns = OptimadeDatabase.columns()
+
+    @classmethod
+    def columns(cls) -> dict[str, str]:
+        return {
             "id": "TEXT PRIMARY KEY",
             "source": "TEXT",
             "elements": "TEXT[]",
@@ -320,9 +398,11 @@ class OptimadeDatabase(StructuresDatabase):
             "elements_ratios": "FLOAT[]",
             "nsites": "INTEGER",
             "cartesian_site_positions": "FLOAT[][]",
+            "lattice_vectors": "FLOAT[][]",
             "species_at_sites": "TEXT[][]",
-            "species": "TEXT[]",
+            "species": "JSONB",
             "chemical_formula_anonymous": "TEXT",
+            "chemical_formula_reduced": "TEXT",
             "chemical_formula_descriptive": "TEXT",
             "dimension_types": "INTEGER[]",
             "nperiodic_dimensions": "INTEGER",
@@ -350,10 +430,10 @@ class OptimadeDatabase(StructuresDatabase):
 
         Returns
         -------
-        list[Json]
-            List of species data converted to PostgreSQL JSONB format
+        Json
+            Species data converted to PostgreSQL JSONB format
         """
-        return [Json(s) for s in species]
+        return Json(species)
 
     def insert_data(self, structure: OptimadeStructure) -> None:
         """
@@ -392,9 +472,11 @@ class OptimadeDatabase(StructuresDatabase):
                     structure.elements_ratios,
                     structure.nsites,
                     structure.cartesian_site_positions,
+                    structure.lattice_vectors,
                     structure.species_at_sites,
                     species_data,
                     structure.chemical_formula_anonymous,
+                    structure.chemical_formula_reduced,
                     structure.chemical_formula_descriptive,
                     structure.dimension_types,
                     structure.nperiodic_dimensions,
@@ -453,9 +535,11 @@ class OptimadeDatabase(StructuresDatabase):
                             structure.elements_ratios,
                             structure.nsites,
                             structure.cartesian_site_positions,
+                            structure.lattice_vectors,
                             structure.species_at_sites,
                             species_data,
                             structure.chemical_formula_anonymous,
+                            structure.chemical_formula_reduced,
                             structure.chemical_formula_descriptive,
                             structure.dimension_types,
                             structure.nperiodic_dimensions,
@@ -502,12 +586,14 @@ class TrajectoriesDatabase(OptimadeDatabase):
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
         # trajectory-specific columns
-        self.columns.update(
-            {
-                "relaxation_step": "INTEGER",
-                "relaxation_number": "INTEGER",
-            }
-        )
+        self.columns = TrajectoriesDatabase.columns()
+
+    @classmethod
+    def columns(cls) -> dict[str, str]:
+        return OptimadeDatabase.columns() | {
+            "relaxation_step": "INTEGER",
+            "relaxation_number": "INTEGER",
+        }
 
     def insert_data(self, structure: Trajectory) -> None:
         """
@@ -546,9 +632,11 @@ class TrajectoriesDatabase(OptimadeDatabase):
                     structure.elements_ratios,
                     structure.nsites,
                     structure.cartesian_site_positions,
+                    structure.lattice_vectors,
                     structure.species_at_sites,
                     species_data,
                     structure.chemical_formula_anonymous,
+                    structure.chemical_formula_reduced,
                     structure.chemical_formula_descriptive,
                     structure.dimension_types,
                     structure.nperiodic_dimensions,
@@ -610,9 +698,11 @@ class TrajectoriesDatabase(OptimadeDatabase):
                             structure.elements_ratios,
                             structure.nsites,
                             structure.cartesian_site_positions,
+                            structure.lattice_vectors,
                             structure.species_at_sites,
                             species_data,
                             structure.chemical_formula_anonymous,
+                            structure.chemical_formula_reduced,
                             structure.chemical_formula_descriptive,
                             structure.dimension_types,
                             structure.nperiodic_dimensions,

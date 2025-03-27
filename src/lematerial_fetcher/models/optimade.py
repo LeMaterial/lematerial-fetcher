@@ -150,10 +150,8 @@ class OptimadeStructure(BaseModel):
     functional: Optional[Functional] = Field(
         None, description="Exchange-correlation functional"
     )
-    cross_compatibility: Optional[bool] = Field(
-        None, description="Cross-compatibility flag"
-    )
-    entalpic_fingerprint: Optional[list[float]] = Field(
+    cross_compatibility: bool = Field(description="Cross-compatibility flag")
+    entalpic_fingerprint: Optional[str] = Field(
         None,
         min_length=1,
         description="Entalpic fingerprint hash",
@@ -246,6 +244,27 @@ class OptimadeStructure(BaseModel):
         return "".join(
             letter + (str(number) if number > 1 else "") for letter, number in pairs
         )
+
+    @field_validator("chemical_formula_descriptive")
+    @classmethod
+    def validate_chemical_formula_descriptive(cls, v: str) -> str:
+        """
+        Ensure the chemical formula descriptive is properly formatted.
+        Example: H2 O1 -> H2 O or Ce1 O1 -> Ce O
+        """
+        # Remove trailing numbers
+        v = re.sub(r"([A-Z][a-z]?)1\b", r"\1", v)
+
+        # validate format (single uppercase letter followed by optional number)
+        pattern = re.compile(
+            r"^(?:[A-Z][a-z]?(?:[2-9]\d*|1\d+)?)(?:\s+[A-Z][a-z]?(?:[2-9]\d*|1\d+)?)*$"
+        )
+        if not pattern.match(v):
+            raise ValueError(
+                "Chemical formula descriptive must consist of capital letters with optional numbers. "
+                f"Got: {v}"
+            )
+        return v
 
     @field_validator("last_modified")
     @classmethod
