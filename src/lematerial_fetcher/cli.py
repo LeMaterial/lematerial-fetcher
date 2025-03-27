@@ -30,9 +30,26 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTransformer,
 )
 from lematerial_fetcher.push import Push
-from lematerial_fetcher.utils.cli import add_db_options
-from lematerial_fetcher.utils.config import load_push_config
+from lematerial_fetcher.utils.cli import (
+    add_common_options,
+    add_db_options,
+    add_fetch_options,
+    add_mp_fetch_options,
+    add_transformer_options,
+    get_default_mp_bucket_name,
+)
+from lematerial_fetcher.utils.config import (
+    load_fetcher_config,
+    load_push_config,
+    load_transformer_config,
+)
 from lematerial_fetcher.utils.logging import logger
+
+_ALEXANDRIA_BASE_URL = "https://alexandria.icams.rub.de/pbesol/v1"
+_ALEXANDRIA_TRAJECTORY_BASE_URL = (
+    "https://alexandria.icams.rub.de/data/pbe/geo_opt_paths/"
+)
+_OQMD_BASE_URL = "https://oqmd.org/download/"
 
 
 @click.group()
@@ -76,10 +93,22 @@ cli.add_command(oqmd_cli)
 
 @mp_cli.command(name="fetch")
 @click.pass_context
-def mp_fetch(ctx):
+@click.option(
+    "--tasks",
+    is_flag=True,
+    help="Fetch task data from Materials Project. If false, fetch structure data.",
+)
+@add_common_options
+@add_fetch_options
+@add_mp_fetch_options
+def mp_fetch(ctx, tasks, **config_kwargs):
     """Fetch materials from Materials Project."""
+    default_mp_bucket_name, default_mp_bucket_prefix = get_default_mp_bucket_name(tasks)
+    config_kwargs["mp_bucket_name"] = default_mp_bucket_name
+    config_kwargs["mp_bucket_prefix"] = default_mp_bucket_prefix
+    config = load_fetcher_config(**config_kwargs)
     try:
-        fetcher = MPFetcher(debug=ctx.obj["debug"])
+        fetcher = MPFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -92,13 +121,16 @@ def mp_fetch(ctx):
     help="Transform trajectory data from Material Project.",
 )
 @click.pass_context
-def mp_transform(ctx, traj):
+@add_common_options
+@add_transformer_options
+def mp_transform(ctx, traj, **config_kwargs):
     """Transform materials from Material Project."""
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = MPTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = MPTrajectoryTransformer(config=config, debug=ctx.obj["debug"])
         else:
-            transformer = MPTransformer(debug=ctx.obj["debug"])
+            transformer = MPTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -111,13 +143,33 @@ def mp_transform(ctx, traj):
     is_flag=True,
     help="Fetch trajectory data from Alexandria.",
 )
-def alexandria_fetch(ctx, traj):
+@click.option(
+    "--base-url",
+    type=str,
+    help="Base URL for Alexandria to fetch data from.",
+)
+@add_common_options
+@add_fetch_options
+def alexandria_fetch(ctx, traj, base_url, **config_kwargs):
     """Fetch materials from Alexandria."""
+    if not base_url:
+        if traj:
+            config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL
+            logger.info(
+                f"Using Alexandria trajectory base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+            )
+        else:
+            config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL
+            logger.info(
+                f"Using Alexandria structure base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+            )
+
+    config = load_fetcher_config(**config_kwargs)
     try:
         if traj:
-            fetcher = AlexandriaTrajectoryFetcher(debug=ctx.obj["debug"])
+            fetcher = AlexandriaTrajectoryFetcher(config=config, debug=ctx.obj["debug"])
         else:
-            fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
+            fetcher = AlexandriaFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -130,13 +182,18 @@ def alexandria_fetch(ctx, traj):
     is_flag=True,
     help="Transform trajectory data from Alexandria.",
 )
-def alexandria_transform(ctx, traj):
+@add_common_options
+@add_transformer_options
+def alexandria_transform(ctx, traj, base_url, **config_kwargs):
     """Transform materials from Alexandria."""
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = AlexandriaTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = AlexandriaTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
         else:
-            transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
+            transformer = AlexandriaTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -144,10 +201,24 @@ def alexandria_transform(ctx, traj):
 
 @oqmd_cli.command(name="fetch")
 @click.pass_context
-def oqmd_fetch(ctx):
+@click.option(
+    "--base-url",
+    type=str,
+    help="Base URL for Alexandria to fetch data from.",
+)
+@add_common_options
+@add_fetch_options
+def oqmd_fetch(ctx, base_url, **config_kwargs):
     """Fetch materials from OQMD."""
+    if not base_url:
+        config_kwargs["base_url"] = _OQMD_BASE_URL
+        logger.info(
+            f"Using OQMD base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+        )
+
+    config = load_fetcher_config(**config_kwargs)
     try:
-        fetcher = OQMDFetcher(debug=ctx.obj["debug"])
+        fetcher = OQMDFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -160,13 +231,16 @@ def oqmd_fetch(ctx):
     is_flag=True,
     help="Transform trajectory data from OQMD.",
 )
-def oqmd_transform(ctx, traj):
+@add_common_options
+@add_transformer_options
+def oqmd_transform(ctx, traj, **config_kwargs):
     """Transform materials from OQMD."""
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = OQMDTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = OQMDTrajectoryTransformer(config=config, debug=ctx.obj["debug"])
         else:
-            transformer = OQMDTransformer(debug=ctx.obj["debug"])
+            transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)

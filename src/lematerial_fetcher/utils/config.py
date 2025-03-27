@@ -14,7 +14,8 @@ class BaseConfig:
     num_workers: int
     retry_delay: int
     log_every: int
-    cache_dir: str | None
+    page_offset: int
+    page_limit: int
 
 
 @dataclass
@@ -22,8 +23,6 @@ class FetcherConfig(BaseConfig):
     base_url: str
     db_conn_str: str
     table_name: str
-    page_limit: int
-    page_offset: int
     mp_bucket_name: str
     mp_bucket_prefix: str
     mysql_config: Optional[dict] = None
@@ -36,39 +35,37 @@ class TransformerConfig(BaseConfig):
     dest_db_conn_str: str
     source_table_name: str
     dest_table_name: str
-    page_offset: int
     batch_size: int
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
 
 
-@dataclass
-class PushConfig(BaseConfig):
-    source_db_conn_str: str
-    source_table_name: str
-    hf_repo_id: str
-    hf_token: str | None = None
-    data_dir: str | None = None
-    chunk_size: int = 1000
-    max_rows: int = -1
-    force_refresh: bool = False
-
-
-def _load_base_config() -> Dict[str, Any]:
-    defaults = {
-        "LEMATERIALFETCHER_LOG_DIR": "./logs",
-        "LEMATERIALFETCHER_MAX_RETRIES": 3,
-        "LEMATERIALFETCHER_NUM_WORKERS": 2,
-        "LEMATERIALFETCHER_RETRY_DELAY": 2,
-        "LEMATERIALFETCHER_LOG_EVERY": 1000,
-        "LEMATERIALFETCHER_PAGE_OFFSET": 0,
-        "LEMATERIALFETCHER_CACHE_DIR": None,
+def _load_base_config(
+    log_dir: Optional[str] = None,
+    max_retries: Optional[int] = None,
+    num_workers: Optional[int] = None,
+    retry_delay: Optional[int] = None,
+    log_every: Optional[int] = None,
+    offset: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> Dict[str, Any]:
+    mapping_order = {
+        "LEMATERIALFETCHER_LOG_DIR": (log_dir, "./logs"),
+        "LEMATERIALFETCHER_MAX_RETRIES": (max_retries, 3),
+        "LEMATERIALFETCHER_NUM_WORKERS": (num_workers, 2),
+        "LEMATERIALFETCHER_RETRY_DELAY": (retry_delay, 2),
+        "LEMATERIALFETCHER_LOG_EVERY": (log_every, 1000),
+        "LEMATERIALFETCHER_OFFSET": (offset, 0),
+        "LEMATERIALFETCHER_LIMIT": (limit, 10),
     }
 
     # apply defaults
-    for key, value in defaults.items():
+    for key, value in mapping_order.items():
         if key not in os.environ:
-            os.environ[key] = str(value)
+            if value[0] is None:
+                os.environ[key] = str(value[1])
+            else:
+                os.environ[key] = str(value[0])
 
     return {
         "log_dir": os.getenv("LEMATERIALFETCHER_LOG_DIR"),
@@ -76,7 +73,8 @@ def _load_base_config() -> Dict[str, Any]:
         "num_workers": int(os.getenv("LEMATERIALFETCHER_NUM_WORKERS")),
         "retry_delay": int(os.getenv("LEMATERIALFETCHER_RETRY_DELAY")),
         "log_every": int(os.getenv("LEMATERIALFETCHER_LOG_EVERY")),
-        "cache_dir": os.getenv("LEMATERIALFETCHER_CACHE_DIR"),
+        "page_offset": int(os.getenv("LEMATERIALFETCHER_PAGE_OFFSET")),
+        "page_limit": int(os.getenv("LEMATERIALFETCHER_PAGE_LIMIT")),
     }
 
 
@@ -100,92 +98,140 @@ def _load_mysql_config() -> dict:
     }
 
 
-def load_fetcher_config() -> FetcherConfig:
+def load_fetcher_config(
+    base_url: Optional[str] = None,
+    db_conn_str: Optional[str] = None,
+    table_name: Optional[str] = None,
+    mp_bucket_name: Optional[str] = None,
+    mp_bucket_prefix: Optional[str] = None,
+    oqmd_download_dir: Optional[str] = None,
+    mysql_config: Optional[dict] = None,
+    **base_config_kwargs: Any,
+) -> FetcherConfig:
+    """Loads fetcher config from environment variables or passed arguments if they are set."""
     load_dotenv(override=True)
 
     # check required variables
-    required_vars = [
-        "LEMATERIALFETCHER_API_BASE_URL",
-        "LEMATERIALFETCHER_TABLE_NAME",
-        "LEMATERIALFETCHER_MP_BUCKET_NAME",
-        "LEMATERIALFETCHER_MP_BUCKET_PREFIX",
-    ]
+    required_vars = {
+        "base_url": (base_url, "LEMATERIALFETCHER_API_BASE_URL"),
+        "table_name": (table_name, "LEMATERIALFETCHER_TABLE_NAME"),
+    }
 
-    for var in required_vars:
-        if not os.getenv(var):
-            raise ValueError(f"{var} is not set")
+    config_vars = {}
 
-    db_conn_str = _create_db_conn_str(
-        "LEMATERIALFETCHER_DB_USER",
-        "LEMATERIALFETCHER_DB_PASSWORD",
-        "LEMATERIALFETCHER_DB_NAME",
-    )
+    for var, value in required_vars.items():
+        if value[0] is None:
+            assert os.getenv(value[1]) is not None, (
+                f"{value[1]} is not set, you need to provide it or set it as an environment variable"
+            )
+            config_vars[var] = os.getenv(value[1])
+        else:
+            config_vars[var] = value[0]
 
-    base_config = _load_base_config()
+    if db_conn_str is None:
+        db_conn_str = _create_db_conn_str(
+            "LEMATERIALFETCHER_DB_USER",
+            "LEMATERIALFETCHER_DB_PASSWORD",
+            "LEMATERIALFETCHER_DB_NAME",
+        )
 
-    mysql_config = _load_mysql_config()
+    base_config = _load_base_config(**base_config_kwargs)
+    mysql_config = _load_mysql_config() if mysql_config is None else mysql_config
 
     return FetcherConfig(
         **base_config,
-        base_url=os.getenv("LEMATERIALFETCHER_API_BASE_URL"),
         db_conn_str=db_conn_str,
-        table_name=os.getenv("LEMATERIALFETCHER_TABLE_NAME"),
-        page_limit=int(os.getenv("LEMATERIALFETCHER_PAGE_LIMIT", "10")),
-        page_offset=int(os.getenv("LEMATERIALFETCHER_PAGE_OFFSET")),
-        mp_bucket_name=os.getenv("LEMATERIALFETCHER_MP_BUCKET_NAME"),
-        mp_bucket_prefix=os.getenv("LEMATERIALFETCHER_MP_BUCKET_PREFIX"),
-        oqmd_download_dir=os.getenv("LEMATERIALFETCHER_OQMD_DOWNLOAD_DIR"),
+        base_url=config_vars["base_url"],
+        table_name=config_vars["table_name"],
+        mp_bucket_name=mp_bucket_name,
+        mp_bucket_prefix=mp_bucket_prefix,
+        oqmd_download_dir=oqmd_download_dir,
         mysql_config=mysql_config,
     )
 
 
-def load_transformer_config() -> TransformerConfig:
+def load_transformer_config(
+    db_conn_str: Optional[str] = None,
+    source_table_name: Optional[str] = None,
+    dest_table_name: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    task_source_table_name: Optional[str] = None,
+    mysql_config: Optional[dict] = None,
+    **base_config_kwargs: Any,
+) -> TransformerConfig:
     load_dotenv(override=True)
 
-    required_vars = [
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME",
-        "LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE",
-        "LEMATERIALFETCHER_TRANSFORMER_LOG_EVERY",
-    ]
+    required_vars = {
+        "source_db_conn_str": (
+            db_conn_str,
+            [
+                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
+                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
+                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
+            ],
+        ),
+        "source_table_name": (
+            source_table_name,
+            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME",
+        ),
+        "dest_db_conn_str": (
+            db_conn_str,
+            [
+                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
+                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
+                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
+            ],
+        ),
+        "dest_table_name": (
+            dest_table_name,
+            "LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME",
+        ),
+        "batch_size": (batch_size, "LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE"),
+    }
 
-    for var in required_vars:
-        if not os.getenv(var):
-            raise ValueError(f"{var} is not set")
+    config_vars = {}
 
-    source_db_conn_str = _create_db_conn_str(
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
-        "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
-    )
+    for var, value in required_vars.items():
+        if value[0] is None:
+            test_vars = [value[1]] if not isinstance(value[1], list) else value[1]
+            for env_var in test_vars:
+                assert os.getenv(env_var) is not None, (
+                    f"{env_var} is not set, you need to provide it or set it as an environment variable"
+                )
+            config_vars[var] = (
+                os.getenv(test_vars[0]) if not isinstance(value[1], list) else None
+            )
+        else:
+            config_vars[var] = value[0]
 
-    dest_db_conn_str = _create_db_conn_str(
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
-        "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
-    )
+    if config_vars["source_db_conn_str"] is None:
+        config_vars["source_db_conn_str"] = _create_db_conn_str(
+            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
+            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
+            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
+        )
 
-    base_config = _load_base_config()
+    if config_vars["dest_db_conn_str"] is None:
+        config_vars["dest_db_conn_str"] = _create_db_conn_str(
+            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
+            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
+            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
+        )
 
-    mysql_config = _load_mysql_config()
+    base_config = _load_base_config(**base_config_kwargs)
+
+    mysql_config = _load_mysql_config() if mysql_config is None else mysql_config
 
     return TransformerConfig(
         **base_config,
-        source_db_conn_str=source_db_conn_str,
-        dest_db_conn_str=dest_db_conn_str,
-        source_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME"),
-        dest_table_name=os.getenv("LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME"),
-        batch_size=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE", "1000")),
-        page_offset=int(os.getenv("LEMATERIALFETCHER_TRANSFORMER_PAGE_OFFSET", "0")),
-        mp_task_table_name=os.getenv(
-            "LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None
-        ),
+        source_db_conn_str=config_vars["source_db_conn_str"],
+        dest_db_conn_str=config_vars["dest_db_conn_str"],
+        source_table_name=config_vars["source_table_name"],
+        dest_table_name=config_vars["dest_table_name"],
+        batch_size=int(config_vars["batch_size"]),
+        mp_task_table_name=task_source_table_name
+        if task_source_table_name is not None
+        else os.getenv("LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None),
         mysql_config=mysql_config,
     )
 

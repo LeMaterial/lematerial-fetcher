@@ -124,14 +124,6 @@ def test_load_fetcher_config(mock_config_env_vars):
     # Test fetcher specific values
     assert config.base_url == mock_config_env_vars["LEMATERIALFETCHER_API_BASE_URL"]
     assert config.table_name == mock_config_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
-    assert (
-        config.mp_bucket_name
-        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_NAME"]
-    )
-    assert (
-        config.mp_bucket_prefix
-        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_PREFIX"]
-    )
     assert config.page_limit == int(
         mock_config_env_vars["LEMATERIALFETCHER_PAGE_LIMIT"]
     )
