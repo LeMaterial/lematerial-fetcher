@@ -122,7 +122,7 @@ class BaseMPTransformer:
             "species": species,
             # chemistry
             "chemical_formula_anonymous": raw_structure.attributes["formula_anonymous"],
-            "chemical_formula_descriptive": raw_structure.attributes["formula_pretty"],
+            "chemical_formula_descriptive": str(pmg_structure.composition),
             "chemical_formula_reduced": chemical_formula_reduced,
             # dimensionality
             "dimension_types": [1, 1, 1],
