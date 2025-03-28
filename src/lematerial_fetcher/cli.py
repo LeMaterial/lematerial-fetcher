@@ -52,7 +52,7 @@ from lematerial_fetcher.utils.logging import logger
 
 load_dotenv(override=True)
 
-_ALEXANDRIA_BASE_URL = "https://alexandria.icams.rub.de/pbesol/v1"
+_ALEXANDRIA_BASE_URL = "https://alexandria.icams.rub.de/pbesol/v1/structures"
 _ALEXANDRIA_TRAJECTORY_BASE_URL = (
     "https://alexandria.icams.rub.de/data/pbe/geo_opt_paths/"
 )
