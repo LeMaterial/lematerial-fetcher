@@ -1,12 +1,12 @@
 # Copyright 2025 Entalpic
 import gc
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import Manager
 from typing import Any
 
-import orjson
 from tqdm import tqdm
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
@@ -292,7 +292,7 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             functional = get_functional_from_url(file_url)
 
             structures = []
-            file_json = orjson.loads(open(file_path, "rb").read())
+            file_json = json.load(open(file_path, "rb"))
             # Get all keys at the root level
             for key, item in tqdm(
                 file_json.items(),
