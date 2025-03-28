@@ -6,6 +6,10 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
+from lematerial_fetcher.utils.logging import logger
+
+load_dotenv(override=True)
+
 
 @dataclass
 class BaseConfig:
@@ -41,214 +45,279 @@ class TransformerConfig(BaseConfig):
 
 
 def _load_base_config(
-    log_dir: Optional[str] = None,
-    max_retries: Optional[int] = None,
-    num_workers: Optional[int] = None,
-    retry_delay: Optional[int] = None,
-    log_every: Optional[int] = None,
-    offset: Optional[int] = None,
-    limit: Optional[int] = None,
+    log_dir: str = "./logs",
+    max_retries: int = 3,
+    num_workers: int = os.cpu_count() - 1,
+    retry_delay: int = 2,
+    log_every: int = 1000,
+    offset: int = 0,
+    limit: int = 10,
 ) -> Dict[str, Any]:
-    mapping_order = {
-        "LEMATERIALFETCHER_LOG_DIR": (log_dir, "./logs"),
-        "LEMATERIALFETCHER_MAX_RETRIES": (max_retries, 3),
-        "LEMATERIALFETCHER_NUM_WORKERS": (num_workers, 2),
-        "LEMATERIALFETCHER_RETRY_DELAY": (retry_delay, 2),
-        "LEMATERIALFETCHER_LOG_EVERY": (log_every, 1000),
-        "LEMATERIALFETCHER_OFFSET": (offset, 0),
-        "LEMATERIALFETCHER_LIMIT": (limit, 10),
-    }
+    """Load base configuration.
 
-    # apply defaults
-    for key, value in mapping_order.items():
-        if key not in os.environ:
-            if value[0] is None:
-                os.environ[key] = str(value[1])
-            else:
-                os.environ[key] = str(value[0])
-
+    All values are provided by Click with environment variable defaults already applied.
+    """
     return {
-        "log_dir": os.getenv("LEMATERIALFETCHER_LOG_DIR"),
-        "max_retries": int(os.getenv("LEMATERIALFETCHER_MAX_RETRIES")),
-        "num_workers": int(os.getenv("LEMATERIALFETCHER_NUM_WORKERS")),
-        "retry_delay": int(os.getenv("LEMATERIALFETCHER_RETRY_DELAY")),
-        "log_every": int(os.getenv("LEMATERIALFETCHER_LOG_EVERY")),
-        "page_offset": int(os.getenv("LEMATERIALFETCHER_PAGE_OFFSET")),
-        "page_limit": int(os.getenv("LEMATERIALFETCHER_PAGE_LIMIT")),
+        "log_dir": log_dir,
+        "max_retries": max_retries,
+        "num_workers": num_workers,
+        "retry_delay": retry_delay,
+        "log_every": log_every,
+        "page_offset": offset,
+        "page_limit": limit,
     }
 
 
 def _create_db_conn_str(
-    host_env: str, user_env: str, password_env: str, dbname_env: str
+    host: str = "localhost",
+    user: Optional[str] = None,
+    password_env_var: str = None,  # Password environment variable
+    dbname: Optional[str] = None,
 ) -> str:
-    """Create a database connection string from environment variables."""
-    host = os.getenv(host_env)
-    if host is None:
-        host = "localhost"
+    """Create a database connection string from individual parameters.
+
+    Passwords are always read from environment variables (unless passed in the connection string).
+    """
+    password = os.getenv(password_env_var) if password_env_var else None
+
+    missing = []
+    if not user:
+        missing.append("database username")
+    if not password:
+        missing.append(f"password (environment variable {password_env_var})")
+    if not dbname:
+        missing.append("database name")
+
+    if missing:
+        raise ValueError(f"Required database credentials missing: {', '.join(missing)}")
+
     return (
-        f"host={host} "
-        f"user={os.getenv(user_env)} "
-        f"password={os.getenv(password_env)} "
-        f"dbname={os.getenv(dbname_env)} "
-        f"sslmode=disable"
+        f"host={host} user={user} password={password} dbname={dbname} sslmode=disable"
     )
 
 
-def _load_mysql_config() -> dict:
-    return {
-        "host": os.getenv("LEMATERIALFETCHER_MYSQL_HOST"),
-        "user": os.getenv("LEMATERIALFETCHER_MYSQL_USER"),
-        "password": os.getenv("LEMATERIALFETCHER_MYSQL_PASSWORD"),
-        "database": os.getenv("LEMATERIALFETCHER_MYSQL_DATABASE"),
-        "cert_path": os.getenv("LEMATERIALFETCHER_MYSQL_CERT_PATH"),
+def _load_mysql_config(
+    mysql_host: str = "localhost",
+    mysql_user: Optional[str] = None,
+    mysql_password_env_var: str = "LEMATERIALFETCHER_MYSQL_PASSWORD",  # Password environment variable
+    mysql_database: str = "lematerial",
+    mysql_cert_path: Optional[str] = None,
+) -> dict:
+    """Load MySQL configuration from parameters."""
+    mysql_password = os.getenv(mysql_password_env_var)
+
+    config = {
+        "host": mysql_host,
+        "user": mysql_user,
+        "password": mysql_password,
+        "database": mysql_database,
+        "cert_path": mysql_cert_path,
     }
+
+    # Only validate if MySQL appears to be configured
+    if mysql_user:
+        missing = []
+        if not mysql_password:
+            missing.append(
+                f"MySQL password (environment variable {mysql_password_env_var})"
+            )
+        if not mysql_database:
+            missing.append("MySQL database")
+
+        if missing:
+            raise ValueError(
+                f"Required MySQL configuration missing: {', '.join(missing)}"
+            )
+
+    return config
 
 
 def load_fetcher_config(
     base_url: Optional[str] = None,
     db_conn_str: Optional[str] = None,
+    db_user: Optional[str] = None,
+    # No password parameter - must be set in environment
+    db_host: str = "localhost",
+    db_name: Optional[str] = None,
     table_name: Optional[str] = None,
     mp_bucket_name: Optional[str] = None,
     mp_bucket_prefix: Optional[str] = None,
     oqmd_download_dir: Optional[str] = None,
-    mysql_config: Optional[dict] = None,
+    mysql_host: str = "localhost",
+    mysql_user: Optional[str] = None,
+    # No MySQL password parameter
+    mysql_database: str = "lematerial",
+    mysql_cert_path: Optional[str] = None,
     **base_config_kwargs: Any,
 ) -> FetcherConfig:
-    """Loads fetcher config from environment variables or passed arguments if they are set."""
-    load_dotenv(override=True)
+    """Loads fetcher config from passed arguments.
 
-    # check required variables
-    required_vars = {
-        "base_url": (base_url, "LEMATERIALFETCHER_API_BASE_URL"),
-        "table_name": (table_name, "LEMATERIALFETCHER_TABLE_NAME"),
-        "db_conn_str": (
-            db_conn_str,
-            [
-                "LEMATERIALFETCHER_DB_USER",
-                "LEMATERIALFETCHER_DB_PASSWORD",
-                "LEMATERIALFETCHER_DB_NAME",
-            ],
-        ),
+    The common workflow is that those arguments will be passed by Click.
+    Passwords are always read from environment variables for security.
+    """
+    base_config = _load_base_config(**base_config_kwargs)
+
+    if db_conn_str is None and db_user is not None:
+        try:
+            db_conn_str = _create_db_conn_str(
+                host=db_host,
+                user=db_user,
+                password_env_var="LEMATERIALFETCHER_DB_PASSWORD",
+                dbname=db_name,
+            )
+        except ValueError:
+            # The validation will happen in the next step
+            pass
+
+    config = {
+        "base_url": base_url,
+        "table_name": table_name,
+        "db_conn_str": db_conn_str,
+        "mp_bucket_name": mp_bucket_name,
+        "mp_bucket_prefix": mp_bucket_prefix,
+        "oqmd_download_dir": oqmd_download_dir,
     }
 
-    config_vars = {}
+    # Validate required fields
+    required_fields = [
+        ("base_url", "base_url"),
+        ("table_name", "table_name"),
+        ("db_conn_str", "db credentials"),
+    ]
+    missing_fields = [(label, key) for key, label in required_fields if not config[key]]
+    if missing_fields:
+        missing_labels = [label for label, _ in missing_fields]
+        raise ValueError(f"Required configuration missing: {', '.join(missing_labels)}")
 
-    for var, value in required_vars.items():
-        if value[0] is None:
-            assert os.getenv(value[1]) is not None, (
-                f"{value[1]} is not set, you need to provide it or set it as an environment variable"
-            )
-            config_vars[var] = os.getenv(value[1])
-        else:
-            config_vars[var] = value[0]
-
-    if db_conn_str is None:
-        db_conn_str = _create_db_conn_str(
-            "LEMATERIALFETCHER_DB_HOST",
-            "LEMATERIALFETCHER_DB_USER",
-            "LEMATERIALFETCHER_DB_PASSWORD",
-            "LEMATERIALFETCHER_DB_NAME",
+    # Handle MySQL config (OQMD only)
+    try:
+        mysql_config = _load_mysql_config(
+            mysql_host=mysql_host,
+            mysql_user=mysql_user,
+            mysql_password_env_var="LEMATERIALFETCHER_MYSQL_PASSWORD",
+            mysql_database=mysql_database,
+            mysql_cert_path=mysql_cert_path,
         )
-
-    base_config = _load_base_config(**base_config_kwargs)
-    mysql_config = _load_mysql_config() if mysql_config is None else mysql_config
+    except ValueError as e:
+        logger.info(f"Error loading MySQL config: {e}.")
+        mysql_config = None
 
     return FetcherConfig(
         **base_config,
-        db_conn_str=db_conn_str,
-        base_url=config_vars["base_url"],
-        table_name=config_vars["table_name"],
-        mp_bucket_name=mp_bucket_name,
-        mp_bucket_prefix=mp_bucket_prefix,
-        oqmd_download_dir=oqmd_download_dir,
+        **config,
         mysql_config=mysql_config,
     )
 
 
 def load_transformer_config(
-    db_conn_str: Optional[str] = None,
-    source_table_name: Optional[str] = None,
+    # Source database params
+    db_user: Optional[str] = None,
+    # No source password parameter
+    db_host: str = "localhost",
+    db_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    # Destination database params
+    dest_db_user: Optional[str] = None,
+    # No destination password parameter
+    dest_db_host: str = "localhost",
+    dest_db_name: Optional[str] = None,
     dest_table_name: Optional[str] = None,
-    batch_size: Optional[int] = None,
+    # Other params
+    batch_size: int = 500,
     task_source_table_name: Optional[str] = None,
-    mysql_config: Optional[dict] = None,
+    mysql_host: str = "localhost",
+    mysql_user: Optional[str] = None,
+    mysql_database: str = "lematerial",
+    mysql_cert_path: Optional[str] = None,
     **base_config_kwargs: Any,
 ) -> TransformerConfig:
-    load_dotenv(override=True)
+    """Loads transformer config from passed arguments.
 
-    required_vars = {
-        "source_db_conn_str": (
-            db_conn_str,
-            [
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
-            ],
-        ),
-        "source_table_name": (
-            source_table_name,
-            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME",
-        ),
-        "dest_db_conn_str": (
-            db_conn_str,
-            [
-                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
-                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
-                "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
-            ],
-        ),
-        "dest_table_name": (
-            dest_table_name,
-            "LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME",
-        ),
-        "batch_size": (batch_size, "LEMATERIALFETCHER_TRANSFORMER_BATCH_SIZE"),
-    }
+    The common workflow is that those arguments will be passed by Click.
+    Passwords are always read from environment variables for security.
 
-    config_vars = {}
-
-    for var, value in required_vars.items():
-        if value[0] is None:
-            test_vars = [value[1]] if not isinstance(value[1], list) else value[1]
-            for env_var in test_vars:
-                assert os.getenv(env_var) is not None, (
-                    f"{env_var} is not set, you need to provide it or set it as an environment variable"
-                )
-            config_vars[var] = (
-                os.getenv(test_vars[0]) if not isinstance(value[1], list) else None
-            )
-        else:
-            config_vars[var] = value[0]
-
-    if config_vars["source_db_conn_str"] is None:
-        config_vars["source_db_conn_str"] = _create_db_conn_str(
-            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_HOST",
-            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER",
-            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD",
-            "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME",
-        )
-
-    if config_vars["dest_db_conn_str"] is None:
-        config_vars["dest_db_conn_str"] = _create_db_conn_str(
-            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_HOST",
-            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_USER",
-            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_PASSWORD",
-            "LEMATERIALFETCHER_TRANSFORMER_DEST_DB_NAME",
-        )
-
+    If destination database credentials are not provided, the source database
+    credentials will be used as fallbacks.
+    """
     base_config = _load_base_config(**base_config_kwargs)
 
-    mysql_config = _load_mysql_config() if mysql_config is None else mysql_config
+    # Create source DB connection string if credentials provided
+    db_conn_str = None
+    if db_user:
+        try:
+            db_conn_str = _create_db_conn_str(
+                host=db_host,
+                user=db_user,
+                password_env_var="LEMATERIALFETCHER_DB_PASSWORD",
+                dbname=db_name,
+            )
+        except ValueError:
+            # The validation will happen later
+            pass
+
+    # source database credentials fallback
+    dest_db_user_final = dest_db_user or db_user
+    dest_db_host_final = dest_db_host if dest_db_user else db_host
+    dest_db_name_final = dest_db_name or db_name
+
+    password_env_var = (
+        "LEMATERIALFETCHER_DEST_DB_PASSWORD"
+        if dest_db_user
+        else "LEMATERIALFETCHER_DB_PASSWORD"
+    )
+
+    dest_db_conn_str = None
+    if dest_db_user_final:
+        try:
+            dest_db_conn_str = _create_db_conn_str(
+                host=dest_db_host_final,
+                user=dest_db_user_final,
+                password_env_var=password_env_var,
+                dbname=dest_db_name_final,
+            )
+        except ValueError:
+            # The validation will happen later
+            pass
+
+    config = {
+        "source_db_conn_str": db_conn_str,
+        "dest_db_conn_str": dest_db_conn_str,
+        "source_table_name": table_name,
+        "dest_table_name": dest_table_name,
+        "batch_size": batch_size,
+        "mp_task_table_name": task_source_table_name,
+    }
+
+    # Validate required fields
+    required_fields = [
+        ("source_db_conn_str", "database credentials"),
+        ("dest_db_conn_str", "destination database credentials"),
+        ("source_table_name", "table_name"),
+        ("dest_table_name", "dest_table_name"),
+    ]
+    missing_fields = [(label, key) for key, label in required_fields if not config[key]]
+    if missing_fields:
+        missing_labels = [label for label, _ in missing_fields]
+        raise ValueError(
+            f"Required transformer configuration missing: {', '.join(missing_labels)}"
+        )
+
+    # Handle MySQL config (only useful for OQMD currently)
+    try:
+        mysql_config = _load_mysql_config(
+            mysql_host=mysql_host,
+            mysql_user=mysql_user,
+            mysql_password_env_var="LEMATERIALFETCHER_MYSQL_PASSWORD",
+            mysql_database=mysql_database,
+            mysql_cert_path=mysql_cert_path,
+        )
+    except ValueError as e:
+        logger.info(f"Error loading MySQL config: {e}.")
+        mysql_config = None
 
     return TransformerConfig(
         **base_config,
-        source_db_conn_str=config_vars["source_db_conn_str"],
-        dest_db_conn_str=config_vars["dest_db_conn_str"],
-        source_table_name=config_vars["source_table_name"],
-        dest_table_name=config_vars["dest_table_name"],
-        batch_size=int(config_vars["batch_size"]),
-        mp_task_table_name=task_source_table_name
-        if task_source_table_name is not None
-        else os.getenv("LEMATERIALFETCHER_TRANSFORMER_TASK_TABLE_NAME", None),
+        **config,
         mysql_config=mysql_config,
     )
 
