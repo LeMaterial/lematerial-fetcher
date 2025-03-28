@@ -8,6 +8,7 @@ from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
 from lematerial_fetcher.fetcher.mp.utils import add_s3_object_to_db
 from lematerial_fetcher.utils.aws import (
     get_aws_client,
+    get_latest_collection_version_prefix,
     list_s3_objects,
 )
 from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
@@ -59,8 +60,23 @@ class MPFetcher(BaseFetcher):
                     f"Invalid version date format: {current_version}, will process all items"
                 )
 
+        # fetch the latest release for materialsproject-build bucket if no version is set
+        prefix = self.config.mp_bucket_prefix
+        if (
+            self.config.mp_bucket_name == "materialsproject-build"
+            and self.config.mp_bucket_prefix in ["collections", "collections/"]
+        ):
+            breakpoint()
+            prefix = get_latest_collection_version_prefix(
+                self.aws_client,
+                self.config.mp_bucket_name,
+                self.config.mp_bucket_prefix,
+                "materials",
+            )
+            logger.info(f"Using latest collection version prefix: {prefix}")
+
         object_keys = list_s3_objects(
-            self.aws_client, self.config.mp_bucket_name, self.config.mp_bucket_prefix
+            self.aws_client, self.config.mp_bucket_name, prefix
         )
 
         filtered_keys = []
