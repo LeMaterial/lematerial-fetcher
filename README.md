@@ -4,6 +4,16 @@
 
 As Entalpic, the objective is to retrieve information from various OPTIMADE sources and establish a local database. This database will enable us to process and utilize the data according to our specific requirements.
 
+## Data Credits
+
+This project relies entirely on the valuable contributions of several materials science database projects:
+
+- [**Materials Project**](https://materialsproject.org/) - A comprehensive database of computed materials properties funded by the U.S. Department of Energy
+- [**Alexandria Library**](https://alexandria.icams.rub.de/) - A quantum-accurate materials library developed by ICAMS at Ruhr University Bochum
+- [**Open Quantum Materials Database (OQMD)**](https://oqmd.org/) - An extensive collection of DFT calculated properties maintained by researchers at Northwestern University
+
+We gratefully acknowledge these projects and their dedication to open materials science data. Our tool is built entirely on the foundation of their well-maintained databases and research efforts.
+
 ## Prerequisites
 
 - Python 3.11 or later
@@ -70,6 +80,10 @@ Run the program using the following command:
 ## Logging
 
 Failed URL attempts are logged in a file named `<table_name>_failed_urls.log` within the specified log directory.
+
+## Acknowledgements
+
+This project leverages data from several established materials databases. Please see [ACKNOWLEDGEMENTS.md](./ACKNOWLEDGEMENTS.md) for complete information about the data sources used and proper citations for academic use.
 
 ## License and copyright
 
