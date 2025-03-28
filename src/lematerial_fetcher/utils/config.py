@@ -222,6 +222,7 @@ def load_fetcher_config(
 
 def load_transformer_config(
     # Source database params
+    db_conn_str: Optional[str] = None,
     db_user: Optional[str] = None,
     # No source password parameter
     db_host: str = "localhost",

@@ -120,7 +120,6 @@ cli.add_command(oqmd_cli)
 
 @mp_cli.command(name="fetch")
 @click.pass_context
-@click.option("--test", type=str, help="Test option.")
 @click.option(
     "--tasks",
     is_flag=True,
@@ -136,9 +135,16 @@ def mp_fetch(ctx, tasks, **config_kwargs):
     Options can be provided via command line arguments or environment variables.
     See individual option help for corresponding environment variables.
     """
+
+    # Set default bucket name and prefix if not provided in either the CLI or the environment
     default_mp_bucket_name, default_mp_bucket_prefix = get_default_mp_bucket_name(tasks)
-    config_kwargs["mp_bucket_name"] = default_mp_bucket_name
-    config_kwargs["mp_bucket_prefix"] = default_mp_bucket_prefix
+    if "mp_bucket_name" not in config_kwargs:
+        config_kwargs["mp_bucket_name"] = default_mp_bucket_name
+    if "mp_bucket_prefix" not in config_kwargs:
+        config_kwargs["mp_bucket_prefix"] = default_mp_bucket_prefix
+
+    config_kwargs["base_url"] = "DUMMY_BASE_URL"  # Not needed for MP
+
     config = load_fetcher_config(**config_kwargs)
     try:
         fetcher = MPFetcher(config=config, debug=ctx.obj["debug"])
@@ -252,6 +258,11 @@ def alexandria_transform(ctx, traj, **config_kwargs):
         logger.fatal("\nAborted.", exit=1)
 
 
+# ------------------------------------------------------------------------------
+# OQMD commands
+# ------------------------------------------------------------------------------
+
+
 @oqmd_cli.command(name="fetch")
 @click.pass_context
 @click.option(
@@ -283,11 +294,6 @@ def oqmd_fetch(ctx, base_url, **config_kwargs):
         logger.fatal("\nAborted.", exit=1)
 
 
-# ------------------------------------------------------------------------------
-# OQMD commands
-# ------------------------------------------------------------------------------
-
-
 @oqmd_cli.command(name="transform")
 @click.pass_context
 @click.option(
@@ -316,6 +322,11 @@ def oqmd_transform(ctx, traj, **config_kwargs):
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# Push commands
+# ------------------------------------------------------------------------------
 
 
 @cli.command(name="push")
