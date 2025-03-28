@@ -286,6 +286,7 @@ class Push:
             dataset = dataset.map(
                 convert_species,
                 batched=True,
+                num_proc=self.config.num_workers,
                 desc="Converting species column to string",
             )
 
