@@ -1,5 +1,4 @@
 # Copyright 2025 Entalpic
-import functools
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -42,6 +41,18 @@ class TransformerConfig(BaseConfig):
     batch_size: int
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
+
+
+@dataclass
+class PushConfig(BaseConfig):
+    source_db_conn_str: str
+    source_table_name: str
+    hf_repo_id: str
+    hf_token: str | None = None
+    data_dir: str | None = None
+    chunk_size: int = 1000
+    max_rows: int = -1
+    force_refresh: bool = False
 
 
 def _load_base_config(
@@ -322,26 +333,62 @@ def load_transformer_config(
     )
 
 
-def load_push_config() -> PushConfig:
-    load_dotenv(override=True)
+def load_push_config(
+    db_conn_str: Optional[str] = None,
+    db_user: Optional[str] = None,
+    db_host: str = "localhost",
+    db_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    hf_repo_id: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    chunk_size: int = 1000,
+    max_rows: int = -1,
+    force_refresh: bool = False,
+    **base_config_kwargs: Any,
+) -> PushConfig:
+    """Loads push config from passed arguments.
 
-    base_config = _load_base_config()
+    The common workflow is that those arguments will be passed by Click.
+    Passwords are always read from environment variables for security.
+    """
+    base_config = _load_base_config(**base_config_kwargs)
 
-    defaults_kwargs = {
-        "chunk_size": int(os.getenv("LEMATERIALFETCHER_PUSH_CHUNK_SIZE", "1000")),
-        "max_rows": int(os.getenv("LEMATERIALFETCHER_PUSH_MAX_ROWS", -1)),
-        "force_refresh": bool(os.getenv("LEMATERIALFETCHER_PUSH_FORCE_REFRESH", False)),
+    if db_conn_str is None and db_user is not None:
+        try:
+            db_conn_str = _create_db_conn_str(
+                host=db_host,
+                user=db_user,
+                password_env_var="LEMATERIALFETCHER_DB_PASSWORD",
+                dbname=db_name,
+            )
+        except ValueError:
+            pass
+
+    config = {
+        "source_db_conn_str": db_conn_str,
+        "source_table_name": table_name,
+        "hf_repo_id": hf_repo_id,
+        "hf_token": hf_token,
+        "data_dir": data_dir,
+        "chunk_size": chunk_size,
+        "max_rows": max_rows,
+        "force_refresh": force_refresh,
     }
 
-    conn_str = _create_db_conn_str(
-        "LEMATERIALFETCHER_PUSH_DB_USER",
-        "LEMATERIALFETCHER_PUSH_DB_PASSWORD",
-        "LEMATERIALFETCHER_PUSH_DB_NAME",
-    )
+    required_fields = [
+        ("source_db_conn_str", "db credentials"),
+        ("source_table_name", "table_name"),
+        ("hf_repo_id", "hf_repo_id"),
+    ]
+    missing_fields = [(label, key) for key, label in required_fields if not config[key]]
+    if missing_fields:
+        missing_labels = [label for label, _ in missing_fields]
+        raise ValueError(
+            f"Required push configuration missing: {', '.join(missing_labels)}"
+        )
 
-    return functools.partial(
-        PushConfig,
+    return PushConfig(
         **base_config,
-        **defaults_kwargs,
-        source_db_conn_str=conn_str,
+        **config,
     )

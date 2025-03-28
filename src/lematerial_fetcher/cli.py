@@ -9,6 +9,9 @@ Learn how to use with:
     $ materialfetcher --help
 """
 
+import os
+from pathlib import Path
+
 import click
 from dotenv import load_dotenv
 
@@ -33,10 +36,10 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
 from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
     add_common_options,
-    add_db_options,
     add_fetch_options,
     add_mp_fetch_options,
     add_mysql_options,
+    add_push_options,
     add_transformer_options,
     get_default_mp_bucket_name,
 )
@@ -62,8 +65,13 @@ _OQMD_BASE_URL = "https://oqmd.org/download/"
     is_flag=True,
     help="Run all operations in the main process for debugging purposes.",
 )
+@click.option(
+    "--cache-dir",
+    type=str,
+    help="Directory to store temporary data. If not provided, will use ~/.cache/lematerial_fetcher.",
+)
 @click.pass_context
-def cli(ctx, debug):
+def cli(ctx, debug, cache_dir):
     """A CLI tool to fetch materials from various sources.
 
     All options can be set via environment variables with the prefix LEMATERIALFETCHER_.
@@ -71,6 +79,13 @@ def cli(ctx, debug):
     """
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
+    if cache_dir:
+        ctx.obj["cache_dir"] = cache_dir
+        os.environ["LEMATERIALFETCHER_CACHE_DIR"] = cache_dir
+    else:
+        os.environ["LEMATERIALFETCHER_CACHE_DIR"] = str(
+            (Path.home() / ".cache" / "lematerial_fetcher").resolve()
+        )
 
 
 @click.group(name="mp")
@@ -105,6 +120,7 @@ cli.add_command(oqmd_cli)
 
 @mp_cli.command(name="fetch")
 @click.pass_context
+@click.option("--test", type=str, help="Test option.")
 @click.option(
     "--tasks",
     is_flag=True,
@@ -292,7 +308,9 @@ def oqmd_transform(ctx, traj, **config_kwargs):
     config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = OQMDTrajectoryTransformer(config=config, debug=ctx.obj["debug"])
+            transformer = OQMDTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
         else:
             transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
@@ -308,53 +326,17 @@ def oqmd_transform(ctx, traj, **config_kwargs):
     default="optimade",
     help="Type of data to push, one of ['optimade', 'trajectories', 'any'].",
 )
-@click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
-@click.option(
-    "--hf-token",
-    type=str,
-    help="Hugging Face token.",
-)
-@click.option(
-    "--max-rows",
-    default=-1,
-    type=int,
-    help="Maximum number of rows to push. Will shuffle the data with a deterministic seed. If -1 (default), all rows will be pushed.",
-)
-@click.option(
-    "--force-refresh",
-    is_flag=False,
-    type=bool,
-    help="Force refresh the cache.",
-)
-@click.option(
-    "--chunk-size",
-    default=1000000,
-    type=int,
-    help="Number of rows to export from the database at a time.",
-)
-@add_db_options
-def push(
-    ctx,
-    data_type,
-    hf_repo_id,
-    hf_token,
-    table_name,
-    max_rows,
-    force_refresh,
-    chunk_size,
-):
-    """Push materials to Hugging Face."""
-    try:
-        default_push_config = load_push_config()
+@add_common_options
+@add_push_options
+def push(ctx, data_type, **config_kwargs):
+    """Push materials to Hugging Face.
 
-        config = default_push_config(
-            hf_repo_id=hf_repo_id,
-            source_table_name=table_name,
-            max_rows=max_rows,
-            force_refresh=force_refresh,
-            hf_token=hf_token,
-            chunk_size=chunk_size,
-        )
+    This command pushes data from a database to a Hugging Face repository.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    try:
+        config = load_push_config(**config_kwargs)
 
         push = Push(
             config=config,
@@ -366,6 +348,7 @@ def push(
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
+
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
@@ -374,17 +357,19 @@ def push(
 def main():
     """Run the CLI.
 
-    Uses Click's auto_envvar_prefix feature to automatically map CLI options
-    to environment variables with the prefix LEMATERIALFETCHER_.
-
-    For example:
+    This maps arguments to the following environment variables:
     - --db-user maps to LEMATERIALFETCHER_DB_USER
     - --num-workers maps to LEMATERIALFETCHER_NUM_WORKERS
 
     This lets Click handle environment variables consistently before they're
     passed to the configuration system.
     """
-    cli(auto_envvar_prefix="LEMATERIALFETCHER")
+
+    # Click's auto_envvar_prefix feature can be used to automatically map CLI options
+    # to environment variables with the prefix LEMATERIALFETCHER_.
+    # However, it also propagates the prefix of the command, which we don't want currently.
+
+    cli()
 
 
 if __name__ == "__main__":

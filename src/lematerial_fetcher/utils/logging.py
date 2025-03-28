@@ -9,7 +9,7 @@ from rich.logging import RichHandler
 def get_cache_dir():
     """Get the cache directory path, creating it if it doesn't exist."""
     cache_dir = Path.home() / ".cache" / "lematerial_fetcher"
-    if os.environ.get("LEMATERIALFETCHER_CACHE_DIR", "None") != "None":
+    if os.environ.get("LEMATERIALFETCHER_CACHE_DIR", None):
         cache_dir = Path(os.environ["LEMATERIALFETCHER_CACHE_DIR"])
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir

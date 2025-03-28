@@ -6,7 +6,11 @@ import dotenv
 import pytest
 from dotenv import load_dotenv
 
-from lematerial_fetcher.utils.config import load_fetcher_config, load_transformer_config
+from lematerial_fetcher.utils.config import (
+    load_fetcher_config,
+    load_push_config,
+    load_transformer_config,
+)
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -542,3 +546,181 @@ def test_load_transformer_config_with_mixed_env_and_cli():
     # Verify CLI-provided table names are used
     assert config.source_table_name == "cli_source"  # CLI value
     assert config.dest_table_name == "cli_table"  # CLI value
+
+
+@pytest.fixture
+def mock_push_env_vars(monkeypatch):
+    """Fixture to set up test environment variables for push config"""
+    test_env_vars = {
+        # Base config vars
+        "LEMATERIALFETCHER_LOG_DIR": "./logs",
+        "LEMATERIALFETCHER_MAX_RETRIES": "3",
+        "LEMATERIALFETCHER_NUM_WORKERS": "2",
+        "LEMATERIALFETCHER_RETRY_DELAY": "2",
+        "LEMATERIALFETCHER_LOG_EVERY": "1000",
+        # Database vars
+        "LEMATERIALFETCHER_DB_USER": "push_user",
+        "LEMATERIALFETCHER_DB_PASSWORD": "push_pass",
+        "LEMATERIALFETCHER_DB_HOST": "push.host",
+        "LEMATERIALFETCHER_DB_NAME": "push_db",
+        "LEMATERIALFETCHER_TABLE_NAME": "push_table",
+        # Hugging Face vars
+        "LEMATERIALFETCHER_HF_REPO_ID": "push/repo",
+        "LEMATERIALFETCHER_HF_TOKEN": "push_token",
+        # Other push vars
+        "LEMATERIALFETCHER_DATA_DIR": "./push_data",
+        "LEMATERIALFETCHER_CHUNK_SIZE": "1000",
+        "LEMATERIALFETCHER_MAX_ROWS": "-1",
+        "LEMATERIALFETCHER_FORCE_REFRESH": "False",
+    }
+    for key, value in test_env_vars.items():
+        monkeypatch.setenv(key, value)
+    return test_env_vars
+
+
+def test_load_push_config(mock_push_env_vars):
+    """Test loading push configuration with all required variables"""
+    with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
+        mock_load_dotenv.return_value = {}
+
+        config_kwargs = {
+            "log_dir": mock_push_env_vars["LEMATERIALFETCHER_LOG_DIR"],
+            "max_retries": int(mock_push_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]),
+            "num_workers": int(mock_push_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]),
+            "retry_delay": int(mock_push_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]),
+            "log_every": int(mock_push_env_vars["LEMATERIALFETCHER_LOG_EVERY"]),
+            "db_user": mock_push_env_vars["LEMATERIALFETCHER_DB_USER"],
+            "db_host": mock_push_env_vars["LEMATERIALFETCHER_DB_HOST"],
+            "db_name": mock_push_env_vars["LEMATERIALFETCHER_DB_NAME"],
+            "table_name": mock_push_env_vars["LEMATERIALFETCHER_TABLE_NAME"],
+            "hf_repo_id": mock_push_env_vars["LEMATERIALFETCHER_HF_REPO_ID"],
+            "hf_token": mock_push_env_vars["LEMATERIALFETCHER_HF_TOKEN"],
+            "data_dir": mock_push_env_vars["LEMATERIALFETCHER_DATA_DIR"],
+            "chunk_size": int(mock_push_env_vars["LEMATERIALFETCHER_CHUNK_SIZE"]),
+            "max_rows": int(mock_push_env_vars["LEMATERIALFETCHER_MAX_ROWS"]),
+            "force_refresh": mock_push_env_vars["LEMATERIALFETCHER_FORCE_REFRESH"]
+            == "True",
+        }
+
+        config = load_push_config(**config_kwargs)
+
+    assert config.log_dir == mock_push_env_vars["LEMATERIALFETCHER_LOG_DIR"]
+    assert config.max_retries == int(
+        mock_push_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]
+    )
+    assert config.num_workers == int(
+        mock_push_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]
+    )
+    assert config.retry_delay == int(
+        mock_push_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]
+    )
+    assert config.log_every == int(mock_push_env_vars["LEMATERIALFETCHER_LOG_EVERY"])
+
+    # Test source database connection string
+    expected_db_conn = (
+        f"host={mock_push_env_vars['LEMATERIALFETCHER_DB_HOST']} "
+        f"user={mock_push_env_vars['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_push_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_push_env_vars['LEMATERIALFETCHER_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.source_db_conn_str == expected_db_conn
+
+    # Test Hugging Face config
+    assert config.hf_repo_id == mock_push_env_vars["LEMATERIALFETCHER_HF_REPO_ID"]
+    assert config.hf_token == mock_push_env_vars["LEMATERIALFETCHER_HF_TOKEN"]
+    assert config.data_dir == mock_push_env_vars["LEMATERIALFETCHER_DATA_DIR"]
+
+    # Test other config values
+    assert (
+        config.source_table_name == mock_push_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
+    )
+    assert config.chunk_size == int(mock_push_env_vars["LEMATERIALFETCHER_CHUNK_SIZE"])
+    assert config.max_rows == int(mock_push_env_vars["LEMATERIALFETCHER_MAX_ROWS"])
+    assert config.force_refresh == (
+        mock_push_env_vars["LEMATERIALFETCHER_FORCE_REFRESH"] == "True"
+    )
+
+
+def test_load_push_config_from_click():
+    """Test that push config loads correctly when passed directly from Click"""
+    # Set required environment variables for passwords
+    os.environ["LEMATERIALFETCHER_DB_PASSWORD"] = "push_pass"
+
+    # When Click calls the command function with CLI options
+    # It collects all parameters (including defaults) and passes them to the command function
+    config_kwargs = {
+        # Base config with their defaults from Click options
+        "log_dir": "./test_logs",
+        "max_retries": 5,
+        "num_workers": 3,
+        "retry_delay": 1,
+        "log_every": 500,
+        "offset": 0,
+        # CLI option values (as if passed on command line)
+        "db_user": "cli_user",
+        "db_host": "cli.host",
+        "db_name": "cli_db",
+        "table_name": "cli_table",
+        "hf_repo_id": "cli/repo",
+        "hf_token": "cli_token",
+        "data_dir": "./cli_data",
+        "chunk_size": 500,
+        "max_rows": 100,
+        "force_refresh": True,
+    }
+
+    # This is what happens in the CLI command function
+    config = load_push_config(**config_kwargs)
+
+    # Verify base config
+    assert config.log_dir == "./test_logs"
+    assert config.max_retries == 5
+    assert config.num_workers == 3
+    assert config.retry_delay == 1
+    assert config.log_every == 500
+
+    # Verify database connection
+    assert "host=cli.host" in config.source_db_conn_str
+    assert "user=cli_user" in config.source_db_conn_str
+    assert "password=push_pass" in config.source_db_conn_str
+    assert "dbname=cli_db" in config.source_db_conn_str
+
+    # Verify Hugging Face settings
+    assert config.hf_repo_id == "cli/repo"
+    assert config.hf_token == "cli_token"
+    assert config.data_dir == "./cli_data"
+
+    # Verify other settings
+    assert config.source_table_name == "cli_table"
+    assert config.chunk_size == 500
+    assert config.max_rows == 100
+    assert config.force_refresh is True
+
+
+def test_load_push_config_with_explicit_conn_str():
+    """Test that push config loads correctly with explicit connection string"""
+    explicit_conn_str = "host=test.host user=test_user password=test_pass dbname=test_db sslmode=disable"
+
+    config_kwargs = {
+        "db_conn_str": explicit_conn_str,
+        "table_name": "test_table",
+        "hf_repo_id": "test/repo",
+    }
+
+    config = load_push_config(**config_kwargs)
+
+    assert config.source_db_conn_str == explicit_conn_str
+    assert config.source_table_name == "test_table"
+    assert config.hf_repo_id == "test/repo"
+
+
+def test_load_push_config_missing_required():
+    """Test that push config raises error when required fields are missing"""
+    # Missing required fields
+    with pytest.raises(ValueError) as excinfo:
+        load_push_config()
+
+    assert "db credentials" in str(excinfo.value)
+    assert "table_name" in str(excinfo.value)
+    assert "hf_repo_id" in str(excinfo.value)

@@ -6,7 +6,18 @@ import pytest
 from click.testing import CliRunner
 
 from lematerial_fetcher.cli import cli
-from lematerial_fetcher.utils.config import FetcherConfig, TransformerConfig
+from lematerial_fetcher.utils.config import (
+    FetcherConfig,
+    TransformerConfig,
+)
+
+
+# Use pytest fixture to properly patch load_dotenv
+@pytest.fixture(autouse=True)
+def mock_load_dotenv():
+    """Prevent dotenv from loading environment variables during tests"""
+    with patch("lematerial_fetcher.cli.load_dotenv"):
+        yield
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -225,32 +236,15 @@ def test_env_vars_pass_to_config():
 
     with patch("lematerial_fetcher.cli.load_transformer_config") as mock_load_config:
         with patch("lematerial_fetcher.cli.MPTransformer"):
-            # Set up a mock return config
-            mock_config = TransformerConfig(
-                log_dir="./logs",
-                max_retries=3,
-                num_workers=2,
-                retry_delay=2,
-                log_every=1000,
-                page_offset=0,
-                page_limit=10,
-                source_db_conn_str="source_conn_string",
-                dest_db_conn_str="dest_conn_string",
-                source_table_name="src_table",
-                dest_table_name="dest_table",
-                batch_size=500,
-            )
-            mock_load_config.return_value = mock_config
-
             runner = CliRunner()
             # Pass the environment variables directly instead of expecting Click to read from os.environ
             env = {
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_USER": "src_user",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_PASSWORD": "src_pass",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_HOST": "src.host",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_DB_NAME": "src_db",
-                "LEMATERIALFETCHER_TRANSFORMER_SOURCE_TABLE_NAME": "src_table",
-                "LEMATERIALFETCHER_TRANSFORMER_DEST_TABLE_NAME": "dest_table",
+                "LEMATERIALFETCHER_DB_USER": "src_user",
+                "LEMATERIALFETCHER_DB_PASSWORD": "src_pass",
+                "LEMATERIALFETCHER_DB_HOST": "src.host",
+                "LEMATERIALFETCHER_DB_NAME": "src_db",
+                "LEMATERIALFETCHER_TABLE_NAME": "src_table",
+                "LEMATERIALFETCHER_DEST_TABLE_NAME": "dest_table",
             }
             result = runner.invoke(
                 cli,
@@ -262,3 +256,7 @@ def test_env_vars_pass_to_config():
             assert result.exit_code == 0
 
             mock_load_config.assert_called_once()
+            call_kwargs = mock_load_config.call_args[1]
+            assert call_kwargs["db_user"] == "src_user"
+            assert call_kwargs["table_name"] == "src_table"
+            assert call_kwargs["dest_table_name"] == "dest_table"
