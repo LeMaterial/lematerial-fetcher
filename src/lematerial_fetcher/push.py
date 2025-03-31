@@ -290,6 +290,6 @@ class Push:
                 desc="Converting species column to string",
             )
 
-        dataset = dataset.cast(self.features)
+        dataset = dataset.cast(features=self.features, num_proc=self.config.num_workers)
 
         return dataset
