@@ -80,13 +80,13 @@ def download_file(
 
     with open(path, "wb") as f:
         with tqdm(
-            total=total_size, 
-            unit='iB', 
-            unit_scale=True, 
+            total=total_size,
+            unit="iB",
+            unit_scale=True,
             desc=desc,
             position=position,
             leave=False,
-            miniters=1024*1024,
+            miniters=1024 * 1024,
         ) as pbar:
             if decompress == "gz":
                 decompressor = gzip.GzipFile(fileobj=response.raw, mode="rb")

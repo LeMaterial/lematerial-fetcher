@@ -219,13 +219,17 @@ def alexandria_fetch(ctx, traj, base_url, functional, **config_kwargs):
     """
     if not base_url:
         if traj:
-            assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
+            assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, (
+                f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
+            )
             config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria trajectory base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
             )
         else:
-            assert functional in _ALEXANDRIA_BASE_URL, f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
+            assert functional in _ALEXANDRIA_BASE_URL, (
+                f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
+            )
             config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria structure base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
