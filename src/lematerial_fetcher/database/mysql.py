@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import logging
 from pathlib import Path
 from typing import Any, Optional

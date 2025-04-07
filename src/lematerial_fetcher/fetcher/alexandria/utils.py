@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import os
 
 from lematerial_fetcher.utils.logging import logger

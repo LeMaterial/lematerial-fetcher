@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import bz2
 import gzip
 import os
