@@ -197,6 +197,42 @@ class StructuresDatabase(Database):
                 except (json.JSONDecodeError, psycopg2.Error) as e:
                     raise Exception(f"Error during batch insert: {str(e)}")
 
+    def _get_id_at_offset(
+        self, offset: int, table_name: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Get the ID of the record at the specified offset using index-only scan.
+
+        Parameters
+        ----------
+        offset : int
+            The offset position to get the ID from
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
+
+        Returns
+        -------
+        Optional[str]
+            The ID at the specified offset, or None if no record exists at that offset
+        """
+        if not table_name:
+            table_name = self.table_name
+
+        with self.conn.cursor() as cur:
+            # Simple query that can use index-only scan
+            query = f"""
+            SELECT id 
+            FROM {table_name}
+            ORDER BY id
+            OFFSET %s
+            LIMIT 1;
+            """
+            # Add hint to force index scan instead of sequential scan
+            cur.execute("SET enable_seqscan = off;")
+            cur.execute(query, (offset,))
+            result = cur.fetchone()
+            return result[0] if result else None
+
     def fetch_items_iter(
         self,
         offset: int = 0,
@@ -207,6 +243,7 @@ class StructuresDatabase(Database):
         """
         Fetch items from the database using a server-side cursor, yielding results one at a time.
         This is memory efficient for large result sets as it doesn't load all results into memory at once.
+        Uses ID-based pagination for better performance on large offsets.
 
         Parameters
         ----------
@@ -238,15 +275,31 @@ class StructuresDatabase(Database):
 
         try:
             with self.conn.cursor(name=cursor_name) as cur:  # Server-side cursor
-                query = f"""
-                SELECT id, type, attributes, last_modified
-                FROM {table_name}
-                ORDER BY id
-                OFFSET %s
-                LIMIT %s
-                """
+                # Get the starting ID if offset > 0
+                start_id = None
+                if offset > 0:
+                    start_id = self._get_id_at_offset(offset, table_name)
+                    if not start_id:  # No results at this offset
+                        return
 
-                cur.execute(query, (offset, batch_size))
+                # Construct the query based on whether we have a start_id
+                if start_id:
+                    query = f"""
+                    SELECT id, type, attributes, last_modified
+                    FROM {table_name}
+                    WHERE id > %s
+                    ORDER BY id
+                    LIMIT %s
+                    """
+                    cur.execute(query, (start_id, batch_size))
+                else:
+                    query = f"""
+                    SELECT id, type, attributes, last_modified
+                    FROM {table_name}
+                    ORDER BY id
+                    LIMIT %s
+                    """
+                    cur.execute(query, (batch_size,))
 
                 while True:
                     rows = cur.fetchmany(batch_size)
