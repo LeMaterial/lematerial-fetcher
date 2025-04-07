@@ -10,6 +10,7 @@ from lematerial_fetcher.database.mysql import MySQLDatabase
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.trajectories import Trajectory
 from lematerial_fetcher.transform import BaseTransformer, TDatabase, TStructure
 from lematerial_fetcher.utils.config import TransformerConfig
 from lematerial_fetcher.utils.logging import logger
@@ -327,12 +328,14 @@ class BaseOQMDTransformer(BaseTransformer):
         source_db : MySQLDatabase
             The source database to get the calculations from
         filter_label : Optional[list[str]]
-            The labels to filter the calculations by
+            The labels to filter the calculations by, they are also sorted by the label
+            order
 
         Returns
         -------
         list[dict[str, Any]]
-            The calculations for the raw OQMD structure
+            The calculations for the raw OQMD structure, sorted by the order of labels
+            in filter_label if provided
         """
         custom_query = (
             f"SELECT * FROM calculations WHERE entry_id = {raw_structure['entry_id']}"
@@ -340,9 +343,11 @@ class BaseOQMDTransformer(BaseTransformer):
         calculations = source_db.fetch_items(query=custom_query)
 
         if filter_label:
-            calculations = [
-                calc for calc in calculations if calc["label"] in filter_label
-            ]
+            # Filter and sort calculations based on label order
+            calculations = sorted(
+                [calc for calc in calculations if calc["label"] in filter_label],
+                key=lambda x: filter_label.index(x["label"]),
+            )
 
         return calculations
 
@@ -401,7 +406,10 @@ class BaseOQMDTransformer(BaseTransformer):
             forces.append([atom["fx"], atom["fy"], atom["fz"]])
             charges.append(atom["charge"])
 
-        return species_at_sites, frac_coords, None, charges
+        if any(any(f is None for f in force) for force in forces):
+            forces = None
+
+        return species_at_sites, frac_coords, forces, charges
 
     def _extract_structures_attributes(
         self, raw_structure: dict[str, Any]
@@ -444,6 +452,7 @@ class BaseOQMDTransformer(BaseTransformer):
         values_dict["lattice_vectors"] = lattice_vectors
         values_dict["stress_tensor"] = stress_matrix_from_voigt_6_stress(stress_tensor)
         values_dict["immutable_id"] = f"oqmd-{raw_structure['id']}"
+        values_dict["energy"] = raw_structure["energy"]  # might be None
 
         return values_dict
 
@@ -572,44 +581,106 @@ class OQMDTrajectoryTransformer(BaseOQMDTransformer):
         source_db: Optional[StructuresDatabase] = None,
         task_table_name: Optional[str] = None,
     ) -> list[OptimadeStructure]:
-        raise NotImplementedError("OQMD trajectory transformation not implemented")
         calculations = self._get_calculations(
             raw_structure,
             source_db,
             filter_label=[
-                "coarse_relax",
                 "relaxation",
+                "coarse_relax",
                 "fine_relax",
             ],
-        )
+        )  # calculations are sorted by the order of labels in filter_label
 
-        for calculation in calculations:
-            input_atoms = self._get_atoms_from_structure_id(
-                calculation["input_id"], source_db
+        relaxation_number_mapping = {
+            "relaxation": 0,
+            "coarse_relax": 1,
+            "fine_relax": 2,
+        }
+
+        def get_values_dict_from_structure_id(structure_id: int) -> dict[str, Any]:
+            structure = self._get_structure_from_structure_id(structure_id, source_db)
+            values_dict = self._extract_structures_attributes(structure)
+
+            atoms = self._get_atoms_from_structure_id(structure_id, source_db)
+            species_at_sites, frac_coords, forces, charges = (
+                self._extract_atoms_attributes(atoms)
             )
-            input_structure = self._get_structure_from_structure_id(
-                input_atoms[0]["structure_id"], source_db
+            structure = Structure(
+                species=species_at_sites,
+                coords=frac_coords,
+                lattice=values_dict["lattice_vectors"],
+                coords_are_cartesian=False,
             )
-            input_values_dict = self._extract_structures_attributes(input_structure)
-            input_atoms_attributes = self._extract_atoms_attributes(input_atoms)
-            input_values_dict = {
-                **input_values_dict,
-                "species_at_sites": input_atoms_attributes[0],
-                "cartesian_site_positions": input_atoms_attributes[1],
-                "forces": input_atoms_attributes[2],
-                "charges": input_atoms_attributes[3],
+            optimade_keys_from_structure = get_optimade_from_pymatgen(structure)
+
+            values_dict = {
+                **values_dict,
+                **optimade_keys_from_structure,
+                "species_at_sites": species_at_sites,
+                "cartesian_site_positions": structure.cart_coords,
+                "forces": forces,
+                "charges": charges,
             }
-            breakpoint()
 
-            output_atoms = self._get_atoms_from_structure_id(
-                calculation["output_id"], source_db
+            values_dict["functional"] = Functional.PBE
+
+            return values_dict
+
+        trajectories = []
+
+        current_step = 0
+        for calculation in calculations:
+            input_values_dict = get_values_dict_from_structure_id(
+                calculation["input_id"]
             )
-            output_structure = self._get_structure_from_structure_id(
-                output_atoms[0]["structure_id"], source_db
+
+            output_values_dict = get_values_dict_from_structure_id(
+                calculation["output_id"]
             )
 
-            output_values_dict = self._extract_structures_attributes(output_structure)
+            if any(
+                element in input_values_dict["elements"]
+                for element in self.exclude_elements
+            ):
+                logger.warning(
+                    f"Skipping oqmd-{raw_structure['id']} because it contains excluded elements"
+                )
+                break
 
-            return output_values_dict
+            # Compatibility of the DFT settings
+            # dict from string to dict
+            settings = ast.literal_eval(calculation["settings"])
+            if settings["ispin"] in ["1", 1]:
+                cross_compatibility = True
+            else:
+                cross_compatibility = False
 
-        pass
+            trajectories.append(
+                Trajectory(
+                    id=f"{input_values_dict['immutable_id']}-{Functional.PBE}-{current_step}",
+                    source="oqmd",
+                    last_modified=datetime.now().isoformat(),  # not available for OQMD
+                    relaxation_number=relaxation_number_mapping[calculation["label"]],
+                    relaxation_step=current_step,
+                    cross_compatibility=cross_compatibility,
+                    **input_values_dict,
+                )
+            )
+
+            output_relaxation_step = current_step + calculation["nsteps"]
+            trajectories.append(
+                Trajectory(
+                    id=f"{output_values_dict['immutable_id']}-{Functional.PBE}-{output_relaxation_step}",
+                    source="oqmd",
+                    last_modified=datetime.now().isoformat(),  # not available for OQMD
+                    relaxation_number=relaxation_number_mapping[calculation["label"]],
+                    relaxation_step=output_relaxation_step,
+                    cross_compatibility=cross_compatibility,
+                    **output_values_dict,
+                )
+            )
+
+            # TODO(Ramlaoui): No relaxation sometimes
+            current_step += calculation["nsteps"]
+
+        return trajectories
