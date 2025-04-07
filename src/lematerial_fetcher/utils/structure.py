@@ -32,13 +32,13 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     # Basic chemistry fields
     elements = sorted(list(set(str(site.specie) for site in structure.sites)))
     # Note that this function returns a different result than the composition.to_reduced_dict method of pymatgen
-    elements_ratios = get_element_ratios_from_composition_reduced(
-        structure.composition.to_reduced_dict
-    )
+    reduced_dict = structure.composition.to_reduced_dict
+    elements_ratios = get_element_ratios_from_composition_reduced(reduced_dict)
 
     # Formula fields
-    chemical_formula_reduced, factor = (
-        structure.composition.get_reduced_formula_and_factor()
+    chemical_formula_reduced = "".join(
+        f"{element}{int(ratio)}" if int(ratio) > 1 else element
+        for element, ratio in zip(elements, elements_ratios)
     )
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?

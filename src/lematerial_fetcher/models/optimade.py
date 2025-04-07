@@ -266,6 +266,35 @@ class OptimadeStructure(BaseModel):
             )
         return v
 
+    @field_validator("chemical_formula_reduced")
+    @classmethod
+    def validate_chemical_formula_reduced(cls, v: str) -> str:
+        """
+        Ensure the chemical formula reduced is properly formatted.
+        Example: CsO9H7 is valid, Cs1O9 is not valid (no trailing ones)
+        No parentheses are allowed in the formula.
+        """
+        # Check for parentheses
+        if "(" in v or ")" in v:
+            raise ValueError(
+                f"Chemical formula reduced must not contain parentheses. Got: {v}"
+            )
+
+        # Check for any "1" in the formula (not just trailing ones)
+        if re.search(r"([A-Z][a-z]?)1(?!\d)", v):
+            raise ValueError(
+                f"Chemical formula reduced must not have ones (like Cs1O4). Got: {v}"
+            )
+
+        # Validate format (element symbols followed by optional numbers)
+        pattern = re.compile(r"^(?:[A-Z][a-z]?(?:\d+)?)+$")
+        if not pattern.match(v):
+            raise ValueError(
+                "Chemical formula reduced must consist of element symbols followed by optional numbers (no trailing ones). "
+                f"Got: {v}"
+            )
+        return v
+
     @field_validator("last_modified")
     @classmethod
     def validate_date_format(cls, v: datetime.datetime) -> datetime.datetime:
