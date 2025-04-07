@@ -91,7 +91,7 @@ def add_fetch_options(f):
         click.option(
             "--limit",
             type=int,
-            default=10,
+            default=500,
             envvar="LEMATERIALFETCHER_LIMIT",
             help="Number of items to fetch per request.",
         ),
@@ -210,7 +210,7 @@ def get_default_mp_bucket_name(tasks: bool = False) -> str:
     default_mp_bucket_name = (
         "materialsproject-parsed" if tasks else "materialsproject-build"
     )
-    default_mp_bucket_prefix = "tasks" if tasks else "collections"
+    default_mp_bucket_prefix = "tasks_atomate2" if tasks else "collections"
 
     return default_mp_bucket_name, default_mp_bucket_prefix
 

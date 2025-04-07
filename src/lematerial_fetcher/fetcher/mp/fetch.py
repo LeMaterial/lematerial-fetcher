@@ -59,6 +59,20 @@ class MPFetcher(BaseFetcher):
                     f"Invalid version date format: {current_version}, will process all items"
                 )
 
+        # fetch the latest release for materialsproject-build bucket if no version is set
+        prefix = self.config.mp_bucket_prefix
+        if (
+            self.config.mp_bucket_name == "materialsproject-build"
+            and self.config.mp_bucket_prefix in ["collections", "collections/"]
+        ):
+            prefix = get_latest_collection_version_prefix(
+                self.aws_client,
+                self.config.mp_bucket_name,
+                self.config.mp_bucket_prefix,
+                "materials",
+            )
+            logger.info(f"Using latest collection version prefix: {prefix}")
+
         object_keys = list_s3_objects(
             self.aws_client, self.config.mp_bucket_name, self.config.mp_bucket_prefix
         )

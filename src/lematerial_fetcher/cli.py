@@ -52,10 +52,15 @@ from lematerial_fetcher.utils.logging import logger
 
 load_dotenv(override=True)
 
-_ALEXANDRIA_BASE_URL = "https://alexandria.icams.rub.de/pbesol/v1/structures"
-_ALEXANDRIA_TRAJECTORY_BASE_URL = (
-    "https://alexandria.icams.rub.de/data/pbe/geo_opt_paths/"
-)
+_ALEXANDRIA_BASE_URL = {
+    "pbesol": "https://alexandria.icams.rub.de/pbesol/v1/structures",
+    "pbe": "https://alexandria.icams.rub.de/pbe/v1/structures",
+    "scan": "https://alexandria.icams.rub.de/scan/v1/structures",
+}
+_ALEXANDRIA_TRAJECTORY_BASE_URL = {
+    "pbe": "https://alexandria.icams.rub.de/data/pbe/geo_opt_paths/",
+    "pbesol": "https://alexandria.icams.rub.de/data/pbesol/geo_opt_paths/",
+}
 _OQMD_BASE_URL = "https://oqmd.org/download/"
 
 
@@ -138,9 +143,9 @@ def mp_fetch(ctx, tasks, **config_kwargs):
 
     # Set default bucket name and prefix if not provided in either the CLI or the environment
     default_mp_bucket_name, default_mp_bucket_prefix = get_default_mp_bucket_name(tasks)
-    if "mp_bucket_name" not in config_kwargs:
+    if "mp_bucket_name" not in config_kwargs or not config_kwargs["mp_bucket_name"]:
         config_kwargs["mp_bucket_name"] = default_mp_bucket_name
-    if "mp_bucket_prefix" not in config_kwargs:
+    if "mp_bucket_prefix" not in config_kwargs or not config_kwargs["mp_bucket_prefix"]:
         config_kwargs["mp_bucket_prefix"] = default_mp_bucket_prefix
 
     config_kwargs["base_url"] = "DUMMY_BASE_URL"  # Not needed for MP
@@ -197,9 +202,15 @@ def mp_transform(ctx, traj, **config_kwargs):
     type=str,
     help="Base URL for Alexandria to fetch data from. Can be set via LEMATERIALFETCHER_API_BASE_URL environment variable.",
 )
+@click.option(
+    "--functional",
+    type=str,
+    default="pbe",
+    help="Functional to fetch data from. Can be set via LEMATERIALFETCHER_FUNCTIONAL environment variable.",
+)
 @add_common_options
 @add_fetch_options
-def alexandria_fetch(ctx, traj, base_url, **config_kwargs):
+def alexandria_fetch(ctx, traj, base_url, functional, **config_kwargs):
     """Fetch materials from Alexandria.
 
     This command fetches materials from Alexandria and stores them in a database.
@@ -208,12 +219,14 @@ def alexandria_fetch(ctx, traj, base_url, **config_kwargs):
     """
     if not base_url:
         if traj:
-            config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL
+            assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
+            config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria trajectory base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
             )
         else:
-            config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL
+            assert functional in _ALEXANDRIA_BASE_URL, f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
+            config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria structure base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
             )
