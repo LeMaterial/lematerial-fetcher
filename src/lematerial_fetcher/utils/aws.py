@@ -61,7 +61,25 @@ def get_latest_collection_version_prefix(
     if "CommonPrefixes" not in response or not response["CommonPrefixes"]:
         raise ValueError("No date directories found in collections/")
 
-    latest_prefix = max(prefix["Prefix"] for prefix in response["CommonPrefixes"])
+    all_prefixes = [prefix["Prefix"] for prefix in response["CommonPrefixes"]]
+    # Group prefixes by date (everything before the post part)
+    date_groups = {}
+    for prefix in all_prefixes:
+        # Remove trailing slash and split by '-post'
+        base = prefix.rstrip("/")
+        if "-post" in base:
+            date_part = base.split("-post")[0]
+            post_num = int(base.split("-post")[1]) if base.split("-post")[1] else 0
+        else:
+            date_part = base
+            post_num = 0
+
+        if date_part not in date_groups:
+            date_groups[date_part] = []
+        date_groups[date_part].append((post_num, base))
+
+    latest_date = max(date_groups.keys())
+    latest_prefix = max(date_groups[latest_date], key=lambda x: x[0])[1]
 
     if latest_prefix.endswith("/"):
         latest_prefix = latest_prefix[:-1]
