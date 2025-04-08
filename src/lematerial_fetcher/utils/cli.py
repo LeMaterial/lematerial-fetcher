@@ -161,6 +161,11 @@ def add_transformer_options(f):
             help="Offset in the source table (ordered by id) to start fetching and transforming data from.",
         ),
         click.option(
+            "--max-offset",
+            type=int,
+            help="Maximum index in the source table to process up to. If not provided, all items will be processed.",
+        ),
+        click.option(
             "--task-source-table-name",
             type=str,
             envvar="LEMATERIALFETCHER_TASK_SOURCE_TABLE",

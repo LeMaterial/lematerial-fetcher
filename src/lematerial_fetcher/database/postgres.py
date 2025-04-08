@@ -236,7 +236,8 @@ class StructuresDatabase(Database):
     def fetch_items_iter(
         self,
         offset: int = 0,
-        batch_size: int = 100,
+        limit: Optional[int] = None,  # Total number of rows to process
+        batch_size: int = 100,  # Number of rows to fetch in each database round-trip
         table_name: Optional[str] = None,
         cursor_name: Optional[str] = None,
     ) -> Generator[RawStructure, None, None]:
@@ -249,6 +250,8 @@ class StructuresDatabase(Database):
         ----------
         offset : int, optional
             Number of items to skip, by default 0
+        limit : Optional[int], optional
+            Total number of items to process, by default None (process all available items)
         batch_size : int, optional
             Number of items to fetch in each database round-trip, by default 100
         table_name : str, optional
@@ -289,17 +292,17 @@ class StructuresDatabase(Database):
                     FROM {table_name}
                     WHERE id > %s
                     ORDER BY id
-                    LIMIT %s
+                    {f"LIMIT {limit}" if limit is not None else ""}
                     """
-                    cur.execute(query, (start_id, batch_size))
+                    cur.execute(query, (start_id,))
                 else:
                     query = f"""
                     SELECT id, type, attributes, last_modified
                     FROM {table_name}
                     ORDER BY id
-                    LIMIT %s
+                    {f"LIMIT {limit}" if limit is not None else ""}
                     """
-                    cur.execute(query, (batch_size,))
+                    cur.execute(query)
 
                 while True:
                     rows = cur.fetchmany(batch_size)
@@ -320,6 +323,11 @@ class StructuresDatabase(Database):
                             attributes=attributes,
                             last_modified=last_modified,
                         )
+
+                        del row
+                        del attributes_json
+
+                    del rows
 
         except (json.JSONDecodeError, psycopg2.Error) as e:
             raise Exception(f"Error fetching items: {str(e)}")
