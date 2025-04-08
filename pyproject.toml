@@ -20,6 +20,7 @@ dependencies = [
     "mysql-connector-python>=9.2.0",
     "beautifulsoup4>=4.13.3",
     "datasets>=3.4.1",
+    "ijson>=3.3.0",
 ]
 
 [build-system]

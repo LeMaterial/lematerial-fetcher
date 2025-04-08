@@ -7,11 +7,14 @@ from datetime import datetime
 from multiprocessing import Manager
 from typing import Any
 
+import ijson
 from tqdm import tqdm
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
-from lematerial_fetcher.fetcher.alexandria.utils import sanitize_json
+from lematerial_fetcher.fetcher.alexandria.utils import (
+    replace_nan_in_large_json,
+)
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional
 from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
@@ -92,9 +95,27 @@ class AlexandriaFetcher(BaseFetcher):
 
     def get_items_to_process(self) -> ItemsInfo:
         """Get information about batches to process."""
-        # For Alexandria we just return a starting offset
-        # Actual batches will be generated dynamically during processing
-        return ItemsInfo(start_offset=self.config.page_offset)
+        # For Alexandria we can just return a starting offset
+        # and actual batches will be generated dynamically during processing with:
+        # return ItemsInfo(start_offset=self.config.page_offset)
+
+        # But we can actually know exactly how many items there are in the dataset
+        # by querying the API with a limit of 1 and no offset
+        # and then we can return the total number of items
+        session = create_session()
+        response = session.get(f"{self.config.base_url}?page_limit=1")
+        response.raise_for_status()
+        data = response.json()
+        total_count = data.get("meta", {}).get("data_available", None)
+        items_list = [
+            f"{self.config.base_url}?page_limit={self.config.page_limit}&page_offset={i}"
+            for i in range(0, total_count, self.config.page_limit)
+        ]
+        start_offset = self.config.page_offset // self.config.page_limit
+        items_info = ItemsInfo(
+            start_offset=start_offset, items=items_list, total_count=total_count
+        )
+        return items_info
 
     @staticmethod
     def _process_batch(
@@ -124,9 +145,10 @@ class AlexandriaFetcher(BaseFetcher):
             session = create_session()
 
             try:
-                # Fetch the batch
-                url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
-                response = session.get(url)
+                # If we didn't have a list of URLs, we could use:
+                # url = f"{config.base_url}?page_limit={batch.limit}&sort=id&page_offset={batch.offset}"
+
+                response = session.get(batch)
                 response.raise_for_status()
                 data = response.json()
 
@@ -153,6 +175,9 @@ class AlexandriaFetcher(BaseFetcher):
 
             except Exception as e:
                 # Check if this is a critical error
+                logger.error(
+                    f"Error processing batch: {str(e)} at offset {batch.offset}"
+                )
                 shared_critical_error = BaseFetcher.is_critical_error(e)
                 if shared_critical_error and manager_dict is not None:
                     manager_dict["occurred"] = True  # shared across processes
@@ -280,26 +305,34 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             db = StructuresDatabase(config.db_conn_str, config.table_name)
             file_url, last_modified, offset = batch
 
-            # Download and process the JSON BZ2 file - this can happen in parallel
             file_path = download_file(
                 file_url,
                 desc=f"Downloading {file_url}",
                 decompress="bz2",
-                position=worker_id,
+                position=worker_id
+                * 2,  # Ensure each worker's bars are grouped together
             )
 
             # This is a hack to get the functional from the URL
             functional = get_functional_from_url(file_url)
 
             structures = []
-            file_json = json.load(open(file_path, "rb"))
+
+            cleaned_file_path = replace_nan_in_large_json(
+                file_path, file_path.replace(".json", "_cleaned.json")
+            )
+            file = open(cleaned_file_path, "r")
+            parser = ijson.kvitems(file, "", use_float=True)
+
             # Get all keys at the root level
             for key, item in tqdm(
-                file_json.items(),
-                position=worker_id + 1,
+                parser,
+                position=worker_id * 2 + 1,  # Position right below its download bar
                 desc=f"Processing {file_url.split('/')[-1]}",
+                leave=False,
+                miniters=100,
             ):
-                item = sanitize_json(item)
+                # item = sanitize_json(item)
                 for trajectory in item:
                     trajectory["functional"] = functional
 
@@ -320,6 +353,7 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
                 db.batch_insert_data(structures)
 
             os.remove(file_path)
+            os.remove(cleaned_file_path)
 
             # Update the latest modified date
             manager_dict["latest_modified"] = last_modified
@@ -335,6 +369,8 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             logger.error(f"Error processing batch: {str(e)} at offset {offset}")
             if os.path.exists(file_path):
                 os.remove(file_path)
+            if os.path.exists(cleaned_file_path):
+                os.remove(cleaned_file_path)
             gc.collect()
             return False
 

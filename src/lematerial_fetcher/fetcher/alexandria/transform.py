@@ -204,6 +204,11 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
                     "stress_tensor": relaxation_step_dict["stress"],
                 }
 
+                # Avoids errors when one component of the force is None
+                # which makes the calculation obsolete?
+                if any(any(f is None for f in force) for force in targets["forces"]):
+                    targets["forces"] = None
+
                 trajectory = Trajectory(
                     immutable_id=raw_structure.id,
                     id=f"{raw_structure.id}-{calc['functional']}-{current_relaxation_number}",

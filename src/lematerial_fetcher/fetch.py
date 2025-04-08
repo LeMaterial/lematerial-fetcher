@@ -304,7 +304,7 @@ class BaseFetcher(ABC):
                     current_index += 1
                     worker_id = (
                         worker_id + 1
-                    ) % self.config.num_workers  # Cycle through worker IDs
+                    )  # we don't care about cycling through worker IDs, we just increment
 
                 # Process remaining batches with work stealing
                 while futures and more_data:
@@ -314,7 +314,9 @@ class BaseFetcher(ABC):
                             try:
                                 has_more_data = future.result()
                                 if not has_more_data:
-                                    logger.warning(f"Failed to process batch {key}")
+                                    logger.warning(
+                                        f"Failed to process batch {key}. This might be because there is no more data to process at the given URL."
+                                    )
 
                                 if self.manager_dict.get("occurred", False):
                                     logger.critical(
@@ -337,9 +339,7 @@ class BaseFetcher(ABC):
                                         (items_info.items[current_index], next_future)
                                     )
                                     current_index += 1
-                                    worker_id = (
-                                        (worker_id + 1) % self.config.num_workers
-                                    )  # Cycle through worker IDs
+                                    worker_id = worker_id + 1
                                 else:
                                     more_data = False
 
@@ -360,9 +360,7 @@ class BaseFetcher(ABC):
                                     )
                                     futures.add((current_index, next_future))
                                     current_index += 1
-                                    worker_id = (
-                                        (worker_id + 1) % self.config.num_workers
-                                    )  # Cycle through worker IDs
+                                    worker_id = worker_id + 1
                                 else:
                                     more_data = False
 
