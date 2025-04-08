@@ -282,37 +282,21 @@ class Push:
                 if not has_rows:
                     return None
 
-            # We use an overestimation of the table size instead of counting all rows
-            # Because counting huge databases is really slow
+            # Get all the ids in the table to have faster queries later
+            with conn.cursor(name="server_cursor") as cur:
+                query = f"SELECT id FROM {self.config.source_table_name} {limit_query};"
+                cur.execute(query)
+                ids = [row[0] for row in cur.fetchall()]
+
+            total_rows = len(ids)
+            logger.info(f"Total rows: {total_rows}")
 
             # Apply max_rows limit if specified
             if self.max_rows is not None and self.max_rows != -1:
-                estimated_rows = self.max_rows
-            else:
-                with conn.cursor(name="server_cursor") as cur:
-                    query = f"""
-                    SELECT reltuples::bigint 
-                    FROM pg_class 
-                    WHERE relname = '{self.config.source_table_name}';
-                    """
-                    cur.execute(query)
-                    estimated_rows = cur.fetchone()[0]
+                total_rows = min(self.max_rows, total_rows)
 
-                    # This is a really bad way to limit the approximation and is
-                    # most likely off
-                    if "where" in limit_query.lower():
-                        # If there's a WHERE clause, assume it filters out some rows
-                        # Use a conservative estimate (e.g., 50% of the total)
-                        estimated_rows = max(1, estimated_rows // 2)
-
-            chunk_size = min(self.config.chunk_size, estimated_rows)
-            num_chunks = (estimated_rows + chunk_size - 1) // chunk_size
-
-            total_chunks = (
-                num_chunks + 1
-            )  # Add one more chunk for the last remaining batch
-            if self.max_rows is not None and self.max_rows != -1:
-                total_chunks -= 1  # Not needed if we have a max_rows limit
+            chunk_size = min(self.config.chunk_size, total_rows)
+            num_chunks = (total_rows + chunk_size - 1) // chunk_size
 
             # Will copy all columns if data_type is "any"
             if self.columns is None:
@@ -320,13 +304,15 @@ class Push:
             else:
                 columns = ", ".join(self.columns)
 
+            ids_at_offset = [ids[i * chunk_size] for i in range(num_chunks)]
+            del ids
+
             # Process chunks in parallel if not in debug mode
             if self.debug:
-                for i in range(total_chunks):
-                    offset = i * chunk_size
+                for i in range(num_chunks):
                     self.process_chunk(
                         chunk_index=i,
-                        offset=offset,
+                        id_at_offset=ids_at_offset[i],
                         chunk_size=chunk_size,
                         num_chunks=num_chunks,
                         data_dir=data_dir,
@@ -339,7 +325,7 @@ class Push:
                 chunk_tasks = [
                     (
                         i,
-                        i * chunk_size,
+                        ids_at_offset[i],
                         chunk_size,
                         num_chunks,
                         data_dir,
@@ -348,7 +334,7 @@ class Push:
                         limit_query,
                         columns,
                     )
-                    for i in range(total_chunks)
+                    for i in range(num_chunks)
                 ]
 
                 with ProcessPoolExecutor(
@@ -384,7 +370,7 @@ class Push:
     @staticmethod
     def process_chunk(
         chunk_index,
-        offset,
+        id_at_offset,
         chunk_size,
         num_chunks,
         data_dir,
@@ -400,30 +386,13 @@ class Push:
             logger.info(f"Skipping chunk {chunk_index} because it already exists")
             return True
 
-        # Create a new connection for this worker
         worker_conn = psycopg2.connect(conn_str)
         try:
-            with worker_conn.cursor() as cur:
-                # Get the ID at the offset
-                query = f"""
-                SELECT id 
-                FROM {config.source_table_name}
-                {limit_query}
-                ORDER BY id
-                OFFSET {offset}
-                LIMIT 1;
-                """
-                # Force index scan instead of sequential scan
-                cur.execute("SET enable_seqscan = off;")
-                cur.execute(query)
-                result = cur.fetchone()
-                id_at_offset = result[0] if result else None
+            if id_at_offset is None:
+                return False
 
-                if id_at_offset is None:
-                    return False
-
-                # Build the COPY query
-                copy_sql = f"""
+            # Build the COPY query
+            copy_sql = f"""
                     COPY (
                         SELECT row_to_json(t)
                         FROM (
@@ -432,22 +401,22 @@ class Push:
                             {limit_query}
                 """
 
-                if "where" in limit_query.lower():
-                    copy_sql += f" AND id > '{id_at_offset}'"
-                else:
-                    copy_sql += f" WHERE id > '{id_at_offset}'"
+            if "where" in limit_query.lower():
+                copy_sql += f" AND id > '{id_at_offset}'"
+            else:
+                copy_sql += f" WHERE id > '{id_at_offset}'"
 
-                # If we're on the last chunk, we need to copy all the remaining rows
-                if chunk_index == num_chunks:
-                    copy_sql += " ORDER BY id) t) TO STDOUT;"
-                else:
-                    copy_sql += f" ORDER BY id LIMIT {chunk_size}) t) TO STDOUT;"
+            # If we're on the last chunk, we need to copy all the remaining rows
+            if chunk_index == num_chunks:
+                copy_sql += " ORDER BY id) t) TO STDOUT;"
+            else:
+                copy_sql += f" ORDER BY id LIMIT {chunk_size}) t) TO STDOUT;"
 
-                # Execute the COPY command and write to file
-                with open(chunk_file, "w") as f:
+            with open(chunk_file, "w") as f:
+                with worker_conn.cursor() as cur:
                     cur.copy_expert(copy_sql, f)
 
-                return True
+            return True
         except Exception as e:
             logger.error(f"Error processing chunk {chunk_index}: {str(e)}")
             return False
