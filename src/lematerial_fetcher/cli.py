@@ -9,7 +9,11 @@ Learn how to use with:
     $ materialfetcher --help
 """
 
+import os
+from pathlib import Path
+
 import click
+from dotenv import load_dotenv
 
 from lematerial_fetcher.fetcher.alexandria.fetch import (
     AlexandriaFetcher,
@@ -30,9 +34,34 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTransformer,
 )
 from lematerial_fetcher.push import Push
-from lematerial_fetcher.utils.cli import add_db_options
-from lematerial_fetcher.utils.config import load_push_config
+from lematerial_fetcher.utils.cli import (
+    add_common_options,
+    add_fetch_options,
+    add_mp_fetch_options,
+    add_mysql_options,
+    add_push_options,
+    add_transformer_options,
+    get_default_mp_bucket_name,
+)
+from lematerial_fetcher.utils.config import (
+    load_fetcher_config,
+    load_push_config,
+    load_transformer_config,
+)
 from lematerial_fetcher.utils.logging import logger
+
+load_dotenv(override=True)
+
+_ALEXANDRIA_BASE_URL = {
+    "pbesol": "https://alexandria.icams.rub.de/pbesol/v1/structures",
+    "pbe": "https://alexandria.icams.rub.de/pbe/v1/structures",
+    "scan": "https://alexandria.icams.rub.de/scan/v1/structures",
+}
+_ALEXANDRIA_TRAJECTORY_BASE_URL = {
+    "pbe": "https://alexandria.icams.rub.de/data/pbe/geo_opt_paths/",
+    "pbesol": "https://alexandria.icams.rub.de/data/pbesol/geo_opt_paths/",
+}
+_OQMD_BASE_URL = "https://oqmd.org/download/"
 
 
 @click.group()
@@ -41,11 +70,27 @@ from lematerial_fetcher.utils.logging import logger
     is_flag=True,
     help="Run all operations in the main process for debugging purposes.",
 )
+@click.option(
+    "--cache-dir",
+    type=str,
+    help="Directory to store temporary data. If not provided, will use ~/.cache/lematerial_fetcher.",
+)
 @click.pass_context
-def cli(ctx, debug):
-    """A CLI tool to fetch materials from various sources."""
+def cli(ctx, debug, cache_dir):
+    """A CLI tool to fetch materials from various sources.
+
+    All options can be set via environment variables with the prefix LEMATERIALFETCHER_.
+    For example, --debug can be set via LEMATERIALFETCHER_DEBUG=true.
+    """
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
+    if cache_dir:
+        ctx.obj["cache_dir"] = cache_dir
+        os.environ["LEMATERIALFETCHER_CACHE_DIR"] = cache_dir
+    else:
+        os.environ["LEMATERIALFETCHER_CACHE_DIR"] = str(
+            (Path.home() / ".cache" / "lematerial_fetcher").resolve()
+        )
 
 
 @click.group(name="mp")
@@ -73,13 +118,41 @@ cli.add_command(mp_cli)
 cli.add_command(alexandria_cli)
 cli.add_command(oqmd_cli)
 
+# ------------------------------------------------------------------------------
+# MP commands
+# ------------------------------------------------------------------------------
+
 
 @mp_cli.command(name="fetch")
 @click.pass_context
-def mp_fetch(ctx):
-    """Fetch materials from Materials Project."""
+@click.option(
+    "--tasks",
+    is_flag=True,
+    help="Fetch task data from Materials Project. If false, fetch structure data.",
+)
+@add_common_options
+@add_fetch_options
+@add_mp_fetch_options
+def mp_fetch(ctx, tasks, **config_kwargs):
+    """Fetch materials from Materials Project.
+
+    This command fetches raw materials data from Materials Project and stores them in a database.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+
+    # Set default bucket name and prefix if not provided in either the CLI or the environment
+    default_mp_bucket_name, default_mp_bucket_prefix = get_default_mp_bucket_name(tasks)
+    if "mp_bucket_name" not in config_kwargs or not config_kwargs["mp_bucket_name"]:
+        config_kwargs["mp_bucket_name"] = default_mp_bucket_name
+    if "mp_bucket_prefix" not in config_kwargs or not config_kwargs["mp_bucket_prefix"]:
+        config_kwargs["mp_bucket_prefix"] = default_mp_bucket_prefix
+
+    config_kwargs["base_url"] = "DUMMY_BASE_URL"  # Not needed for MP
+
+    config = load_fetcher_config(**config_kwargs)
     try:
-        fetcher = MPFetcher(debug=ctx.obj["debug"])
+        fetcher = MPFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -92,16 +165,29 @@ def mp_fetch(ctx):
     help="Transform trajectory data from Material Project.",
 )
 @click.pass_context
-def mp_transform(ctx, traj):
-    """Transform materials from Material Project."""
+@add_common_options
+@add_transformer_options
+def mp_transform(ctx, traj, **config_kwargs):
+    """Transform materials from Material Project.
+
+    This command processes materials from Material Project to store them in a clean format.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = MPTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = MPTrajectoryTransformer(config=config, debug=ctx.obj["debug"])
         else:
-            transformer = MPTransformer(debug=ctx.obj["debug"])
+            transformer = MPTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# Alexandria commands
+# ------------------------------------------------------------------------------
 
 
 @alexandria_cli.command(name="fetch")
@@ -111,13 +197,50 @@ def mp_transform(ctx, traj):
     is_flag=True,
     help="Fetch trajectory data from Alexandria.",
 )
-def alexandria_fetch(ctx, traj):
-    """Fetch materials from Alexandria."""
+@click.option(
+    "--base-url",
+    type=str,
+    help="Base URL for Alexandria to fetch data from. Can be set via LEMATERIALFETCHER_API_BASE_URL environment variable.",
+)
+@click.option(
+    "--functional",
+    type=str,
+    default="pbe",
+    help="Functional to fetch data from. Can be set via LEMATERIALFETCHER_FUNCTIONAL environment variable.",
+)
+@add_common_options
+@add_fetch_options
+def alexandria_fetch(ctx, traj, base_url, functional, **config_kwargs):
+    """Fetch materials from Alexandria.
+
+    This command fetches materials from Alexandria and stores them in a database.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    if not base_url:
+        if traj:
+            assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, (
+                f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
+            )
+            config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL[functional]
+            logger.info(
+                f"Using Alexandria trajectory base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+            )
+        else:
+            assert functional in _ALEXANDRIA_BASE_URL, (
+                f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
+            )
+            config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL[functional]
+            logger.info(
+                f"Using Alexandria structure base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+            )
+
+    config = load_fetcher_config(**config_kwargs)
     try:
         if traj:
-            fetcher = AlexandriaTrajectoryFetcher(debug=ctx.obj["debug"])
+            fetcher = AlexandriaTrajectoryFetcher(config=config, debug=ctx.obj["debug"])
         else:
-            fetcher = AlexandriaFetcher(debug=ctx.obj["debug"])
+            fetcher = AlexandriaFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -130,24 +253,59 @@ def alexandria_fetch(ctx, traj):
     is_flag=True,
     help="Transform trajectory data from Alexandria.",
 )
-def alexandria_transform(ctx, traj):
-    """Transform materials from Alexandria."""
+@add_common_options
+@add_transformer_options
+def alexandria_transform(ctx, traj, **config_kwargs):
+    """Transform materials from Alexandria.
+
+    This command processes materials from Alexandria to store them in a clean format.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = AlexandriaTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = AlexandriaTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
         else:
-            transformer = AlexandriaTransformer(debug=ctx.obj["debug"])
+            transformer = AlexandriaTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
 
+# ------------------------------------------------------------------------------
+# OQMD commands
+# ------------------------------------------------------------------------------
+
+
 @oqmd_cli.command(name="fetch")
 @click.pass_context
-def oqmd_fetch(ctx):
-    """Fetch materials from OQMD."""
+@click.option(
+    "--base-url",
+    type=str,
+    help="Base URL for OQMD to fetch data from. Can be set via LEMATERIALFETCHER_API_BASE_URL environment variable.",
+)
+@add_common_options
+@add_fetch_options
+@add_mysql_options
+def oqmd_fetch(ctx, base_url, **config_kwargs):
+    """Fetch materials from OQMD.
+
+    This command fetches materials from OQMD and stores them in a database.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    if not base_url:
+        config_kwargs["base_url"] = _OQMD_BASE_URL
+        logger.info(
+            f"Using OQMD base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+        )
+
+    config = load_fetcher_config(**config_kwargs)
     try:
-        fetcher = OQMDFetcher(debug=ctx.obj["debug"])
+        fetcher = OQMDFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
@@ -160,16 +318,32 @@ def oqmd_fetch(ctx):
     is_flag=True,
     help="Transform trajectory data from OQMD.",
 )
-def oqmd_transform(ctx, traj):
-    """Transform materials from OQMD."""
+@add_common_options
+@add_transformer_options
+@add_mysql_options
+def oqmd_transform(ctx, traj, **config_kwargs):
+    """Transform materials from OQMD.
+
+    This command transforms materials from OQMD.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    config = load_transformer_config(**config_kwargs)
     try:
         if traj:
-            transformer = OQMDTrajectoryTransformer(debug=ctx.obj["debug"])
+            transformer = OQMDTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
         else:
-            transformer = OQMDTransformer(debug=ctx.obj["debug"])
+            transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# Push commands
+# ------------------------------------------------------------------------------
 
 
 @cli.command(name="push")
@@ -180,53 +354,17 @@ def oqmd_transform(ctx, traj):
     default="optimade",
     help="Type of data to push, one of ['optimade', 'trajectories', 'any'].",
 )
-@click.option("--hf-repo-id", type=str, help="Hugging Face repository ID.")
-@click.option(
-    "--hf-token",
-    type=str,
-    help="Hugging Face token.",
-)
-@click.option(
-    "--max-rows",
-    default=-1,
-    type=int,
-    help="Maximum number of rows to push. Will shuffle the data with a deterministic seed. If -1 (default), all rows will be pushed.",
-)
-@click.option(
-    "--force-refresh",
-    is_flag=False,
-    type=bool,
-    help="Force refresh the cache.",
-)
-@click.option(
-    "--chunk-size",
-    default=1000000,
-    type=int,
-    help="Number of rows to export from the database at a time.",
-)
-@add_db_options
-def push(
-    ctx,
-    data_type,
-    hf_repo_id,
-    hf_token,
-    table_name,
-    max_rows,
-    force_refresh,
-    chunk_size,
-):
-    """Push materials to Hugging Face."""
-    try:
-        default_push_config = load_push_config()
+@add_common_options
+@add_push_options
+def push(ctx, data_type, **config_kwargs):
+    """Push materials to Hugging Face.
 
-        config = default_push_config(
-            hf_repo_id=hf_repo_id,
-            source_table_name=table_name,
-            max_rows=max_rows,
-            force_refresh=force_refresh,
-            hf_token=hf_token,
-            chunk_size=chunk_size,
-        )
+    This command pushes data from a database to a Hugging Face repository.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    try:
+        config = load_push_config(**config_kwargs)
 
         push = Push(
             config=config,
@@ -239,9 +377,27 @@ def push(
         logger.fatal("\nAborted.", exit=1)
 
 
+# ------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------
+
+
 def main():
-    """Run the CLI."""
-    cli(auto_envvar_prefix="LEMATERIAL_FETCHER")
+    """Run the CLI.
+
+    This maps arguments to the following environment variables:
+    - --db-user maps to LEMATERIALFETCHER_DB_USER
+    - --num-workers maps to LEMATERIALFETCHER_NUM_WORKERS
+
+    This lets Click handle environment variables consistently before they're
+    passed to the configuration system.
+    """
+
+    # Click's auto_envvar_prefix feature can be used to automatically map CLI options
+    # to environment variables with the prefix LEMATERIALFETCHER_.
+    # However, it also propagates the prefix of the command, which we don't want currently.
+
+    cli()
 
 
 if __name__ == "__main__":

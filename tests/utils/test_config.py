@@ -6,7 +6,11 @@ import dotenv
 import pytest
 from dotenv import load_dotenv
 
-from lematerial_fetcher.utils.config import load_fetcher_config
+from lematerial_fetcher.utils.config import (
+    load_fetcher_config,
+    load_push_config,
+    load_transformer_config,
+)
 
 
 @pytest.fixture(autouse=True, scope="function")
@@ -106,7 +110,26 @@ def test_load_fetcher_config(mock_config_env_vars):
     """Test loading fetcher configuration with all required variables"""
     with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
         mock_load_dotenv.return_value = {}
-        config = load_fetcher_config()
+
+        # Simulate how Click would pass environment variables as parameters
+        # Click converts all environment variables to parameters before calling the command function
+        config_kwargs = {
+            "base_url": mock_config_env_vars["LEMATERIALFETCHER_API_BASE_URL"],
+            "db_user": mock_config_env_vars["LEMATERIALFETCHER_DB_USER"],
+            "db_name": mock_config_env_vars["LEMATERIALFETCHER_DB_NAME"],
+            "table_name": mock_config_env_vars["LEMATERIALFETCHER_TABLE_NAME"],
+            "log_dir": mock_config_env_vars["LEMATERIALFETCHER_LOG_DIR"],
+            "max_retries": int(mock_config_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]),
+            "num_workers": int(mock_config_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]),
+            "retry_delay": int(mock_config_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]),
+            "log_every": int(mock_config_env_vars["LEMATERIALFETCHER_LOG_EVERY"]),
+            "mp_bucket_name": mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_NAME"],
+            "mp_bucket_prefix": mock_config_env_vars[
+                "LEMATERIALFETCHER_MP_BUCKET_PREFIX"
+            ],
+        }
+
+        config = load_fetcher_config(**config_kwargs)
 
     # Test base config values
     assert config.log_dir == mock_config_env_vars["LEMATERIALFETCHER_LOG_DIR"]
@@ -124,14 +147,6 @@ def test_load_fetcher_config(mock_config_env_vars):
     # Test fetcher specific values
     assert config.base_url == mock_config_env_vars["LEMATERIALFETCHER_API_BASE_URL"]
     assert config.table_name == mock_config_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
-    assert (
-        config.mp_bucket_name
-        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_NAME"]
-    )
-    assert (
-        config.mp_bucket_prefix
-        == mock_config_env_vars["LEMATERIALFETCHER_MP_BUCKET_PREFIX"]
-    )
     assert config.page_limit == int(
         mock_config_env_vars["LEMATERIALFETCHER_PAGE_LIMIT"]
     )
@@ -141,9 +156,571 @@ def test_load_fetcher_config(mock_config_env_vars):
 
     # Test database connection string
     expected_db_conn = (
+        f"host=localhost "  # Default value
         f"user={mock_config_env_vars['LEMATERIALFETCHER_DB_USER']} "
         f"password={mock_config_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
         f"dbname={mock_config_env_vars['LEMATERIALFETCHER_DB_NAME']} "
         "sslmode=disable"
     )
     assert config.db_conn_str == expected_db_conn
+
+
+@pytest.fixture
+def mock_transformer_env_vars(monkeypatch):
+    """Fixture to set up test environment variables for transformer config"""
+    test_env_vars = {
+        # Base config vars
+        "LEMATERIALFETCHER_LOG_DIR": "./logs",
+        "LEMATERIALFETCHER_MAX_RETRIES": "3",
+        "LEMATERIALFETCHER_NUM_WORKERS": "2",
+        "LEMATERIALFETCHER_RETRY_DELAY": "2",
+        "LEMATERIALFETCHER_LOG_EVERY": "1000",
+        # Source database vars
+        "LEMATERIALFETCHER_DB_USER": "source_user",
+        "LEMATERIALFETCHER_DB_PASSWORD": "source_pass",
+        "LEMATERIALFETCHER_DB_HOST": "source.host",
+        "LEMATERIALFETCHER_DB_NAME": "source_db",
+        "LEMATERIALFETCHER_TABLE_NAME": "source_table",
+        # Destination table (but no destination database credentials)
+        "LEMATERIALFETCHER_DEST_TABLE_NAME": "dest_table",
+        # Other transformer vars
+        "LEMATERIALFETCHER_BATCH_SIZE": "500",
+        "LEMATERIALFETCHER_OFFSET": "0",
+        "LEMATERIALFETCHER_TASK_TABLE_NAME": "task_table",
+    }
+    for key, value in test_env_vars.items():
+        monkeypatch.setenv(key, value)
+    return test_env_vars
+
+
+@pytest.fixture
+def mock_transformer_env_vars_with_dest(monkeypatch):
+    """Fixture to set up test environment variables for transformer config with explicit destination DB"""
+    test_env_vars = {
+        # Base config vars
+        "LEMATERIALFETCHER_LOG_DIR": "./logs",
+        "LEMATERIALFETCHER_MAX_RETRIES": "3",
+        "LEMATERIALFETCHER_NUM_WORKERS": "2",
+        "LEMATERIALFETCHER_RETRY_DELAY": "2",
+        "LEMATERIALFETCHER_LOG_EVERY": "1000",
+        # Source database vars
+        "LEMATERIALFETCHER_DB_USER": "source_user",
+        "LEMATERIALFETCHER_DB_PASSWORD": "source_pass",
+        "LEMATERIALFETCHER_DB_HOST": "source.host",
+        "LEMATERIALFETCHER_DB_NAME": "source_db",
+        "LEMATERIALFETCHER_TABLE_NAME": "source_table",
+        # Destination database vars
+        "LEMATERIALFETCHER_DEST_DB_USER": "dest_user",
+        "LEMATERIALFETCHER_DEST_DB_PASSWORD": "dest_pass",
+        "LEMATERIALFETCHER_DEST_DB_HOST": "dest.host",
+        "LEMATERIALFETCHER_DEST_DB_NAME": "dest_db",
+        "LEMATERIALFETCHER_DEST_TABLE_NAME": "dest_table",
+        # Other transformer vars
+        "LEMATERIALFETCHER_BATCH_SIZE": "500",
+        "LEMATERIALFETCHER_OFFSET": "0",
+        "LEMATERIALFETCHER_TASK_TABLE_NAME": "task_table",
+    }
+    for key, value in test_env_vars.items():
+        monkeypatch.setenv(key, value)
+    return test_env_vars
+
+
+def test_load_transformer_config_with_fallback(mock_transformer_env_vars):
+    """Test loading transformer config with source DB credentials as fallback for destination"""
+    with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
+        mock_load_dotenv.return_value = {}
+
+        # Simulate how Click would pass environment variables as parameters
+        config_kwargs = {
+            "log_dir": mock_transformer_env_vars["LEMATERIALFETCHER_LOG_DIR"],
+            "max_retries": int(
+                mock_transformer_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]
+            ),
+            "num_workers": int(
+                mock_transformer_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]
+            ),
+            "retry_delay": int(
+                mock_transformer_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]
+            ),
+            "log_every": int(mock_transformer_env_vars["LEMATERIALFETCHER_LOG_EVERY"]),
+            "db_user": mock_transformer_env_vars["LEMATERIALFETCHER_DB_USER"],
+            "db_host": mock_transformer_env_vars["LEMATERIALFETCHER_DB_HOST"],
+            "db_name": mock_transformer_env_vars["LEMATERIALFETCHER_DB_NAME"],
+            "table_name": mock_transformer_env_vars["LEMATERIALFETCHER_TABLE_NAME"],
+            "dest_table_name": mock_transformer_env_vars[
+                "LEMATERIALFETCHER_DEST_TABLE_NAME"
+            ],
+            "batch_size": int(
+                mock_transformer_env_vars["LEMATERIALFETCHER_BATCH_SIZE"]
+            ),
+            "task_source_table_name": mock_transformer_env_vars[
+                "LEMATERIALFETCHER_TASK_TABLE_NAME"
+            ],
+        }
+
+        config = load_transformer_config(**config_kwargs)
+
+    # Test base config values
+    assert config.log_dir == mock_transformer_env_vars["LEMATERIALFETCHER_LOG_DIR"]
+    assert config.max_retries == int(
+        mock_transformer_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]
+    )
+    assert config.num_workers == int(
+        mock_transformer_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]
+    )
+    assert config.retry_delay == int(
+        mock_transformer_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]
+    )
+    assert config.log_every == int(
+        mock_transformer_env_vars["LEMATERIALFETCHER_LOG_EVERY"]
+    )
+
+    # Test source database connection string
+    expected_source_db_conn = (
+        f"host={mock_transformer_env_vars['LEMATERIALFETCHER_DB_HOST']} "
+        f"user={mock_transformer_env_vars['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_transformer_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_transformer_env_vars['LEMATERIALFETCHER_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.source_db_conn_str == expected_source_db_conn
+
+    # Test destination database connection string uses source credentials
+    expected_dest_db_conn = (
+        f"host={mock_transformer_env_vars['LEMATERIALFETCHER_DB_HOST']} "
+        f"user={mock_transformer_env_vars['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_transformer_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_transformer_env_vars['LEMATERIALFETCHER_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.dest_db_conn_str == expected_dest_db_conn
+
+    # Test table names
+    assert (
+        config.source_table_name
+        == mock_transformer_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
+    )
+    assert (
+        config.dest_table_name
+        == mock_transformer_env_vars["LEMATERIALFETCHER_DEST_TABLE_NAME"]
+    )
+    assert (
+        config.mp_task_table_name
+        == mock_transformer_env_vars["LEMATERIALFETCHER_TASK_TABLE_NAME"]
+    )
+    assert config.batch_size == int(
+        mock_transformer_env_vars["LEMATERIALFETCHER_BATCH_SIZE"]
+    )
+
+
+def test_load_transformer_config_with_explicit_dest(
+    mock_transformer_env_vars_with_dest,
+):
+    """Test loading transformer config with explicit destination database credentials"""
+    with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
+        mock_load_dotenv.return_value = {}
+
+        # Simulate how we would pass the parameters to the command function
+        config_kwargs = {
+            "log_dir": mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_LOG_DIR"],
+            "max_retries": int(
+                mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_MAX_RETRIES"]
+            ),
+            "num_workers": int(
+                mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_NUM_WORKERS"]
+            ),
+            "retry_delay": int(
+                mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_RETRY_DELAY"]
+            ),
+            "log_every": int(
+                mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_LOG_EVERY"]
+            ),
+            "db_user": mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_DB_USER"],
+            "db_host": mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_DB_HOST"],
+            "db_name": mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_DB_NAME"],
+            "table_name": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_TABLE_NAME"
+            ],
+            "dest_db_user": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_DEST_DB_USER"
+            ],
+            "dest_db_host": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_DEST_DB_HOST"
+            ],
+            "dest_db_name": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_DEST_DB_NAME"
+            ],
+            "dest_table_name": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_DEST_TABLE_NAME"
+            ],
+            "batch_size": int(
+                mock_transformer_env_vars_with_dest["LEMATERIALFETCHER_BATCH_SIZE"]
+            ),
+            "task_source_table_name": mock_transformer_env_vars_with_dest[
+                "LEMATERIALFETCHER_TASK_TABLE_NAME"
+            ],
+        }
+
+        config = load_transformer_config(**config_kwargs)
+
+    # Test source database connection string
+    expected_db_conn = (
+        f"host={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DB_HOST']} "
+        f"user={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.source_db_conn_str == expected_db_conn
+
+    # Test destination database connection string uses explicit destination credentials
+    expected_dest_db_conn = (
+        f"host={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DEST_DB_HOST']} "
+        f"user={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DEST_DB_USER']} "
+        f"password={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DEST_DB_PASSWORD']} "
+        f"dbname={mock_transformer_env_vars_with_dest['LEMATERIALFETCHER_DEST_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.dest_db_conn_str == expected_dest_db_conn
+
+
+def test_load_transformer_config_from_click():
+    """Test that transformer config loads correctly when passed directly from Click"""
+    # Set required environment variables for passwords
+    os.environ["LEMATERIALFETCHER_DB_PASSWORD"] = "source_pass"
+
+    # When Click calls the command function with --source-db-user source_user etc.
+    # It collects all the parameters (including defaults) and passes them to the command function
+    # The command function then passes these to load_transformer_config as config_kwargs
+    config_kwargs = {
+        # Base config with their defaults from Click options
+        "log_dir": "./test_logs",  # From --log-dir
+        "max_retries": 5,  # From --max-retries
+        "num_workers": 3,  # From --num-workers
+        "retry_delay": 1,  # From --retry-delay
+        "log_every": 500,  # From --log-every
+        "offset": 0,  # From --offset
+        # CLI option values (as if passed on command line)
+        "db_user": "source_user",  # From --source-db-user
+        "db_host": "source.host",  # From --source-db-host
+        "db_name": "source_db",  # From --source-db-name
+        "table_name": "source_table",  # From --source-table-name
+        "dest_table_name": "dest_table",  # From --dest-table-name
+        "batch_size": 100,  # From --batch-size
+        "task_source_table_name": "task_table",  # From --task-source-table-name
+    }
+
+    # This is what happens in the CLI command function
+    config = load_transformer_config(**config_kwargs)
+
+    # Verify base config
+    assert config.log_dir == "./test_logs"
+    assert config.max_retries == 5
+    assert config.num_workers == 3
+    assert config.retry_delay == 1
+    assert config.log_every == 500
+
+    # Verify source database connection
+    assert "host=source.host" in config.source_db_conn_str
+    assert "user=source_user" in config.source_db_conn_str
+    assert "password=source_pass" in config.source_db_conn_str
+    assert "dbname=source_db" in config.source_db_conn_str
+
+    # Verify destination uses source credentials
+    assert "host=source.host" in config.dest_db_conn_str
+    assert "user=source_user" in config.dest_db_conn_str
+    assert "password=source_pass" in config.dest_db_conn_str
+    assert "dbname=source_db" in config.dest_db_conn_str
+
+    # Verify other settings
+    assert config.source_table_name == "source_table"
+    assert config.dest_table_name == "dest_table"
+    assert config.mp_task_table_name == "task_table"
+    assert config.batch_size == 100
+
+
+def test_load_transformer_config_with_explicit_dest_from_click():
+    """Test that transformer config loads correctly with explicit destination database when passed from Click"""
+    # Set required environment variables for passwords
+    os.environ["LEMATERIALFETCHER_DB_PASSWORD"] = "source_pass"
+    os.environ["LEMATERIALFETCHER_DEST_DB_PASSWORD"] = "dest_pass"
+
+    # When Click calls the command function with all CLI arguments
+    # It collects all the parameters (including defaults) and passes them to the command function
+    # The command function then passes these to load_transformer_config as config_kwargs
+    config_kwargs = {
+        # Base config with their defaults from Click options
+        "log_dir": "./test_logs",
+        "max_retries": 5,
+        "num_workers": 3,
+        "retry_delay": 1,
+        "log_every": 500,
+        "offset": 0,
+        # Source DB options (as if passed on command line)
+        "db_user": "source_user",
+        "db_host": "source.host",
+        "db_name": "source_db",
+        "table_name": "source_table",
+        # Destination DB options (as if passed on command line)
+        "dest_db_user": "dest_user",
+        "dest_db_host": "dest.host",
+        "dest_db_name": "dest_db",
+        "dest_table_name": "dest_table",
+        # Other options
+        "batch_size": 100,
+        "task_source_table_name": "task_table",
+    }
+
+    # This is what happens in the CLI command function
+    config = load_transformer_config(**config_kwargs)
+
+    # Verify source database connection
+    assert "host=source.host" in config.source_db_conn_str
+    assert "user=source_user" in config.source_db_conn_str
+    assert "password=source_pass" in config.source_db_conn_str
+    assert "dbname=source_db" in config.source_db_conn_str
+
+    # Verify destination uses explicit destination credentials
+    assert "host=dest.host" in config.dest_db_conn_str
+    assert "user=dest_user" in config.dest_db_conn_str
+    assert "password=dest_pass" in config.dest_db_conn_str
+    assert "dbname=dest_db" in config.dest_db_conn_str
+
+
+def test_load_transformer_config_with_mixed_env_and_cli():
+    """Test loading transformer config with a mix of environment vars and CLI options, like in real usage"""
+    # Setup environment variables as if set in .env file
+    os.environ["LEMATERIALFETCHER_LOG_DIR"] = "./env_logs"
+    os.environ["LEMATERIALFETCHER_NUM_WORKERS"] = "4"
+    os.environ["LEMATERIALFETCHER_DB_USER"] = "env_user"
+    os.environ["LEMATERIALFETCHER_DB_PASSWORD"] = "env_pass"
+    os.environ["LEMATERIALFETCHER_DB_NAME"] = "env_db"
+
+    # When Click processes a command, it first looks for environment variables.
+    # If those exist, it uses them as defaults. Then it applies any CLI options
+    # that were provided, overriding the environment defaults.
+
+    # In this scenario, we're simulating:
+    # --log-dir=./cli_logs --source-db-host=cli.host --source-table-name=cli_source --dest-table-name=cli_table
+    # being passed on the command line, which override the environment values
+
+    config_kwargs = {
+        # These would come from CLI and override env vars
+        "log_dir": "./cli_logs",
+        "db_host": "cli.host",
+        "table_name": "cli_source",
+        "dest_table_name": "cli_table",
+        # These would be the defaults from environment (via Click's auto_envvar_prefix)
+        # Click would have already loaded these values before calling the command
+        "num_workers": 4,
+        "db_user": "env_user",
+        "db_name": "env_db",
+        # These would be Click's hardcoded defaults where no env var or CLI option exists
+        "max_retries": 3,  # Click default
+        "retry_delay": 2,  # Click default
+        "log_every": 1000,  # Click default
+        "offset": 0,  # Click default
+        "batch_size": 500,  # Click default
+    }
+
+    # This is what happens in the CLI command function
+    config = load_transformer_config(**config_kwargs)
+
+    # Verify config prioritizes CLI options over environment variables
+    assert config.log_dir == "./cli_logs"  # CLI value used
+    assert config.num_workers == 4  # Environment value used
+    assert config.max_retries == 3  # Default value used
+
+    # Verify source database uses a mix of CLI and environment values
+    assert "host=cli.host" in config.source_db_conn_str  # CLI value
+    assert "user=env_user" in config.source_db_conn_str  # Environment value
+    assert "password=env_pass" in config.source_db_conn_str  # Environment value
+    assert "dbname=env_db" in config.source_db_conn_str  # Environment value
+
+    # Verify destination database falls back to source values
+    assert "host=cli.host" in config.dest_db_conn_str  # Fallback from source
+    assert "user=env_user" in config.dest_db_conn_str  # Fallback from source
+    assert "password=env_pass" in config.dest_db_conn_str  # Fallback from source
+    assert "dbname=env_db" in config.dest_db_conn_str  # Fallback from source
+
+    # Verify CLI-provided table names are used
+    assert config.source_table_name == "cli_source"  # CLI value
+    assert config.dest_table_name == "cli_table"  # CLI value
+
+
+@pytest.fixture
+def mock_push_env_vars(monkeypatch):
+    """Fixture to set up test environment variables for push config"""
+    test_env_vars = {
+        # Base config vars
+        "LEMATERIALFETCHER_LOG_DIR": "./logs",
+        "LEMATERIALFETCHER_MAX_RETRIES": "3",
+        "LEMATERIALFETCHER_NUM_WORKERS": "2",
+        "LEMATERIALFETCHER_RETRY_DELAY": "2",
+        "LEMATERIALFETCHER_LOG_EVERY": "1000",
+        # Database vars
+        "LEMATERIALFETCHER_DB_USER": "push_user",
+        "LEMATERIALFETCHER_DB_PASSWORD": "push_pass",
+        "LEMATERIALFETCHER_DB_HOST": "push.host",
+        "LEMATERIALFETCHER_DB_NAME": "push_db",
+        "LEMATERIALFETCHER_TABLE_NAME": "push_table",
+        # Hugging Face vars
+        "LEMATERIALFETCHER_HF_REPO_ID": "push/repo",
+        "LEMATERIALFETCHER_HF_TOKEN": "push_token",
+        # Other push vars
+        "LEMATERIALFETCHER_DATA_DIR": "./push_data",
+        "LEMATERIALFETCHER_CHUNK_SIZE": "1000",
+        "LEMATERIALFETCHER_MAX_ROWS": "-1",
+        "LEMATERIALFETCHER_FORCE_REFRESH": "False",
+    }
+    for key, value in test_env_vars.items():
+        monkeypatch.setenv(key, value)
+    return test_env_vars
+
+
+def test_load_push_config(mock_push_env_vars):
+    """Test loading push configuration with all required variables"""
+    with patch("lematerial_fetcher.utils.config.load_dotenv") as mock_load_dotenv:
+        mock_load_dotenv.return_value = {}
+
+        config_kwargs = {
+            "log_dir": mock_push_env_vars["LEMATERIALFETCHER_LOG_DIR"],
+            "max_retries": int(mock_push_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]),
+            "num_workers": int(mock_push_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]),
+            "retry_delay": int(mock_push_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]),
+            "log_every": int(mock_push_env_vars["LEMATERIALFETCHER_LOG_EVERY"]),
+            "db_user": mock_push_env_vars["LEMATERIALFETCHER_DB_USER"],
+            "db_host": mock_push_env_vars["LEMATERIALFETCHER_DB_HOST"],
+            "db_name": mock_push_env_vars["LEMATERIALFETCHER_DB_NAME"],
+            "table_name": mock_push_env_vars["LEMATERIALFETCHER_TABLE_NAME"],
+            "hf_repo_id": mock_push_env_vars["LEMATERIALFETCHER_HF_REPO_ID"],
+            "hf_token": mock_push_env_vars["LEMATERIALFETCHER_HF_TOKEN"],
+            "data_dir": mock_push_env_vars["LEMATERIALFETCHER_DATA_DIR"],
+            "chunk_size": int(mock_push_env_vars["LEMATERIALFETCHER_CHUNK_SIZE"]),
+            "max_rows": int(mock_push_env_vars["LEMATERIALFETCHER_MAX_ROWS"]),
+            "force_refresh": mock_push_env_vars["LEMATERIALFETCHER_FORCE_REFRESH"]
+            == "True",
+        }
+
+        config = load_push_config(**config_kwargs)
+
+    assert config.log_dir == mock_push_env_vars["LEMATERIALFETCHER_LOG_DIR"]
+    assert config.max_retries == int(
+        mock_push_env_vars["LEMATERIALFETCHER_MAX_RETRIES"]
+    )
+    assert config.num_workers == int(
+        mock_push_env_vars["LEMATERIALFETCHER_NUM_WORKERS"]
+    )
+    assert config.retry_delay == int(
+        mock_push_env_vars["LEMATERIALFETCHER_RETRY_DELAY"]
+    )
+    assert config.log_every == int(mock_push_env_vars["LEMATERIALFETCHER_LOG_EVERY"])
+
+    # Test source database connection string
+    expected_db_conn = (
+        f"host={mock_push_env_vars['LEMATERIALFETCHER_DB_HOST']} "
+        f"user={mock_push_env_vars['LEMATERIALFETCHER_DB_USER']} "
+        f"password={mock_push_env_vars['LEMATERIALFETCHER_DB_PASSWORD']} "
+        f"dbname={mock_push_env_vars['LEMATERIALFETCHER_DB_NAME']} "
+        f"sslmode=disable"
+    )
+    assert config.source_db_conn_str == expected_db_conn
+
+    # Test Hugging Face config
+    assert config.hf_repo_id == mock_push_env_vars["LEMATERIALFETCHER_HF_REPO_ID"]
+    assert config.hf_token == mock_push_env_vars["LEMATERIALFETCHER_HF_TOKEN"]
+    assert config.data_dir == mock_push_env_vars["LEMATERIALFETCHER_DATA_DIR"]
+
+    # Test other config values
+    assert (
+        config.source_table_name == mock_push_env_vars["LEMATERIALFETCHER_TABLE_NAME"]
+    )
+    assert config.chunk_size == int(mock_push_env_vars["LEMATERIALFETCHER_CHUNK_SIZE"])
+    assert config.max_rows == int(mock_push_env_vars["LEMATERIALFETCHER_MAX_ROWS"])
+    assert config.force_refresh == (
+        mock_push_env_vars["LEMATERIALFETCHER_FORCE_REFRESH"] == "True"
+    )
+
+
+def test_load_push_config_from_click():
+    """Test that push config loads correctly when passed directly from Click"""
+    # Set required environment variables for passwords
+    os.environ["LEMATERIALFETCHER_DB_PASSWORD"] = "push_pass"
+
+    # When Click calls the command function with CLI options
+    # It collects all parameters (including defaults) and passes them to the command function
+    config_kwargs = {
+        # Base config with their defaults from Click options
+        "log_dir": "./test_logs",
+        "max_retries": 5,
+        "num_workers": 3,
+        "retry_delay": 1,
+        "log_every": 500,
+        "offset": 0,
+        # CLI option values (as if passed on command line)
+        "db_user": "cli_user",
+        "db_host": "cli.host",
+        "db_name": "cli_db",
+        "table_name": "cli_table",
+        "hf_repo_id": "cli/repo",
+        "hf_token": "cli_token",
+        "data_dir": "./cli_data",
+        "chunk_size": 500,
+        "max_rows": 100,
+        "force_refresh": True,
+    }
+
+    # This is what happens in the CLI command function
+    config = load_push_config(**config_kwargs)
+
+    # Verify base config
+    assert config.log_dir == "./test_logs"
+    assert config.max_retries == 5
+    assert config.num_workers == 3
+    assert config.retry_delay == 1
+    assert config.log_every == 500
+
+    # Verify database connection
+    assert "host=cli.host" in config.source_db_conn_str
+    assert "user=cli_user" in config.source_db_conn_str
+    assert "password=push_pass" in config.source_db_conn_str
+    assert "dbname=cli_db" in config.source_db_conn_str
+
+    # Verify Hugging Face settings
+    assert config.hf_repo_id == "cli/repo"
+    assert config.hf_token == "cli_token"
+    assert config.data_dir == "./cli_data"
+
+    # Verify other settings
+    assert config.source_table_name == "cli_table"
+    assert config.chunk_size == 500
+    assert config.max_rows == 100
+    assert config.force_refresh is True
+
+
+def test_load_push_config_with_explicit_conn_str():
+    """Test that push config loads correctly with explicit connection string"""
+    explicit_conn_str = "host=test.host user=test_user password=test_pass dbname=test_db sslmode=disable"
+
+    config_kwargs = {
+        "db_conn_str": explicit_conn_str,
+        "table_name": "test_table",
+        "hf_repo_id": "test/repo",
+    }
+
+    config = load_push_config(**config_kwargs)
+
+    assert config.source_db_conn_str == explicit_conn_str
+    assert config.source_table_name == "test_table"
+    assert config.hf_repo_id == "test/repo"
+
+
+def test_load_push_config_missing_required():
+    """Test that push config raises error when required fields are missing"""
+    # Missing required fields
+    with pytest.raises(ValueError) as excinfo:
+        load_push_config()
+
+    assert "db credentials" in str(excinfo.value)
+    assert "table_name" in str(excinfo.value)
+    assert "hf_repo_id" in str(excinfo.value)

@@ -56,9 +56,9 @@ def transformer(mock_source_db, mock_target_db):
         log_every=100,
         log_dir="./logs",
         max_retries=3,
+        page_limit=10,
         num_workers=2,
         retry_delay=2,
-        cache_dir="/tmp/lematerial_fetcher",
     )
     return TestTransformer(config, mock_source_db, mock_target_db)
 
