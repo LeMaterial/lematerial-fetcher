@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
