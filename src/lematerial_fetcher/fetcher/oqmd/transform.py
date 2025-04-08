@@ -769,6 +769,7 @@ class OQMDTrajectoryTransformer(
             for calculation in calculations:
                 input_values_dict = values_dict_dict[calculation["input_id"]]
                 output_values_dict = values_dict_dict[calculation["output_id"]]
+                output_values_dict["energy"] = calculation["energy"]
 
                 if any(
                     element in input_values_dict["elements"]
@@ -790,7 +791,7 @@ class OQMDTrajectoryTransformer(
                     input_values_dict["immutable_id"] = trajectory_immutable_id
                     entry_trajectories.append(
                         Trajectory(
-                            id=f"{trajectory_immutable_id}-{Functional.PBE}-{current_relaxation_number}",
+                            id=f"{trajectory_immutable_id}-{Functional.PBE.value}-{current_relaxation_number}",
                             source="oqmd",
                             last_modified=datetime.now().isoformat(),  # not available for OQMD
                             relaxation_number=current_relaxation_number,
@@ -804,7 +805,7 @@ class OQMDTrajectoryTransformer(
                 output_values_dict["immutable_id"] = trajectory_immutable_id
                 entry_trajectories.append(
                     Trajectory(
-                        id=f"{trajectory_immutable_id}-{Functional.PBE}-{output_relaxation_step}",
+                        id=f"{trajectory_immutable_id}-{Functional.PBE.value}-{output_relaxation_step}",
                         source="oqmd",
                         last_modified=datetime.now().isoformat(),  # not available for OQMD
                         relaxation_number=current_relaxation_number,
@@ -824,6 +825,8 @@ class OQMDTrajectoryTransformer(
 
             # We only check that the forces in the last step are not small
             # because we don't have all the steps
+            # Energy is None in the first step usually, but we add the structure
+            # regardless because it might be useful for IS2RE/S tasks
             if not has_trajectory_converged(entry_trajectories, energy_threshold=None):
                 continue
 

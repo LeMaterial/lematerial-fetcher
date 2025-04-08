@@ -52,6 +52,9 @@ def has_trajectory_converged(
     # If the last step has no energy or forces, we cannot check for convergence
     # and we don't want the trajectory to be pushed
     if trajectories[-1].energy is None or trajectories[-1].forces is None:
+        logger.warning(
+            f"Trajectory {trajectories[-1].id} has no energy or forces, skipping"
+        )
         return False
 
     if energy_threshold is not None and len(trajectories) > 1:

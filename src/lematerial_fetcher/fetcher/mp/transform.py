@@ -404,7 +404,7 @@ class MPTrajectoryTransformer(
                 )
 
                 trajectory = Trajectory(
-                    id=f"{material_id}-{functional}-{relaxation_step}",
+                    id=f"{material_id}-{functional.value}-{relaxation_step}",
                     source="mp",
                     immutable_id=material_id,
                     **input_structure_fields,

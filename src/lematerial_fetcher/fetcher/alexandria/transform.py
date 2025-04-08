@@ -211,7 +211,7 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
 
                 trajectory = Trajectory(
                     immutable_id=raw_structure.id,
-                    id=f"{raw_structure.id}-{calc['functional']}-{current_relaxation_number}",
+                    id=f"{raw_structure.id}-{Functional(calc['functional'].lower()).value}-{current_relaxation_number}",
                     source="alexandria",
                     last_modified=raw_structure.last_modified,
                     **optimade_structure_dict,
