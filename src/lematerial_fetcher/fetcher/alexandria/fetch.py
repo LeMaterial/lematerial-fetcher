@@ -1,5 +1,6 @@
 # Copyright 2025 Entalpic
 import gc
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -322,6 +323,7 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
             )
             file = open(cleaned_file_path, "r")
             parser = ijson.kvitems(file, "", use_float=True)
+
             # Get all keys at the root level
             for key, item in tqdm(
                 parser,
