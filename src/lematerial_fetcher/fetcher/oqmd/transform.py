@@ -758,6 +758,10 @@ class OQMDTrajectoryTransformer(
                 continue
 
             entry_trajectories = []
+            # The id of the trajectory will be the id of the final output structure
+            # similar to how it is done with MP where we use the materials_id to name
+            # the trajectory.
+            trajectory_immutable_id = f"oqmd-{calculations[-1]['output_id']}"
             for calculation in calculations:
                 input_values_dict = values_dict_dict[calculation["input_id"]]
                 output_values_dict = values_dict_dict[calculation["output_id"]]
@@ -779,9 +783,10 @@ class OQMDTrajectoryTransformer(
                 # No need to add the input relaxation step if its an intermediary relaxation number
                 # because it was already the output of the previous relaxation number
                 if current_relaxation_number == 0:
+                    input_values_dict["immutable_id"] = trajectory_immutable_id
                     entry_trajectories.append(
                         Trajectory(
-                            id=f"{input_values_dict['immutable_id']}-{Functional.PBE}-{current_relaxation_number}",
+                            id=f"{trajectory_immutable_id}-{Functional.PBE}-{current_relaxation_number}",
                             source="oqmd",
                             last_modified=datetime.now().isoformat(),  # not available for OQMD
                             relaxation_number=current_relaxation_number,
@@ -792,9 +797,10 @@ class OQMDTrajectoryTransformer(
                     )
 
                 output_relaxation_step = current_relaxation_step + calculation["nsteps"]
+                output_values_dict["immutable_id"] = trajectory_immutable_id
                 entry_trajectories.append(
                     Trajectory(
-                        id=f"{output_values_dict['immutable_id']}-{Functional.PBE}-{output_relaxation_step}",
+                        id=f"{trajectory_immutable_id}-{Functional.PBE}-{output_relaxation_step}",
                         source="oqmd",
                         last_modified=datetime.now().isoformat(),  # not available for OQMD
                         relaxation_number=current_relaxation_number,
