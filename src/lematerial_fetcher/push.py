@@ -1,11 +1,14 @@
 import json
+import os
 import shutil
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import psycopg2
 from datasets import Dataset, Features, Sequence, Value, load_dataset
 
+from lematerial_fetcher.models.optimade import Functional
 from lematerial_fetcher.utils.config import PushConfig
 from lematerial_fetcher.utils.logging import get_cache_dir, logger
 
@@ -75,9 +78,9 @@ class Push:
             self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
             self.data_dir = Path(self.config.data_dir)
-        if self.max_rows is not None and self.max_rows != -1:
-            # This replaces the data_dir with a temporary directory
-            self.use_temp_cache()
+        # if self.max_rows is not None and self.max_rows != -1:
+        #     # This replaces the data_dir with a temporary directory
+        #     self.use_temp_cache()
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.force_refresh = self.config.force_refresh
@@ -103,20 +106,20 @@ class Push:
         features = Features(
             {
                 "elements": Sequence(Value("string")),
-                "nelements": Value("int8"),
-                "elements_ratios": Sequence(Value("float64")),
                 "nsites": Value("int32"),
-                "cartesian_site_positions": Sequence(Sequence(Value("float64"))),
-                "lattice_vectors": Sequence(Sequence(Value("float64"))),
-                "species_at_sites": Sequence(Value("string")),
-                "species": Value("string"),
                 "chemical_formula_anonymous": Value("string"),
-                "chemical_formula_descriptive": Value("string"),
                 "chemical_formula_reduced": Value("string"),
+                "chemical_formula_descriptive": Value("string"),
+                "nelements": Value("int8"),
                 "dimension_types": Sequence(Value("int8")),
                 "nperiodic_dimensions": Value("int8"),
+                "lattice_vectors": Sequence(Sequence(Value("float64"))),
                 "immutable_id": Value("string"),
+                "cartesian_site_positions": Sequence(Sequence(Value("float64"))),
+                "species": Value("string"),
+                "species_at_sites": Sequence(Value("string")),
                 "last_modified": Value("string"),
+                "elements_ratios": Sequence(Value("float64")),
                 "stress_tensor": Sequence(Sequence(Value("float64"))),
                 "energy": Value("float64"),
                 "magnetic_moments": Sequence(Value("float64")),
@@ -178,11 +181,15 @@ class Push:
         hf_repo_id : str
             The ID of the HuggingFace Repository to push the data to
         """
-        dataset = self.download_db_as_csv()
+        datasets = self.download_all_functionals()
 
-        dataset.push_to_hub(
-            self.config.hf_repo_id, token=self.config.hf_token, **self.push_kwargs
-        )
+        for key, dataset in datasets.items():
+            dataset.push_to_hub(
+                self.config.hf_repo_id,
+                key,
+                token=self.config.hf_token,
+                **self.push_kwargs,
+            )
 
     def clear_cache(self) -> None:
         """
@@ -203,79 +210,264 @@ class Push:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using temporary cache directory: {self.data_dir}")
 
-    def download_db_as_csv(self) -> Dataset:
+    def download_all_functionals(self) -> dict[str, Dataset]:
         """
-        Downloads the database directly as CSV files using PostgreSQL COPY command.
+        Download all functionals from the database.
 
-        Returns a HuggingFace dataset created from the CSV files and casted to the correct features.
-        The dataset is stored in the data_dir attribute.
+        Returns
+        -------
+        dict[str, Dataset]: A dictionary of HuggingFace datasets, keyed by name of the split
+        (compatible, non-compatible, and the functional name)
+        """
+        datasets = {}
+
+        if self.force_refresh:
+            self.clear_cache()
+
+        output_path = Path(self.data_dir)
+
+        # Cross compatible entries:
+        for functional in Functional:
+            limit_query = (
+                f"WHERE functional = '{functional.value}' AND cross_compatibility = 't'"
+            )
+
+            dataset = self.download_db_as_csv(
+                limit_query=limit_query,
+                data_dir=output_path / f"compatible_{functional.value}",
+            )
+            if dataset is not None:
+                datasets[f"compatible_{functional.value}"] = dataset
+
+        # Non-cross compatible entries:
+        limit_query = "WHERE cross_compatibility = 'f'"
+        dataset = self.download_db_as_csv(
+            limit_query=limit_query,
+            data_dir=output_path / "non_compatible",
+        )
+        if dataset is not None:
+            datasets["non_compatible"] = dataset
+
+        return datasets
+
+    def download_db_as_csv(self, limit_query: str, data_dir: Path) -> Dataset | None:
+        """
+        Downloads the database directly as JSONL files using PostgreSQL COPY command.
+
+        Returns a HuggingFace dataset created from the JSONL files and casted to the correct features.
+
+        Parameters
+        ----------
+        limit_query : str
+            The query to limit the number of rows to download
+        data_dir : Path
+            The directory to store the JSONL files
+
+        Returns
+        -------
+        Dataset | None: HuggingFace dataset created from the CSV files or None if no rows are found
+        """
+
+        os.makedirs(data_dir, exist_ok=True)
+
+        conn = psycopg2.connect(self.conn_str)
+        try:
+            # Check if the table is empty
+            with conn.cursor(name="server_cursor") as cur:
+                query = f"SELECT EXISTS(SELECT 1 FROM {self.config.source_table_name} {limit_query} LIMIT 1);"
+                cur.execute(query)
+                has_rows = cur.fetchone()[0]
+
+                if not has_rows:
+                    return None
+
+            # We use an overestimation of the table size instead of counting all rows
+            # Because counting huge databases is really slow
+
+            # Apply max_rows limit if specified
+            if self.max_rows is not None and self.max_rows != -1:
+                estimated_rows = self.max_rows
+            else:
+                with conn.cursor(name="server_cursor") as cur:
+                    query = f"""
+                    SELECT reltuples::bigint 
+                    FROM pg_class 
+                    WHERE relname = '{self.config.source_table_name}';
+                    """
+                    cur.execute(query)
+                    estimated_rows = cur.fetchone()[0]
+
+                    # This is a really bad way to limit the approximation and is
+                    # most likely off
+                    if "where" in limit_query.lower():
+                        # If there's a WHERE clause, assume it filters out some rows
+                        # Use a conservative estimate (e.g., 50% of the total)
+                        estimated_rows = max(1, estimated_rows // 2)
+
+            chunk_size = min(self.config.chunk_size, estimated_rows)
+            num_chunks = (estimated_rows + chunk_size - 1) // chunk_size
+
+            total_chunks = (
+                num_chunks + 1
+            )  # Add one more chunk for the last remaining batch
+            if self.max_rows is not None and self.max_rows != -1:
+                total_chunks -= 1  # Not needed if we have a max_rows limit
+
+            # Will copy all columns if data_type is "any"
+            if self.columns is None:
+                columns = "*"
+            else:
+                columns = ", ".join(self.columns)
+
+            # Process chunks in parallel if not in debug mode
+            if self.debug:
+                for i in range(total_chunks):
+                    offset = i * chunk_size
+                    self.process_chunk(
+                        chunk_index=i,
+                        offset=offset,
+                        chunk_size=chunk_size,
+                        num_chunks=num_chunks,
+                        data_dir=data_dir,
+                        conn_str=self.conn_str,
+                        config=self.config,
+                        limit_query=limit_query,
+                        columns=columns,
+                    )
+            else:
+                chunk_tasks = [
+                    (
+                        i,
+                        i * chunk_size,
+                        chunk_size,
+                        num_chunks,
+                        data_dir,
+                        self.conn_str,
+                        self.config,
+                        limit_query,
+                        columns,
+                    )
+                    for i in range(total_chunks)
+                ]
+
+                with ProcessPoolExecutor(
+                    max_workers=self.config.num_workers
+                ) as executor:
+                    futures = {
+                        executor.submit(self.process_chunk, *task): task
+                        for task in chunk_tasks
+                    }
+
+                    # Process results as they complete
+                    for future in futures:
+                        try:
+                            result = future.result()
+                            if not result:
+                                logger.warning(
+                                    f"Failed to process chunk {futures[future][0]}"
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing chunk {futures[future][0]}: {str(e)}"
+                            )
+
+        finally:
+            conn.close()
+
+        # No rows exported
+        if len(os.listdir(data_dir)) == 0:
+            return None
+
+        return self.load_dataset(data_dir)
+
+    @staticmethod
+    def process_chunk(
+        chunk_index,
+        offset,
+        chunk_size,
+        num_chunks,
+        data_dir,
+        conn_str,
+        config,
+        limit_query,
+        columns,
+    ):
+        chunk_file = data_dir / f"chunk_{chunk_index}.jsonl"
+
+        # Skip if file already exists
+        if chunk_file.exists():
+            logger.info(f"Skipping chunk {chunk_index} because it already exists")
+            return True
+
+        # Create a new connection for this worker
+        worker_conn = psycopg2.connect(conn_str)
+        try:
+            with worker_conn.cursor() as cur:
+                # Get the ID at the offset
+                query = f"""
+                SELECT id 
+                FROM {config.source_table_name}
+                {limit_query}
+                ORDER BY id
+                OFFSET {offset}
+                LIMIT 1;
+                """
+                # Force index scan instead of sequential scan
+                cur.execute("SET enable_seqscan = off;")
+                cur.execute(query)
+                result = cur.fetchone()
+                id_at_offset = result[0] if result else None
+
+                if id_at_offset is None:
+                    return False
+
+                # Build the COPY query
+                copy_sql = f"""
+                    COPY (
+                        SELECT row_to_json(t)
+                        FROM (
+                            SELECT {columns}
+                            FROM {config.source_table_name}
+                            {limit_query}
+                """
+
+                if "where" in limit_query.lower():
+                    copy_sql += f" AND id > '{id_at_offset}'"
+                else:
+                    copy_sql += f" WHERE id > '{id_at_offset}'"
+
+                # If we're on the last chunk, we need to copy all the remaining rows
+                if chunk_index == num_chunks:
+                    copy_sql += " ORDER BY id) t) TO STDOUT;"
+                else:
+                    copy_sql += f" ORDER BY id LIMIT {chunk_size}) t) TO STDOUT;"
+
+                # Execute the COPY command and write to file
+                with open(chunk_file, "w") as f:
+                    cur.copy_expert(copy_sql, f)
+
+                return True
+        except Exception as e:
+            logger.error(f"Error processing chunk {chunk_index}: {str(e)}")
+            return False
+        finally:
+            worker_conn.close()
+
+    def load_dataset(self, data_dir: Path) -> Dataset:
+        """
+        Returns a HuggingFace dataset created from the JSONL files and casted to the correct features.
+
+        Parameters
+        ----------
+        data_dir : Path
+            The directory to store the JSONL files
 
         Returns
         -------
         Dataset: HuggingFace dataset created from the CSV files
         """
 
-        if self.force_refresh:
-            self.clear_cache()
-
-        output_path = Path(self.data_dir)
-        chunk_size = self.config.chunk_size
-
-        conn = psycopg2.connect(self.conn_str)
-
-        logger.info(
-            f"Downloading from {self.config.source_table_name}."
-            f" Will save to {output_path}"
-        )
-
-        try:
-            with conn.cursor("cursor") as cur:
-                if self.max_rows is None or self.max_rows == -1:
-                    cur.execute(
-                        f"SELECT COUNT(id) FROM {self.config.source_table_name}"
-                    )
-                    total_rows = cur.fetchone()[0]
-                else:
-                    # dummy query to spawn the cursor
-                    cur.execute("SELECT 1")
-                    total_rows = self.max_rows
-
-                chunk_size = min(chunk_size, total_rows)
-                num_chunks = (total_rows + chunk_size - 1) // chunk_size
-
-                for i in range(num_chunks):
-                    offset = i * chunk_size
-                    chunk_file = output_path / f"chunk_{i}.jsonl"
-
-                    if chunk_file.exists():
-                        logger.info(f"Skipping chunk {i} because it already exists")
-                        continue
-
-                    # Will copy all columns if data_type is "any"
-                    if self.columns is None:
-                        columns = "*"
-                    else:
-                        columns = ", ".join(self.columns)
-
-                    copy_sql = f"""
-                        COPY (
-                            SELECT row_to_json(t)
-                            FROM (
-                                SELECT {columns}
-                                FROM {self.config.source_table_name}
-                                ORDER BY id
-                                LIMIT {chunk_size} OFFSET {offset}
-                            ) t
-                        ) TO STDOUT
-                        """
-
-                    with open(chunk_file, "w") as f:
-                        cur.copy_expert(copy_sql, f)
-
-        finally:
-            conn.close()
-
-        dataset = load_dataset("json", data_files=str(output_path / "*.jsonl"))
+        dataset = load_dataset("json", data_files=str(data_dir / "*.jsonl"))
 
         if "species" in dataset["train"].column_names:
 
@@ -290,6 +482,9 @@ class Push:
                 desc="Converting species column to string",
             )
 
-        dataset = dataset.cast(features=self.features, num_proc=self.config.num_workers)
+        for split in dataset.keys():
+            dataset[split] = dataset[split].cast(
+                features=self.features, num_proc=self.config.num_workers
+            )
 
         return dataset
