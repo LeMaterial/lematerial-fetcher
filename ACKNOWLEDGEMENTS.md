@@ -12,7 +12,7 @@ This software utilizes data from [The Materials Project](https://materialsprojec
 The [Alexandria Library](https://alexandria.icams.rub.de/), developed by the Interdisciplinary Centre for Advanced Materials Simulation (ICAMS) at Ruhr University Bochum, provides valuable computational materials science data. We acknowledge their significant contribution to the materials research community through maintaining this extensive database.
 
 **Citation:**
-- Ghahremanpour, Mohammad M., Paul J. Van Maaren, and David Van Der Spoel. *"The Alexandria library, a quantum-chemical database of molecular properties for force field development."* Scientific data 5.1 (2018): 1-10. DOI: [10.1038/sdata.2018.62](https://doi.org/10.1038/sdata.2018.62)
+- Schmidt, Jonathan, et al. "Improving machine-learning models in materials science through large datasets." Materials Today Physics 48 (2024): DOI: [10.1016/j.mtphys.2024.101560](https://doi.org/10.1016/j.mtphys.2024.101560)
 
 ## Open Quantum Materials Database (OQMD)
 
