@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import json
 import shutil
 import tempfile

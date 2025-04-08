@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import os
 import re
 import tempfile
@@ -202,7 +203,7 @@ def update_oqmd_version(
 
     version_db.execute_sql(
         f"""
-        INSERT INTO {version_db_name} (id, download_url, last_updated) 
+        INSERT INTO {version_db_name} (id, download_url, last_updated)
         VALUES (1, %s, %s)
         ON DUPLICATE KEY UPDATE download_url = %s, last_updated = %s;
     """,
