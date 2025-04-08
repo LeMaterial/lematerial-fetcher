@@ -748,6 +748,10 @@ class OQMDTrajectoryTransformer(
         trajectories = []
 
         for entry_id, calculations in calculations_dict.items():
+            if len(calculations) == 0:
+                logger.warning(f"No calculations found for entry {entry_id}")
+                continue
+
             if entry_id in entry_id_to_ignore:
                 continue
             current_relaxation_step, current_relaxation_number = 0, 0

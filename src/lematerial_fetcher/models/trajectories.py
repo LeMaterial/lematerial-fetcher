@@ -30,8 +30,8 @@ class Trajectory(OptimadeStructure):
 
 def has_trajectory_converged(
     trajectories: list[Trajectory],
-    energy_threshold: float = ENERGY_CONVERGENCE_THRESHOLD,
-    force_threshold: float = FORCE_CONVERGENCE_THRESHOLD,
+    energy_threshold: float | None = ENERGY_CONVERGENCE_THRESHOLD,
+    force_threshold: float | None = FORCE_CONVERGENCE_THRESHOLD,
 ) -> bool:
     """
     Check if the full trajectory has converged.
@@ -49,23 +49,26 @@ def has_trajectory_converged(
     bool
         True if the trajectory has converged, False otherwise.
     """
-    if (
-        energy_threshold is not None
-        and len(trajectories) > 1
-        and all(trajectory.energy is not None for trajectory in trajectories[-2:])
-    ):
+    # If the last step has no energy or forces, we cannot check for convergence
+    # and we don't want the trajectory to be pushed
+    if trajectories[-1].energy is None or trajectories[-1].forces is None:
+        return False
+
+    if energy_threshold is not None and len(trajectories) > 1:
         if np.abs(trajectories[-1].energy - trajectories[-2].energy) > energy_threshold:
             logger.warning(
-                f"Trajectory {trajectories[-1].id} has not converged, energy difference: {np.abs(trajectories[-1].energy - trajectories[-2].energy)}"
+                f"Trajectory {trajectories[-1].id} has not converged, energy difference: {np.abs(trajectories[-1].energy - trajectories[-2].energy):.2f} eV"
             )
             return False
-    elif force_threshold is not None and (
-        trajectories[-1].forces is None
-        or np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max()
-        > force_threshold
-    ):
-        logger.warning(
-            f"Trajectory {trajectories[-1].id} has not converged, force difference: {np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max()}"
-        )
-        return False
+
+    if force_threshold is not None:
+        if (
+            np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max()
+            > force_threshold
+        ):
+            logger.warning(
+                f"Trajectory {trajectories[-1].id} has not converged, max force norm: {np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max():.2f} eV/A"
+            )
+            return False
+
     return True
