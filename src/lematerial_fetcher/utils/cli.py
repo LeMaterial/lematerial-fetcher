@@ -1,3 +1,4 @@
+# Copyright 2025 Entalpic
 import click
 
 
@@ -158,6 +159,11 @@ def add_transformer_options(f):
             default=0,
             envvar="LEMATERIALFETCHER_OFFSET",
             help="Offset in the source table (ordered by id) to start fetching and transforming data from.",
+        ),
+        click.option(
+            "--max-offset",
+            type=int,
+            help="Maximum index in the source table to process up to. If not provided, all items will be processed.",
         ),
         click.option(
             "--task-source-table-name",

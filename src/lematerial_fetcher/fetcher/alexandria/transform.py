@@ -9,7 +9,7 @@ from lematerial_fetcher.database.postgres import (
 )
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
-from lematerial_fetcher.models.trajectories import Trajectory
+from lematerial_fetcher.models.trajectories import Trajectory, has_trajectory_converged
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
@@ -211,7 +211,7 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
 
                 trajectory = Trajectory(
                     immutable_id=raw_structure.id,
-                    id=f"{raw_structure.id}-{calc['functional']}-{current_relaxation_number}",
+                    id=f"{raw_structure.id}-{Functional(calc['functional'].lower()).value}-{current_relaxation_number}",
                     source="alexandria",
                     last_modified=raw_structure.last_modified,
                     **optimade_structure_dict,
@@ -224,5 +224,8 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
 
                 trajectories.append(trajectory)
                 current_relaxation_number += 1
+
+        if not has_trajectory_converged(trajectories):
+            return []
 
         return trajectories

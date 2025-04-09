@@ -1,6 +1,5 @@
 # Copyright 2025 Entalpic
 import gc
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,10 +35,10 @@ class BatchInfo:
 
 def get_functional_from_url(url: str) -> Functional:
     """Get the functional from the URL."""
-    if "pbe" in url:
-        return Functional.PBE
-    elif "pbesol" in url:
+    if "pbesol" in url:
         return Functional.PBESOL
+    elif "pbe" in url:
+        return Functional.PBE
     elif "scan" in url:
         return Functional.SCAN
     else:
@@ -332,7 +331,6 @@ class AlexandriaTrajectoryFetcher(BaseFetcher):
                 leave=False,
                 miniters=100,
             ):
-                # item = sanitize_json(item)
                 for trajectory in item:
                     trajectory["functional"] = functional
 

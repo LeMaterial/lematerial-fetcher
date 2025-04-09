@@ -1,9 +1,12 @@
 # Copyright 2025 Entalpic
+import sys
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from multiprocessing import Manager
 from typing import Any, Generic, Optional, Type, TypeVar
+
+from tqdm import tqdm
 
 from lematerial_fetcher.database.postgres import (
     DatasetVersions,
@@ -21,9 +24,9 @@ TStructure = TypeVar("TStructure")
 
 
 def process_batch(
-    batch_id: int,
+    worker_id: int,
     offset: int,
-    batch_size: int,
+    limit: int,
     task_table_name: Optional[str],
     config: TransformerConfig,
     database_class: Type[TDatabase],
@@ -32,16 +35,16 @@ def process_batch(
     manager_dict: dict,
 ) -> None:
     """
-    Process a batch of rows in a worker process.
+    Process a range of rows in a worker process using a server-side cursor.
 
     Parameters
     ----------
-    batch_id : int
-        Identifier for the batch
+    worker_id : int
+        Identifier for the worker
     offset : int
         The offset to start fetching rows from
-    batch_size : int
-        The number of rows to fetch
+    limit : int
+        The total number of rows to process (end_offset - start_offset)
     task_table_name : Optional[str]
         Task table name to read targets or trajectories from.
         This is only used for Materials Project.
@@ -71,24 +74,35 @@ def process_batch(
         )
 
         processed_count = 0
-        for raw_structure in source_db.fetch_items_iter(
-            offset=offset,
-            batch_size=batch_size,
-            cursor_name=f"transform_cursor_{batch_id}",
+        for raw_structure in (
+            pbar := tqdm(
+                source_db.fetch_items_iter(
+                    offset=offset,
+                    limit=limit,
+                    batch_size=config.batch_size,
+                    cursor_name=f"transform_cursor_{worker_id}",
+                ),
+                total=limit,
+                position=worker_id,
+                desc=f"Worker {worker_id} ({offset} -> {offset + limit})",
+                leave=False,
+                file=sys.stdout,
+                dynamic_ncols=True,
+                mininterval=1.0,
+                maxinterval=10.0,
+                miniters=1,
+            )
         ):
             try:
                 structures = transformer.transform_row(
                     raw_structure, source_db=source_db, task_table_name=task_table_name
                 )
 
-                for structure in structures:
-                    target_db.insert_data(structure)
+                target_db.batch_insert_data(structures)
+                processed_count += len(structures)
+                del structures
 
-                processed_count += 1
-                if processed_count % config.log_every == 0:
-                    logger.info(
-                        f"Transformed {batch_id * batch_size + processed_count} records"
-                    )
+                pbar.update(1)
 
             except Exception as e:
                 logger.warning(f"Error processing {raw_structure.id} row: {str(e)}")
@@ -240,27 +254,49 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
     def _process_rows(self) -> None:
         """
         Process rows from source database in parallel, transform them, and store in target database.
-        Processes rows in batches to avoid memory issues. Uses a work-stealing approach where workers
-        can grab new work immediately without waiting for other workers.
+        Each worker is assigned a specific range of the database and uses a server-side cursor
+        to process its assigned portion efficiently.
 
         Raises
         ------
         Exception
             If a critical error occurs during processing
         """
-        batch_size = self.config.batch_size
         offset = self.config.page_offset
         total_processed = 0
         task_table_name = self.config.mp_task_table_name
 
+        # Get total number of rows to process
+        source_db = StructuresDatabase(
+            self.config.source_db_conn_str, self.config.source_table_name
+        )
+        total_rows = source_db.count_items()
+        source_db.close()
+
+        if self.config.max_offset is not None:
+            total_rows = min(total_rows, self.config.max_offset)
+
+        # Calculate the range for each worker
+        rows_per_worker = (total_rows - offset) // self.config.num_workers
+        worker_ranges = []
+
+        for i in range(self.config.num_workers):
+            start_offset = offset + (rows_per_worker * i)
+            end_offset = (
+                offset + (rows_per_worker * (i + 1))
+                if i < self.config.num_workers - 1
+                else total_rows
+            )
+            worker_ranges.append((start_offset, end_offset))
+
         if self.debug:
             # Debug mode: process in main process
-            while True:
-                # Process batch in main process
+            for start_offset, end_offset in worker_ranges:
+                # Process the entire range in the main process
                 process_batch(
-                    offset // batch_size,  # batch_id
-                    offset,
-                    batch_size,
+                    0,  # batch_id
+                    start_offset,
+                    end_offset - start_offset,
                     task_table_name,
                     self.config,
                     self._database_class,
@@ -269,33 +305,22 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
                     self.manager_dict,
                 )
 
-                # Check if we should continue
-                source_db = StructuresDatabase(
-                    self.config.source_db_conn_str, self.config.source_table_name
-                )
-                rows = source_db.fetch_items(offset=offset + batch_size, batch_size=1)
-                source_db.close()
-                if not rows:
-                    break
-
-                total_processed += batch_size
+                total_processed += end_offset - start_offset
                 logger.info(f"Total processed: {total_processed}")
-                offset += batch_size
 
             logger.info(f"Completed processing {total_processed} total rows")
             return
 
-        # Normal mode: process in parallel with work stealing
+        # Normal mode: process in parallel with each worker handling its assigned range
         with ProcessPoolExecutor(max_workers=self.config.num_workers) as executor:
-            futures = set()
+            futures = []
 
-            # Submit initial batch of tasks
-            for i in range(self.config.num_workers):
+            for i, (start_offset, end_offset) in enumerate(worker_ranges):
                 future = executor.submit(
                     process_batch,
-                    offset // batch_size,  # batch_id
-                    offset + (i * batch_size),
-                    batch_size,
+                    i,  # batch_id
+                    start_offset,
+                    end_offset - start_offset,
                     task_table_name,
                     self.config,
                     self._database_class,
@@ -303,80 +328,18 @@ class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
                     self.__class__,
                     self.manager_dict,
                 )
-                futures.add((offset + (i * batch_size), future))
-                total_processed += batch_size
+                futures.append(future)
+                total_processed += end_offset - start_offset
 
-            offset += batch_size * self.config.num_workers
-            more_data = True
-
-            while futures and more_data:
-                # Check for completed futures and remove them
-                done_futures = set()
-                for current_offset, future in futures:
-                    if future.done():
-                        try:
-                            future.result()
-
-                            if self.manager_dict.get("occurred", False):
-                                logger.critical(
-                                    "Critical error detected, shutting down process pool"
-                                )
-                                executor.shutdown(wait=False)
-                                raise RuntimeError(
-                                    "Critical error occurred during processing"
-                                )
-
-                            # Check if there might be more data
-                            source_db = StructuresDatabase(
-                                self.config.source_db_conn_str,
-                                self.config.source_table_name,
-                            )
-                            check_rows = source_db.fetch_items(
-                                offset=offset, batch_size=1
-                            )
-                            source_db.close()
-
-                            if check_rows:
-                                # Submit new task
-                                next_future = executor.submit(
-                                    process_batch,
-                                    offset // batch_size,  # batch_id
-                                    offset,
-                                    batch_size,
-                                    task_table_name,
-                                    self.config,
-                                    self._database_class,
-                                    self._structure_class,
-                                    self.__class__,
-                                    self.manager_dict,
-                                )
-                                futures.add((offset, next_future))
-                                offset += batch_size
-                            else:
-                                more_data = False
-
-                            logger.info(
-                                f"Successfully processed batch at offset {current_offset}"
-                            )
-
-                        except Exception as e:
-                            logger.error(f"Critical error encountered: {str(e)}")
-                            executor.shutdown(wait=False)
-                            raise
-
-                        done_futures.add((current_offset, future))
-                        break
-
-                futures -= done_futures
-
-            # Wait for remaining futures
-            for current_offset, future in futures:
+            # Wait for all futures to complete and check for errors
+            for future in futures:
                 try:
                     future.result()
+                    if self.manager_dict.get("occurred", False):
+                        raise Exception("Critical error detected in worker process")
                 except Exception as e:
-                    logger.error(
-                        f"Error processing batch at offset {current_offset}: {str(e)}"
-                    )
+                    logger.error(f"Error in worker process: {str(e)}")
+                    raise
 
             logger.info(
                 f"Completed processing approximately {total_processed} total rows"

@@ -15,7 +15,7 @@ from lematerial_fetcher.fetcher.mp.utils import (
 )
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
-from lematerial_fetcher.models.trajectories import Trajectory
+from lematerial_fetcher.models.trajectories import Trajectory, has_trajectory_converged
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.logging import logger
 
@@ -404,7 +404,7 @@ class MPTrajectoryTransformer(
                 )
 
                 trajectory = Trajectory(
-                    id=f"{material_id}-{functional}-{relaxation_step}",
+                    id=f"{material_id}-{functional.value}-{relaxation_step}",
                     source="mp",
                     immutable_id=material_id,
                     **input_structure_fields,
@@ -418,6 +418,9 @@ class MPTrajectoryTransformer(
 
                 trajectories.append(trajectory)
                 relaxation_step += 1
+
+        if not has_trajectory_converged(trajectories):
+            return []
 
         return trajectories
 

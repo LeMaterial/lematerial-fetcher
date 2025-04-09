@@ -91,6 +91,42 @@ class Database:
         """
         self.conn.close()
 
+    def get_id_at_offset(
+        self, offset: int, table_name: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Get the ID of the record at the specified offset using index-only scan.
+
+        Parameters
+        ----------
+        offset : int
+            The offset position to get the ID from
+        table_name : str, optional
+            Name of the table to fetch from, by default None (uses self.table_name)
+
+        Returns
+        -------
+        Optional[str]
+            The ID at the specified offset, or None if no record exists at that offset
+        """
+        if not table_name:
+            table_name = self.table_name
+
+        with self.conn.cursor() as cur:
+            # Simple query that can use index-only scan
+            query = f"""
+            SELECT id 
+            FROM {table_name}
+            ORDER BY id
+            OFFSET %s
+            LIMIT 1;
+            """
+            # Add hint to force index scan instead of sequential scan
+            cur.execute("SET enable_seqscan = off;")
+            cur.execute(query, (offset,))
+            result = cur.fetchone()
+            return result[0] if result else None
+
 
 class StructuresDatabase(Database):
     """
@@ -197,46 +233,11 @@ class StructuresDatabase(Database):
                 except (json.JSONDecodeError, psycopg2.Error) as e:
                     raise Exception(f"Error during batch insert: {str(e)}")
 
-    def _get_id_at_offset(
-        self, offset: int, table_name: Optional[str] = None
-    ) -> Optional[str]:
-        """
-        Get the ID of the record at the specified offset using index-only scan.
-
-        Parameters
-        ----------
-        offset : int
-            The offset position to get the ID from
-        table_name : str, optional
-            Name of the table to fetch from, by default None (uses self.table_name)
-
-        Returns
-        -------
-        Optional[str]
-            The ID at the specified offset, or None if no record exists at that offset
-        """
-        if not table_name:
-            table_name = self.table_name
-
-        with self.conn.cursor() as cur:
-            # Simple query that can use index-only scan
-            query = f"""
-            SELECT id 
-            FROM {table_name}
-            ORDER BY id
-            OFFSET %s
-            LIMIT 1;
-            """
-            # Add hint to force index scan instead of sequential scan
-            cur.execute("SET enable_seqscan = off;")
-            cur.execute(query, (offset,))
-            result = cur.fetchone()
-            return result[0] if result else None
-
     def fetch_items_iter(
         self,
         offset: int = 0,
-        batch_size: int = 100,
+        limit: Optional[int] = None,  # Total number of rows to process
+        batch_size: int = 100,  # Number of rows to fetch in each database round-trip
         table_name: Optional[str] = None,
         cursor_name: Optional[str] = None,
     ) -> Generator[RawStructure, None, None]:
@@ -249,6 +250,8 @@ class StructuresDatabase(Database):
         ----------
         offset : int, optional
             Number of items to skip, by default 0
+        limit : Optional[int], optional
+            Total number of items to process, by default None (process all available items)
         batch_size : int, optional
             Number of items to fetch in each database round-trip, by default 100
         table_name : str, optional
@@ -278,7 +281,7 @@ class StructuresDatabase(Database):
                 # Get the starting ID if offset > 0
                 start_id = None
                 if offset > 0:
-                    start_id = self._get_id_at_offset(offset, table_name)
+                    start_id = self.get_id_at_offset(offset, table_name)
                     if not start_id:  # No results at this offset
                         return
 
@@ -289,17 +292,17 @@ class StructuresDatabase(Database):
                     FROM {table_name}
                     WHERE id > %s
                     ORDER BY id
-                    LIMIT %s
+                    {f"LIMIT {limit}" if limit is not None else ""}
                     """
-                    cur.execute(query, (start_id, batch_size))
+                    cur.execute(query, (start_id,))
                 else:
                     query = f"""
                     SELECT id, type, attributes, last_modified
                     FROM {table_name}
                     ORDER BY id
-                    LIMIT %s
+                    {f"LIMIT {limit}" if limit is not None else ""}
                     """
-                    cur.execute(query, (batch_size,))
+                    cur.execute(query)
 
                 while True:
                     rows = cur.fetchmany(batch_size)
@@ -320,6 +323,11 @@ class StructuresDatabase(Database):
                             attributes=attributes,
                             last_modified=last_modified,
                         )
+
+                        del row
+                        del attributes_json
+
+                    del rows
 
         except (json.JSONDecodeError, psycopg2.Error) as e:
             raise Exception(f"Error fetching items: {str(e)}")
@@ -440,6 +448,18 @@ class OptimadeDatabase(StructuresDatabase):
     def __init__(self, conn_str: str, table_name: str):
         super().__init__(conn_str, table_name)
         self.columns = OptimadeDatabase.columns()
+
+    def create_index(self) -> None:
+        """
+        Create an index on the id column.
+        """
+        self.super().create_index()
+        # Create index on (id, functional, cross_compatibility) for faster exports
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"CREATE INDEX idx_id_functional_cross_compatibility ON {self.table_name} (id, functional, cross_compatibility);"
+            )
+            self.conn.commit()
 
     @classmethod
     def columns(cls) -> dict[str, str]:
