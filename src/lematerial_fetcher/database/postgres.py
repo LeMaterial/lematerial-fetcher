@@ -488,6 +488,7 @@ class OptimadeDatabase(StructuresDatabase):
             "total_magnetization": "FLOAT",
             "dos_ef": "FLOAT",
             "functional": "TEXT",
+            "space_group_it_number": "INTEGER",
             "cross_compatibility": "BOOLEAN",
             "entalpic_fingerprint": "FLOAT[]",
         }
@@ -562,6 +563,7 @@ class OptimadeDatabase(StructuresDatabase):
                     structure.total_magnetization,
                     structure.dos_ef,
                     structure.functional,
+                    structure.space_group_it_number,
                     structure.cross_compatibility,
                     structure.entalpic_fingerprint,
                 )
@@ -625,6 +627,7 @@ class OptimadeDatabase(StructuresDatabase):
                             structure.total_magnetization,
                             structure.dos_ef,
                             structure.functional,
+                            structure.space_group_it_number,
                             structure.cross_compatibility,
                             structure.entalpic_fingerprint,
                         )

@@ -5,7 +5,14 @@ import re
 from enum import Enum
 from typing import Optional
 
+import moyopy
+from moyopy.interface import MoyoAdapter
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pymatgen.core import Structure
+
+from lematerial_fetcher.utils.logging import logger
+
+SG_MOYOPY_SYMPREC = 1e-4
 
 
 class Functional(str, Enum):
@@ -151,11 +158,50 @@ class OptimadeStructure(BaseModel):
         None, description="Exchange-correlation functional"
     )
     cross_compatibility: bool = Field(description="Cross-compatibility flag")
+    space_group_it_number: Optional[int] = Field(
+        None,
+        description="Space group international number",
+    )
     entalpic_fingerprint: Optional[str] = Field(
         None,
         min_length=1,
         description="Entalpic fingerprint hash",
     )
+
+    def __init__(
+        self,
+        compute_space_group: bool = True,
+        compute_bawl_hash: bool = False,
+        **kwargs,
+    ):
+        try:
+            structure = Structure(
+                species=kwargs["species_at_sites"],
+                coords=kwargs["cartesian_site_positions"],
+                lattice=kwargs["lattice_vectors"],
+                coords_are_cartesian=True,
+            )
+
+            # Compute space group with moyopy
+            if compute_space_group:
+                cell = MoyoAdapter.from_structure(structure)
+                dataset = moyopy.MoyoDataset(
+                    cell=cell,
+                    symprec=SG_MOYOPY_SYMPREC,
+                    angle_tolerance=None,
+                    setting=None,
+                )
+                space_group = dataset.number
+                kwargs["space_group_it_number"] = space_group
+
+            # TODO(Ramlaoui): Add BAWL fingerprint
+        except Exception as e:
+            logger.warning(
+                f"Failed to create pymatgen structure from {kwargs['immutable_id']}. Error: {e}"
+            )
+            kwargs["space_group_it_number"] = None
+
+        super().__init__(**kwargs)
 
     #
     # Field-level validators
