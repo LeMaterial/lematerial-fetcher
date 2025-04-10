@@ -40,6 +40,7 @@ class TransformerConfig(BaseConfig):
     dest_table_name: str
     batch_size: int
     max_offset: Optional[int] = None
+    db_fetch_batch_size: Optional[int] = None
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
 
@@ -237,6 +238,7 @@ def load_transformer_config(
     dest_table_name: Optional[str] = None,
     # Other params
     batch_size: int = 500,
+    db_fetch_batch_size: Optional[int] = None,
     max_offset: Optional[int] = None,
     task_source_table_name: Optional[str] = None,
     mysql_host: str = "localhost",
@@ -299,6 +301,7 @@ def load_transformer_config(
         "source_table_name": table_name,
         "dest_table_name": dest_table_name,
         "batch_size": batch_size,
+        "db_fetch_batch_size": db_fetch_batch_size,
         "max_offset": max_offset,
         "mp_task_table_name": task_source_table_name,
     }
