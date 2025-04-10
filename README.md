@@ -1,4 +1,4 @@
-# lematerial-fetcher
+# LeMaterial-Fetcher
 
 `lematerial-fetcher` is designed to fetch data from a specified OPTIMADE's compatible JSON-API, process it, and store it in a PostgreSQL database. It is highly concurrent, to handle data fetching and processing efficiently.
 
