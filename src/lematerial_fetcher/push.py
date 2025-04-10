@@ -151,6 +151,7 @@ class Push:
 
         features.update(
             {
+                "id": Value("string"),
                 "relaxation_step": Value("int32"),
                 "relaxation_number": (Value("int32")),
             }
@@ -162,6 +163,7 @@ class Push:
 
         convert_features_dict.update(
             {
+                "id": "string",
                 "relaxation_step": "int",
                 "relaxation_number": "int",
             }
