@@ -79,9 +79,6 @@ class Push:
             self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
         else:
             self.data_dir = Path(self.config.data_dir)
-        # if self.max_rows is not None and self.max_rows != -1:
-        #     # This replaces the data_dir with a temporary directory
-        #     self.use_temp_cache()
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.force_refresh = self.config.force_refresh
@@ -172,48 +169,11 @@ class Push:
 
         return features, convert_features_dict
 
-    def push(self):
+    def push(self) -> dict[str, Dataset]:
         """
         Entry point for the push operation.
-        This function will download the database as CSV files and push them to the HuggingFace Repository.
-
-        Parameters
-        ----------
-        hf_repo_id : str
-            The ID of the HuggingFace Repository to push the data to
-        """
-        datasets = self.download_all_functionals()
-
-        for key, dataset in datasets.items():
-            dataset.push_to_hub(
-                self.config.hf_repo_id,
-                key,
-                token=self.config.hf_token,
-                **self.push_kwargs,
-            )
-
-    def clear_cache(self) -> None:
-        """
-        Clear the cache directory.
-        Useful for CI/CD pipelines or to force a fresh download.
-        """
-        if self.data_dir.exists():
-            shutil.rmtree(self.data_dir)
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Cleared cache directory: {self.data_dir}")
-
-    def use_temp_cache(self) -> None:
-        """
-        Use a temporary directory for caching.
-        Useful for testing with a small number of rows.
-        """
-        self.data_dir = Path(tempfile.mkdtemp())
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Using temporary cache directory: {self.data_dir}")
-
-    def download_all_functionals(self) -> dict[str, Dataset]:
-        """
-        Download all functionals from the database.
+        This function will download all functionals of the database as JSONL files
+        and push them to the HuggingFace Repository.
 
         Returns
         -------
@@ -239,6 +199,12 @@ class Push:
             )
             if dataset is not None:
                 datasets[f"compatible_{functional.value}"] = dataset
+                dataset.push_to_hub(
+                    self.config.hf_repo_id,
+                    f"compatible_{functional.value}",
+                    token=self.config.hf_token,
+                    **self.push_kwargs,
+                )
 
         # Non-cross compatible entries:
         limit_query = "WHERE cross_compatibility = 'f'"
@@ -248,8 +214,33 @@ class Push:
         )
         if dataset is not None:
             datasets["non_compatible"] = dataset
+            dataset.push_to_hub(
+                self.config.hf_repo_id,
+                "non_compatible",
+                token=self.config.hf_token,
+                **self.push_kwargs,
+            )
 
         return datasets
+
+    def clear_cache(self) -> None:
+        """
+        Clear the cache directory.
+        Useful for CI/CD pipelines or to force a fresh download.
+        """
+        if self.data_dir.exists():
+            shutil.rmtree(self.data_dir)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Cleared cache directory: {self.data_dir}")
+
+    def use_temp_cache(self) -> None:
+        """
+        Use a temporary directory for caching.
+        Useful for testing with a small number of rows.
+        """
+        self.data_dir = Path(tempfile.mkdtemp())
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using temporary cache directory: {self.data_dir}")
 
     def download_db_as_csv(self, limit_query: str, data_dir: Path) -> Dataset | None:
         """
@@ -284,7 +275,11 @@ class Push:
 
             # Get all the ids in the table to have faster queries later
             with conn.cursor(name="server_cursor") as cur:
-                query = f"SELECT id FROM {self.config.source_table_name} {limit_query};"
+                query = f"SELECT id FROM {self.config.source_table_name} {limit_query}"
+                if self.max_rows is not None and self.max_rows != -1:
+                    query += f" LIMIT {self.max_rows};"
+                else:
+                    query += ";"
                 cur.execute(query)
                 ids = [row[0] for row in cur.fetchall()]
 

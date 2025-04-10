@@ -151,7 +151,14 @@ def add_transformer_options(f):
             type=int,
             default=500,
             envvar="LEMATERIALFETCHER_BATCH_SIZE",
-            help="Batch size to fetch and transform data.",
+            help="Batch size to fetch and transform data. Use a larger batch size to speed up the transformation here.",
+        ),
+        click.option(
+            "--db-fetch-batch-size",
+            type=int,
+            default=10,
+            envvar="LEMATERIALFETCHER_DB_FETCH_BATCH_SIZE",
+            help="Batch size to fetch data from the database. Use a smaller batch size to avoid memory issues.",
         ),
         click.option(
             "--offset",
@@ -163,6 +170,7 @@ def add_transformer_options(f):
         click.option(
             "--max-offset",
             type=int,
+            envvar="LEMATERIALFETCHER_MAX_OFFSET",
             help="Maximum index in the source table to process up to. If not provided, all items will be processed.",
         ),
         click.option(

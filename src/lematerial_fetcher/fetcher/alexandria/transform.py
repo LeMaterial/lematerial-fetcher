@@ -217,7 +217,7 @@ class AlexandriaTrajectoryTransformer(BaseTransformer):
                     **optimade_structure_dict,
                     **targets,
                     relaxation_number=relaxation_number,
-                    relaxation_step=relaxation_step,
+                    relaxation_step=current_relaxation_number,
                     functional=Functional(calc["functional"].lower()),
                     cross_compatibility=True,
                 )
