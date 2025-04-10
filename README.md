@@ -4,6 +4,12 @@
 
 The objective is to retrieve information from various OPTIMADE sources and establish a local database. This database will enable us to process and utilize the data according to our specific requirements, which can then be uploaded to an online and easily accessible place like Hugging Face.
 
+🔗 **Explore the datasets built with this tool on [Hugging Face](https://huggingface.co/LeMaterial)**:
+
+👉 [LeMat-Bulk](https://huggingface.co/datasets/LeMaterial/LeMat-Bulk)
+
+👉 [LeMat-Traj](https://huggingface.co/datasets/LeMaterial/LeMat-Traj)
+
 ## Data Credits
 
 This project relies entirely on the valuable contributions of several materials science database projects:
