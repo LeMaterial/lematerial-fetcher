@@ -97,6 +97,7 @@ class AlexandriaTransformer(BaseTransformer):
             values_dict[value] = raw_structure.attributes[key]
 
         optimade_structure = OptimadeStructure(
+            compute_space_group=True,
             **values_dict,
             id=raw_structure.id,  # problem, this is empty
             source="alexandria",

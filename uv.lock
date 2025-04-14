@@ -113,6 +113,20 @@ wheels = [
 ]
 
 [[package]]
+name = "ase"
+version = "3.24.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/c9/9adb9bc641bd7222367886e4e6c753b4c64da4ff2d9565ab39aee1e34734/ase-3.24.0.tar.gz", hash = "sha256:9acc93d6daaf48cd27b844c56f8bf49428b9db0542faa3cc30d9d5b8e1842195", size = 2383264 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/cd/b1253035a1da90e89f31947e052c558cd83df3bcaff34aa199e5e806d773/ase-3.24.0-py3-none-any.whl", hash = "sha256:974922df87ef4ec8cf1140359a55ab4c4dc55c38e26876bdd9c00968da1f463c", size = 2928893 },
+]
+
+[[package]]
 name = "astroid"
 version = "3.3.9"
 source = { registry = "https://pypi.org/simple" }
@@ -769,11 +783,13 @@ name = "lematerial-fetcher"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ase" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "click" },
     { name = "datasets" },
     { name = "ijson" },
+    { name = "moyopy" },
     { name = "mysql-connector-python" },
     { name = "numpy" },
     { name = "psycopg2-binary" },
@@ -808,11 +824,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ase", specifier = ">=3.24.0" },
     { name = "beautifulsoup4", specifier = ">=4.13.3" },
     { name = "boto3", specifier = ">=1.36.20" },
     { name = "click", specifier = ">=8.1.8" },
     { name = "datasets", specifier = ">=3.4.1" },
     { name = "ijson", specifier = ">=3.3.0" },
+    { name = "moyopy", specifier = ">=0.4.2" },
     { name = "mysql-connector-python", specifier = ">=9.2.0" },
     { name = "numpy", specifier = ">=2.1.2" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
@@ -1039,6 +1057,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/89/54/a1b2b4c9b16ebc5ea72cf22b1a6bb7ceaa79187fbf22a404c9677c8f90dd/monty-2025.3.3.tar.gz", hash = "sha256:16c1eb54b2372e765c2f3f14cff01cc76ab55c3cc12b27d49962fb8072310ae0", size = 85592 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/df/b3a36544734be3ac0eacf11bcfb8609464dd07d8bad0dff6e46109c68002/monty-2025.3.3-py3-none-any.whl", hash = "sha256:5eadb6d748c007bc63c34eceb2d80faff18f3996121d261dbceeea22adc58775", size = 51925 },
+]
+
+[[package]]
+name = "moyopy"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/1f/b058d84a3a9b6807fe679483f87b3959d8562a4c2b0da691b488d944213e/moyopy-0.4.2.tar.gz", hash = "sha256:e801c47bd353e3f7803e6fb13eaac6f716c0d92009e61c9f3fd7d2e8d1d34142", size = 172843 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/2c/69f96c9a1037d680e15b8ecc10819f3db2ee5d996f0ba571ac926b80a5f9/moyopy-0.4.2-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b93529bcbacef8472befd032e10ede0a9bde9f0918c83907157ccafb06b67cee", size = 974982 },
+    { url = "https://files.pythonhosted.org/packages/f6/06/4dfd1e5257e9dc4ee3486ddc5f912abafd55db91685bac8ef173a6c24cc3/moyopy-0.4.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:9f9360b25fbc05e79da57c92cbfbb4425a03b2a13b50ddb782d83c4aebdc5296", size = 943535 },
+    { url = "https://files.pythonhosted.org/packages/e8/9c/2cd7457ee369321a7e4c976486d84efcd8570414de562effe3d53957dc93/moyopy-0.4.2-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8f2c9eb0aa660a433ffc274e70b0b55c72e65a8c0f454fff1109af402eec8f43", size = 1111824 },
+    { url = "https://files.pythonhosted.org/packages/82/ca/70721bef85a21d5b3217fd0ce51312f70949cd9976bb1357a34c5717e6c0/moyopy-0.4.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e4473b962e747756d2acdcbd44498c6886021a0a5c301e84e1313f9d1282a681", size = 1119257 },
+    { url = "https://files.pythonhosted.org/packages/f0/b4/2668eae81d3357d7753d7b3d05eea0ff7c38216b9a93db8303ebaf3e6c12/moyopy-0.4.2-cp39-abi3-win_amd64.whl", hash = "sha256:2c4f08e0b194845196eb106b79fe175fda69c86c4d8986e9c347ebbb31ea6980", size = 787309 },
 ]
 
 [[package]]

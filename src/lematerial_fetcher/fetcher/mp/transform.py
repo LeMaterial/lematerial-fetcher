@@ -337,6 +337,7 @@ class MPTransformer(
                 cross_compatibility=cross_compatibility,
                 # targets
                 **targets,
+                compute_space_group=True,
             )
 
             optimade_structures.append(optimade_structure)

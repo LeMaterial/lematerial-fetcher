@@ -594,6 +594,7 @@ class OQMDTransformer(
                 values_dict["cross_compatibility"] = False
 
             optimade_structure = OptimadeStructure(
+                compute_space_group=True,
                 **values_dict,
                 id=values_dict["immutable_id"],
                 source="oqmd",

@@ -21,6 +21,8 @@ dependencies = [
     "beautifulsoup4>=4.13.3",
     "datasets>=3.4.1",
     "ijson>=3.3.0",
+    "moyopy>=0.4.2",
+    "ase>=3.24.0",
 ]
 
 [project.scripts]
