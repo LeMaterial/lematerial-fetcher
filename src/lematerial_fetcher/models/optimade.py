@@ -2,23 +2,26 @@
 import datetime
 import math
 import re
-from enum import Enum
+import warnings
 from typing import Optional
 
 import moyopy
+import numpy as np
+from material_hasher.hasher.entalpic import EntalpicMaterialsHasher
 from moyopy.interface import MoyoAdapter
 from pydantic import BaseModel, Field, field_validator, model_validator
-from pymatgen.core import Structure
+from pymatgen.core import Element, Structure
 
+from lematerial_fetcher.models.utils.correction import apply_mp_2020_energy_correction
+from lematerial_fetcher.models.utils.enums import Functional, Source
 from lematerial_fetcher.utils.logging import logger
+
+# TODO(Ramlaoui, msiron): Take care of warnings in the hasher
+warnings.filterwarnings("ignore")
 
 SG_MOYOPY_SYMPREC = 1e-4
 
-
-class Functional(str, Enum):
-    PBE = "pbe"
-    PBESOL = "pbesol"
-    SCAN = "scan"
+MAX_FORCE_EV_A = 0.1  # eV/Å
 
 
 class OptimadeStructure(BaseModel):
@@ -33,7 +36,7 @@ class OptimadeStructure(BaseModel):
         min_length=1,
         description="Unique identifier for the structure",
     )
-    source: str = Field(
+    source: Source = Field(
         ...,
         min_length=1,
         description="Source database of the structure",
@@ -136,6 +139,10 @@ class OptimadeStructure(BaseModel):
         None,
         description="Total energy in eV",
     )
+    energy_corrected: Optional[float] = Field(
+        None,
+        description="Corrected energy in eV",
+    )
     magnetic_moments: Optional[list[float]] = Field(
         None,
         min_length=1,
@@ -154,6 +161,15 @@ class OptimadeStructure(BaseModel):
         None,
         description="Density of states at Fermi level",
     )
+    charges: Optional[list[float]] = Field(
+        None,
+        min_length=1,
+        description="Charges on each site",
+    )
+    band_gap_indirect: Optional[float] = Field(
+        None,
+        description="Indirect band gap in eV",
+    )
     functional: Optional[Functional] = Field(
         None, description="Exchange-correlation functional"
     )
@@ -162,10 +178,10 @@ class OptimadeStructure(BaseModel):
         None,
         description="Space group international number",
     )
-    entalpic_fingerprint: Optional[str] = Field(
+    bawl_fingerprint: Optional[str] = Field(
         None,
         min_length=1,
-        description="Entalpic fingerprint hash",
+        description="BAWL fingerprint hash",
     )
 
     def __init__(
@@ -194,12 +210,15 @@ class OptimadeStructure(BaseModel):
                 space_group = dataset.number
                 kwargs["space_group_it_number"] = space_group
 
-            # TODO(Ramlaoui): Add BAWL fingerprint
+            if compute_bawl_hash:
+                kwargs["bawl_fingerprint"] = (
+                    EntalpicMaterialsHasher().get_material_hash(structure)
+                )
+
         except Exception as e:
             logger.warning(
                 f"Failed to create pymatgen structure from {kwargs['immutable_id']}. Error: {e}"
             )
-            kwargs["space_group_it_number"] = None
 
         super().__init__(**kwargs)
 
@@ -207,11 +226,14 @@ class OptimadeStructure(BaseModel):
     # Field-level validators
     #
 
-    def _validate_with_number_of_sites(self, v, nsites):
+    def _validate_with_number_of_sites(self, v, nsites, field_name=""):
         if v is None:
             return v
         if len(v) != nsites:
-            raise ValueError(f"List must have exactly {nsites} items")
+            raise ValueError(
+                f"List {field_name} must have exactly {nsites} items. "
+                f"Got {len(v)} items. Input value: {v}"
+            )
         return v
 
     @field_validator("cartesian_site_positions", "forces", mode="before")
@@ -221,10 +243,16 @@ class OptimadeStructure(BaseModel):
             if v is None:
                 return v
             if any(len(row) != 3 for row in v):
-                raise ValueError("Vector must have exactly 3 components")
+                invalid_rows = [i for i, row in enumerate(v) if len(row) != 3]
+                raise ValueError(
+                    f"Each vector must have exactly 3 components. Found vectors with wrong dimensions at indices: {invalid_rows}. "
+                    f"Expected format: [[x, y, z], ...], got: {v}"
+                )
             return v
         except Exception as e:
-            raise ValueError(f"Invalid vector format: {e}") from e
+            raise ValueError(
+                f"Invalid vector format: {str(e)}. Input value: {v}"
+            ) from e
 
     @field_validator("stress_tensor", "lattice_vectors", mode="before")
     @classmethod
@@ -232,7 +260,22 @@ class OptimadeStructure(BaseModel):
         if v is None:
             return v
         if len(v) != 3 or any(len(row) != 3 for row in v):
-            raise ValueError("Matrix must be a 3x3 matrix")
+            raise ValueError(
+                f"Matrix must be a 3x3 matrix. Got shape {len(v)}x{len(v[0]) if v else 0}. "
+                f"Input value: {v}"
+            )
+        return v
+
+    @field_validator("species_at_sites")
+    @classmethod
+    def validate_species_at_sites(cls, v):
+        """
+        Ensure that the species contain only valid elements.
+        """
+        if any(not Element.is_valid_symbol(element) for element in v):
+            raise ValueError(
+                f"Field species_at_sites must contain only valid elements. Got: {v}"
+            )
         return v
 
     @field_validator("elements_ratios")
@@ -244,7 +287,8 @@ class OptimadeStructure(BaseModel):
         ratio_sum = sum(v)
         if not math.isclose(ratio_sum, 1.0, rel_tol=1e-5, abs_tol=1e-8):
             raise ValueError(
-                f"Sum of elements_ratios must be 1.0 (got {ratio_sum:.6f}). Each ratio represents the fraction of each element in the structure."
+                f"Sum of elements_ratios must be 1.0 (got {ratio_sum:.6f}). "
+                f"Current ratios: {v}. Each ratio represents the fraction of each element in the structure."
             )
         return v
 
@@ -256,7 +300,10 @@ class OptimadeStructure(BaseModel):
         """
         if v != sorted(v):
             raise ValueError(
-                f"Elements must be in alphabetical order. Current order: {', '.join(v)}, Expected order: {', '.join(sorted(v))}"
+                f"Elements must be in alphabetical order. "
+                f"Current order: {', '.join(v)}, "
+                f"Expected order: {', '.join(sorted(v))}. "
+                f"Please reorder the elements list."
             )
         return v
 
@@ -271,8 +318,9 @@ class OptimadeStructure(BaseModel):
         pattern = r"^[A-Z](?:\d+)?(?:[A-Z](?:\d+)?)*$"
         if not re.match(pattern, v):
             raise ValueError(
-                "Anonymous formula must consist of capital letters with optional numbers. "
-                f"Got: {v}"
+                "Invalid anonymous formula format. "
+                "Formula must consist of capital letters with optional numbers (e.g., A2B3C). "
+                f"Got: '{v}'. Please check for invalid characters or format."
             )
 
         # extract letter-number pairs
@@ -301,14 +349,15 @@ class OptimadeStructure(BaseModel):
         # Remove trailing numbers
         v = re.sub(r"([A-Z][a-z]?)1\b", r"\1", v)
 
-        # validate format (single uppercase letter followed by optional number)
         pattern = re.compile(
             r"^(?:[A-Z][a-z]?(?:[2-9]\d*|1\d+)?)(?:\s+[A-Z][a-z]?(?:[2-9]\d*|1\d+)?)*$"
         )
         if not pattern.match(v):
             raise ValueError(
-                "Chemical formula descriptive must consist of capital letters with optional numbers. "
-                f"Got: {v}"
+                "Invalid descriptive formula format. "
+                "Formula must consist of element symbols (capital letter + optional lowercase) "
+                "with optional numbers, separated by spaces. "
+                f"Got: '{v}'. Example of valid format: 'H2 O' or 'Fe2 O3'"
             )
         return v
 
@@ -323,21 +372,26 @@ class OptimadeStructure(BaseModel):
         # Check for parentheses
         if "(" in v or ")" in v:
             raise ValueError(
-                f"Chemical formula reduced must not contain parentheses. Got: {v}"
+                f"Chemical formula reduced must not contain parentheses. Got: '{v}'. "
+                "Please remove all parentheses from the formula."
             )
 
         # Check for any "1" in the formula (not just trailing ones)
         if re.search(r"([A-Z][a-z]?)1(?!\d)", v):
+            matches = re.finditer(r"([A-Z][a-z]?)1(?!\d)", v)
+            problematic_elements = [m.group(1) for m in matches]
             raise ValueError(
-                f"Chemical formula reduced must not have ones (like Cs1O4). Got: {v}"
+                f"Chemical formula reduced must not have ones (e.g., {', '.join(problematic_elements)}1). "
+                f"Got: '{v}'. Remove the '1' subscripts or use proper stoichiometric numbers."
             )
 
         # Validate format (element symbols followed by optional numbers)
         pattern = re.compile(r"^(?:[A-Z][a-z]?(?:\d+)?)+$")
         if not pattern.match(v):
             raise ValueError(
-                "Chemical formula reduced must consist of element symbols followed by optional numbers (no trailing ones). "
-                f"Got: {v}"
+                "Invalid reduced formula format. "
+                "Formula must consist of element symbols followed by optional numbers. "
+                f"Got: '{v}'. Example of valid format: 'Fe2O3' or 'NaCl'"
             )
         return v
 
@@ -355,9 +409,63 @@ class OptimadeStructure(BaseModel):
             return datetime.datetime.strptime(formatted, "%Y-%m-%d")
         except (ValueError, AttributeError) as e:
             raise ValueError(
-                "last_modified must be in format 'YYYY-MM-DD'. "
-                f"Got: {v}. Error: {str(e)}"
+                "Invalid date format for last_modified. "
+                f"Got: {v}. Expected format: 'YYYY-MM-DD'. "
+                f"Error details: {str(e)}"
             ) from e
+
+    @field_validator("space_group_it_number")
+    @classmethod
+    def validate_space_group_it_number(cls, v: int) -> int:
+        """
+        Ensure the space group IT number is properly formatted.
+        """
+        if v is None:
+            return v
+        if v < 1 or v > 230:
+            raise ValueError(
+                f"Space group IT number must be between 1 and 230. Got: {v}"
+            )
+        return v
+
+    @field_validator("dimension_types")
+    @classmethod
+    def validate_dimension_types(cls, v: list[int]) -> list[int]:
+        """
+        Ensure the dimension types are properly formatted.
+
+        We should expect it to be [1, 1, 1] for any structure.
+        """
+        if v != [1, 1, 1]:
+            raise ValueError(f"Field dimension_types must be [1, 1, 1]. Got: {v}")
+        return v
+
+    @field_validator("nperiodic_dimensions")
+    @classmethod
+    def validate_nperiodic_dimensions(cls, v: int) -> int:
+        """
+        Ensure the number of periodic dimensions is 3.
+        """
+        if v != 3:
+            raise ValueError(f"Field nperiodic_dimensions must be 3. Got: {v}")
+        return v
+
+    @field_validator("forces")
+    @classmethod
+    def validate_forces_too_high(
+        cls, v: list[list[float]] | None
+    ) -> list[list[float]] | None:
+        """
+        Ensure the forces are not too high.
+        """
+        if v is None:
+            return v
+        max_force = max(np.linalg.norm(force) for force in v)
+        if max_force > MAX_FORCE_EV_A:
+            raise ValueError(
+                f"Forces are too high. Maximum allowed force is {MAX_FORCE_EV_A} eV/Å. Got: {max_force}"
+            )
+        return v
 
     #
     # Cross-field validators
@@ -374,13 +482,17 @@ class OptimadeStructure(BaseModel):
         nsites = self.nsites
 
         # Check elements and ratios consistency
-        if len(elements) != len(elements_ratios):
+        if not (
+            len(elements)
+            == len(elements_ratios)
+            == nelements
+            == len(self.species)
+            == len(self.chemical_formula_descriptive.split())
+        ):
             raise ValueError(
-                f"Number of elements ({len(elements)}) must match number of element ratios ({len(elements_ratios)})"
-            )
-        if nelements != len(elements):
-            raise ValueError(
-                f"nelements ({nelements}) must match the number of unique elements ({len(elements)})"
+                f"Number of elements ({len(elements)}) must match number of element ratios ({len(elements_ratios)}), "
+                f"nelements ({nelements}), species ({len(self.species)}) and chemical formula descriptive "
+                f"({len(self.chemical_formula_descriptive.split())})"
             )
 
         # Realign elements and ratios (maintaining alphabetical order)
@@ -391,14 +503,34 @@ class OptimadeStructure(BaseModel):
 
         # Check nsites consistency
         self.cartesian_site_positions = self._validate_with_number_of_sites(
-            self.cartesian_site_positions, nsites
+            self.cartesian_site_positions, nsites, "cartesian_site_positions"
         )
         self.species_at_sites = self._validate_with_number_of_sites(
-            self.species_at_sites, nsites
+            self.species_at_sites, nsites, "species_at_sites"
         )
-        self.forces = self._validate_with_number_of_sites(self.forces, nsites)
+        self.forces = self._validate_with_number_of_sites(self.forces, nsites, "forces")
         self.magnetic_moments = self._validate_with_number_of_sites(
-            self.magnetic_moments, nsites
+            self.magnetic_moments, nsites, "magnetic_moments"
+        )
+        self.charges = self._validate_with_number_of_sites(
+            self.charges, nsites, "charges"
         )
 
+        #  Validation using the Pymatgen structure
+        structure = Structure(
+            self.lattice_vectors,
+            self.species_at_sites,
+            self.cartesian_site_positions,
+            coords_are_cartesian=True,
+        )
+
+        # Apply the energy correction
+        if self.energy_corrected is None:
+            self.energy_corrected = apply_mp_2020_energy_correction(
+                structure, self.energy, self.functional, self.source
+            )
+
         return self
+
+
+# TODO(Ramlaoui): Check that rows with MP match the API

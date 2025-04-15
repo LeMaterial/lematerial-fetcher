@@ -120,13 +120,16 @@ class Push:
                 "elements_ratios": Sequence(Value("float64")),
                 "stress_tensor": Sequence(Sequence(Value("float64"))),
                 "energy": Value("float64"),
+                "energy_corrected": Value("float64"),
                 "magnetic_moments": Sequence(Value("float64")),
                 "forces": Sequence(Sequence(Value("float64"))),
                 "total_magnetization": Value("float64"),
+                "charges": Sequence(Value("float64")),
                 "dos_ef": Value("float64"),
                 "functional": Value("string"),
                 "cross_compatibility": Value("bool"),
-                # "entalpic_fingerprint": Value("string"), # TODO(Ramlaoui): Add this back in later
+                "bawl_fingerprint": Value("string"),
+                "space_group_it_number": Value("int32"),
             }
         )
 
@@ -156,10 +159,15 @@ class Push:
                 "relaxation_number": (Value("int32")),
             }
         )
-        # We do not have magnetic moments, total magnetization, and dos_ef in trajectories
+        # We do not have magnetic moments, total magnetization, and dos_ef, space_group_it_number,
+        # and bawl_fingerprint in trajectories
         del features["magnetic_moments"]
         del features["dos_ef"]
+        del features["energy_corrected"]
+        del features["charges"]
         del features["total_magnetization"]
+        del features["space_group_it_number"]
+        del features["bawl_fingerprint"]
 
         convert_features_dict.update(
             {

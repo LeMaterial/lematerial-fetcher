@@ -343,9 +343,15 @@ class BaseOQMDTransformer(BaseTransformer):
             raw_structure["id"]: raw_structure[entry_id_key]
             for raw_structure in raw_structures
         }
-        entry_ids = list(structure_id_to_entry_id.values())
+        entry_ids = [
+            str(entry_id)
+            for entry_id in structure_id_to_entry_id.values()
+            if entry_id is not None
+        ]
         # Get a list of all the calculations for the entry_ids
-        custom_query = f"SELECT * FROM calculations WHERE entry_id IN ({', '.join(map(str, entry_ids))})"
+        custom_query = (
+            f"SELECT * FROM calculations WHERE entry_id IN ({', '.join(entry_ids)})"
+        )
         fetched_calculations = source_db.fetch_items(query=custom_query)
 
         # We need to group the calculations by entry_id because different structures can have the same entry_id
@@ -356,6 +362,10 @@ class BaseOQMDTransformer(BaseTransformer):
         # Group the calculations by structure_id
         calculations = defaultdict(list)
         for structure_id in structure_id_to_entry_id.keys():
+            # The structure has no entry_id, so we skip it
+            if structure_id_to_entry_id[structure_id] is None:
+                continue
+
             calculations[structure_id] = calculations_by_entry_id[
                 structure_id_to_entry_id[structure_id]
             ]
@@ -431,6 +441,9 @@ class BaseOQMDTransformer(BaseTransformer):
             frac_coords.append([atom["x"], atom["y"], atom["z"]])
             forces.append([atom["fx"], atom["fy"], atom["fz"]])
             charges.append(atom["charge"])
+
+        if any(charge is None for charge in charges):
+            charges = None
 
         if any(any(f is None for f in force) for force in forces):
             forces = None
@@ -536,6 +549,9 @@ class OQMDTransformer(
         for raw_structure, structure_id in zip(
             raw_structures, calculations_dict.keys()
         ):
+            if structure_id not in calculations_dict:
+                continue
+
             calculations = calculations_dict[structure_id]
             values_dict = values_dict_dict[structure_id]
 
@@ -544,14 +560,19 @@ class OQMDTransformer(
                 continue
             static_calculation = calculations[0]
 
+            if static_calculation["energy_pa"] is None:
+                logger.warning(
+                    f"No energy_pa found for structure {structure_id}, skipping"
+                )
+                continue
+
             values_dict["energy"] = (
                 static_calculation["energy_pa"] * values_dict["nsites"]
             )
-            # TODO(msiron): Agree on band gap
-            # values_dict["band_gap_indirect"] = static_calculation["band_gap"]
+            values_dict["band_gap_indirect"] = static_calculation["band_gap"]
 
             species_at_sites, frac_coords, forces, charges = (
-                self._extract_atoms_attributes(atoms)
+                self._extract_atoms_attributes(atoms[structure_id])
             )
             structure = Structure(
                 species=species_at_sites,
@@ -582,7 +603,7 @@ class OQMDTransformer(
             # Compatibility of the DFT settings
             # dict from string to dict
             settings = ast.literal_eval(static_calculation["settings"])
-            if settings["ispin"] in ["2", 2]:
+            if settings.get("ispin", None) in ["2", 2]:
                 values_dict["cross_compatibility"] = True
             else:
                 values_dict["cross_compatibility"] = False
@@ -593,15 +614,19 @@ class OQMDTransformer(
                 # TODO(Ramlaoui): Do we just want to skip the structure or set cross_compatibility to False?
                 values_dict["cross_compatibility"] = False
 
-            optimade_structure = OptimadeStructure(
-                compute_space_group=True,
-                **values_dict,
-                id=values_dict["immutable_id"],
-                source="oqmd",
-                # Couldn't find a way to get the last modified date from the source database
-                last_modified=datetime.now().isoformat(),
-                functional=Functional.PBE,
-            )
+            try:
+                optimade_structure = OptimadeStructure(
+                    **values_dict,
+                    id=f"{values_dict['immutable_id']}-{Functional.PBE.value}",
+                    source="oqmd",
+                    # Couldn't find a way to get the last modified date from the source database
+                    last_modified=datetime.now().isoformat(),
+                    compute_space_group=True,
+                    compute_bawl_hash=True,
+                )
+            except Exception as e:
+                logger.warning(f"Error transforming structure {structure_id}: {e}")
+                continue
             optimade_structures.append(optimade_structure)
 
         return optimade_structures
@@ -750,7 +775,6 @@ class OQMDTrajectoryTransformer(
 
         for entry_id, calculations in calculations_dict.items():
             if len(calculations) == 0:
-                logger.warning(f"No calculations found for entry {entry_id}")
                 continue
 
             if entry_id in entry_id_to_ignore:
@@ -763,6 +787,7 @@ class OQMDTrajectoryTransformer(
                 continue
 
             entry_trajectories = []
+            energy_correction = None
             # The id of the trajectory will be the id of the final output structure
             # similar to how it is done with MP where we use the materials_id to name
             # the trajectory.
@@ -804,17 +829,28 @@ class OQMDTrajectoryTransformer(
 
                 output_relaxation_step = current_relaxation_step + calculation["nsteps"]
                 output_values_dict["immutable_id"] = trajectory_immutable_id
-                entry_trajectories.append(
-                    Trajectory(
-                        id=f"{trajectory_immutable_id}-{Functional.PBE.value}-{output_relaxation_step}",
-                        source="oqmd",
-                        last_modified=datetime.now().isoformat(),  # not available for OQMD
-                        relaxation_number=current_relaxation_number,
-                        relaxation_step=output_relaxation_step,
-                        cross_compatibility=cross_compatibility,
-                        **output_values_dict,
-                    )
+                current_trajectory = Trajectory(
+                    id=f"{trajectory_immutable_id}-{Functional.PBE.value}-{output_relaxation_step}",
+                    source="oqmd",
+                    last_modified=datetime.now().isoformat(),  # not available for OQMD
+                    relaxation_number=current_relaxation_number,
+                    relaxation_step=output_relaxation_step,
+                    cross_compatibility=cross_compatibility,
+                    **output_values_dict,
+                    energy_corrected=(
+                        output_values_dict["energy"] + energy_correction
+                        if output_values_dict["energy"] is not None
+                        and energy_correction is not None
+                        else None
+                    ),
                 )
+                energy_correction = (
+                    current_trajectory.energy_corrected - current_trajectory.energy
+                    if current_trajectory.energy is not None
+                    and current_trajectory.energy_corrected is not None
+                    else None
+                )
+                entry_trajectories.append(current_trajectory)
 
                 # TODO(Ramlaoui): No relaxation sometimes
                 current_relaxation_step += calculation["nsteps"]
@@ -824,13 +860,7 @@ class OQMDTrajectoryTransformer(
                 logger.warning(f"Entry {entry_id} did not converge, skipping")
                 continue
 
-            # We only check that the forces in the last step are not small
-            # because we don't have all the steps
-            # Energy is None in the first step usually, but we add the structure
-            # regardless because it might be useful for IS2RE/S tasks
-            if not has_trajectory_converged(entry_trajectories, energy_threshold=None):
-                continue
-
+            entry_trajectories = has_trajectory_converged(entry_trajectories)
             trajectories.extend(entry_trajectories)
 
         return trajectories

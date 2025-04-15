@@ -66,7 +66,6 @@ class MPFetcher(BaseFetcher):
             self.config.mp_bucket_name == "materialsproject-build"
             and self.config.mp_bucket_prefix in ["collections", "collections/"]
         ):
-            breakpoint()
             prefix = get_latest_collection_version_prefix(
                 self.aws_client,
                 self.config.mp_bucket_name,
