@@ -2,11 +2,18 @@
   <img src="https://cdn-uploads.huggingface.co/production/uploads/65a67b0ee65b8ffd3b91572f/nMqy0cpsj15EIliGzfOo_.png" alt="LeMaterial" width="700"/>
 </p>
 
-# lematerial-fetcher
 
-`lematerial-fetcher` is designed to fetch data from a specified OPTIMADE's compatible JSON-API, process it, and store it in a PostgreSQL database. It is highly concurrent, to handle data fetching and processing efficiently.
+# LeMaterial-Fetcher
 
-The objective is to retrieve information from various OPTIMADE sources and establish a local database. This database will enable us to process and utilize the data according to our specific requirements, which can then be uploaded to an online and easily accessible place like Hugging Face.
+LeMaterial-Fetcher is designed to fetch data any external source, process it, and store it in a PostgreSQL database in a pre-defined format with structure-level validation and database-level validators. It is highly concurrent, to handle data fetching and processing efficiently.
+
+The objective is to retrieve information from various sources and establish a local database that can be unified. This database will enable us to process and utilize the data according to our specific requirements, which can then be uploaded to an online and easily accessible place like Hugging Face.
+
+**Explore the datasets built with this tool on [Hugging Face](https://huggingface.co/LeMaterial)** 🤗:
+
+👉 [LeMat-Bulk](https://huggingface.co/datasets/LeMaterial/LeMat-Bulk)
+
+👉 [LeMat-Traj](https://huggingface.co/datasets/LeMaterial/LeMat-Traj)
 
 ## Data Credits
 
