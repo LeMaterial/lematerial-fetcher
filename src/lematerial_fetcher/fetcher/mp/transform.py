@@ -253,7 +253,7 @@ class BaseMPTransformer:
         targets["species_at_sites"] = [str(site.specie) for site in pmg_structure.sites]
         targets["nsites"] = len(targets["species_at_sites"])
 
-        if len(ionic_step["electronic_steps"]) == NELM:
+        if NELM is not None and len(ionic_step["electronic_steps"]) == NELM:
             raise ValueError(
                 f"Ionic step has {len(ionic_step['electronic_steps'])} electronic steps, expected {NELM}"
             )
@@ -441,7 +441,7 @@ class MPTrajectoryTransformer(
             # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
 
             # ionic steps are stored in normal order (first step first)
-            NELM = task.attributes["input"]["parameters"]["NELM"]
+            NELM = task.attributes["input"].get("parameters", {}).get("NELM", None)
             for ionic_step in calc["output"]["ionic_steps"]:
                 input_structure_fields = self._transform_structure(
                     task, ionic_step["structure"]

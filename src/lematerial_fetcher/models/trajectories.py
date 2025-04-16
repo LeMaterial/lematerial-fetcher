@@ -116,11 +116,13 @@ def has_trajectory_converged(
 
     for i, trajectory in enumerate(trajectories):
         if i != len(trajectories) - 1:
-            energy_diff = np.abs(
+            energy_diff = (
                 trajectory.energy / trajectory.nsites
                 - final_trajectory.energy / final_trajectory.nsites
             )
-            if energy_diff <= max_energy_diff:
+            if (
+                energy_diff <= max_energy_diff
+            ):  # check if frame has energy higher than 1eV/atom
                 filtered_trajectories.append(trajectory)
             else:
                 logger.debug(
