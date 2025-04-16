@@ -99,7 +99,7 @@ def has_trajectory_converged(
 
     for i, trajectory in enumerate(trajectories):
         if trajectory.energy is None or trajectory.forces is None:
-            logger.warning(
+            logger.debug(
                 f"Trajectory {trajectory.id} has no energy or forces, skipping"
             )
             continue
