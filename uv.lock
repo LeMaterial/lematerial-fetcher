@@ -873,7 +873,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.8" },
     { name = "datasets", specifier = ">=3.4.1" },
     { name = "ijson", specifier = ">=3.3.0" },
-    { name = "material-hasher", git = "ssh://git@github.com/LeMaterial/lematerial-hasher.git" },
+    { name = "material-hasher", git = "https://github.com/LeMaterial/lematerial-hasher.git" },
     { name = "moyopy", specifier = ">=0.4.2" },
     { name = "mysql-connector-python", specifier = ">=9.2.0" },
     { name = "numpy", specifier = ">=2.1.2" },
@@ -1065,7 +1065,7 @@ wheels = [
 [[package]]
 name = "material-hasher"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/LeMaterial/lematerial-hasher.git#7f63534e7a22033ea02d694cc7fdf9f4e52450ee" }
+source = { git = "https://github.com/LeMaterial/lematerial-hasher.git#7f63534e7a22033ea02d694cc7fdf9f4e52450ee" }
 dependencies = [
     { name = "average-minimum-distance" },
     { name = "datasets" },
