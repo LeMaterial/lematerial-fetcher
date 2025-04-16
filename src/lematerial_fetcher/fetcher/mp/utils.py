@@ -131,6 +131,7 @@ def extract_static_structure_optimization_tasks(
     source_db: StructuresDatabase,
     task_table_name: str,
     extract_static: bool = True,
+    fallback_to_static: bool = False,
 ) -> tuple[dict[str, RawStructure], dict[str, str]]:
     """
     Extract non deprecated structure optimization and static tasks from a raw Materials Project structure.
@@ -148,6 +149,8 @@ def extract_static_structure_optimization_tasks(
         The name of the task table to read from.
     extract_static : bool
         Whether to extract static tasks.
+    fallback_to_static : bool
+        Whether to fallback to static tasks if no structure optimization tasks are found.
 
     Returns
     -------
@@ -179,6 +182,16 @@ def extract_static_structure_optimization_tasks(
         for mp_id in static_and_structure_optimization_tasks
         if mp_id not in raw_structure.attributes["deprecated_tasks"]
     ]
+
+    # If no non-deprecated tasks are found, fallback to static tasks
+    if not non_deprecated_task_ids and fallback_to_static:
+        non_deprecated_task_ids = [
+            mp_id
+            for mp_id, task_type in raw_structure.attributes["task_types"].items()
+            if mp_id not in raw_structure.attributes["deprecated_tasks"]
+            and task_type == TaskType.STATIC.value
+        ]
+
     calc_types = {
         mp_id: raw_structure.attributes["calc_types"][mp_id]
         for mp_id in non_deprecated_task_ids
@@ -265,7 +278,6 @@ def map_tasks_to_functionals(
             continue
 
         if functional in MP_FUNCTIONAL_MAPPING:
-            # For PBE, prefer GGA+U over GGA
             if functional == Functional.PBE and calc_type == "GGA+U":
                 functional_tasks["GGA+U"].append(tasks[task_id])
             else:
@@ -274,8 +286,13 @@ def map_tasks_to_functionals(
                 )
 
     # For PBE, prefer GGA+U over GGA
+    # Except for trajectories, where we take both
+    # and let the filtering decide which steps to keep
     if "GGA+U" in functional_tasks:
-        functional_tasks[Functional.PBE] = functional_tasks["GGA+U"]
+        if keep_all_calculations:
+            functional_tasks[Functional.PBE].extend(functional_tasks["GGA+U"])
+        else:
+            functional_tasks[Functional.PBE] = functional_tasks["GGA+U"]
 
     def _static_lowest_energy(task: RawStructure) -> RawStructure:
         return (

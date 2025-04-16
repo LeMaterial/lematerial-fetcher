@@ -69,8 +69,13 @@ def close_to_primary_task(
         trajectories[-1].energy / trajectories[-1].nsites
         - primary_trajectories[-1].energy / primary_trajectories[-1].nsites
     )
-    if energy_diff < ENERGY_CONVERGENCE_THRESHOLD:
+    if energy_diff <= ENERGY_CONVERGENCE_THRESHOLD:
         return True
+
+    logger.debug(
+        f"Trajectory {trajectories[-1].id} has energy difference: {energy_diff:.4f} eV"
+    )
+    return False
 
 
 def has_trajectory_converged(
@@ -126,7 +131,7 @@ def has_trajectory_converged(
                 filtered_trajectories.append(trajectory)
             else:
                 logger.debug(
-                    f"Trajectory {trajectory.id} has not converged, energy difference: {np.abs(trajectory.energy - final_trajectory.energy):.4f} eV"
+                    f"Trajectory {trajectory.id} has not converged, energy difference: {energy_diff:.4f} eV"
                 )
 
     return filtered_trajectories
