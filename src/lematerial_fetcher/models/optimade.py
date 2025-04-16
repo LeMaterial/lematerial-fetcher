@@ -7,7 +7,7 @@ from typing import Optional
 
 import moyopy
 import numpy as np
-from material_hasher.hasher.entalpic import EntalpicMaterialsHasher
+from material_hasher.hasher.bawl import BAWLHasher
 from moyopy.interface import MoyoAdapter
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pymatgen.core import Element, Structure
@@ -211,9 +211,7 @@ class OptimadeStructure(BaseModel):
                 kwargs["space_group_it_number"] = space_group
 
             if compute_bawl_hash:
-                kwargs["bawl_fingerprint"] = (
-                    EntalpicMaterialsHasher().get_material_hash(structure)
-                )
+                kwargs["bawl_fingerprint"] = BAWLHasher().get_material_hash(structure)
 
         except Exception as e:
             logger.warning(
