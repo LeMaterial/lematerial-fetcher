@@ -441,7 +441,8 @@ class MPTrajectoryTransformer(
             # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
 
             # ionic steps are stored in normal order (first step first)
-            NELM = task.attributes["input"].get("parameters", {}).get("NELM", None)
+            parameters = task.attributes["input"]["parameters"]
+            NELM = parameters["NELM"] if parameters is not None else None
             for ionic_step in calc["output"]["ionic_steps"]:
                 input_structure_fields = self._transform_structure(
                     task, ionic_step["structure"]
