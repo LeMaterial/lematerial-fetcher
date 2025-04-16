@@ -65,7 +65,10 @@ def close_to_primary_task(
     if trajectories[-1].energy is None or primary_trajectories[-1].energy is None:
         return False
 
-    energy_diff = np.abs(trajectories[-1].energy - primary_trajectories[-1].energy)
+    energy_diff = np.abs(
+        trajectories[-1].energy / trajectories[-1].nsites
+        - primary_trajectories[-1].energy / primary_trajectories[-1].nsites
+    )
     if energy_diff < ENERGY_CONVERGENCE_THRESHOLD:
         return True
 
@@ -113,7 +116,10 @@ def has_trajectory_converged(
 
     for i, trajectory in enumerate(trajectories):
         if i != len(trajectories) - 1:
-            energy_diff = np.abs(trajectory.energy - final_trajectory.energy)
+            energy_diff = np.abs(
+                trajectory.energy / trajectory.nsites
+                - final_trajectory.energy / final_trajectory.nsites
+            )
             if energy_diff <= max_energy_diff:
                 filtered_trajectories.append(trajectory)
             else:
