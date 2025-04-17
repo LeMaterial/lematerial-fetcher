@@ -36,10 +36,7 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     elements_ratios = get_element_ratios_from_composition_reduced(reduced_dict)
 
     # Formula fields
-    chemical_formula_reduced = "".join(
-        f"{element}{int(ratio)}" if int(ratio) > 1 else element
-        for element, ratio in zip(elements, elements_ratios)
-    )
+    chemical_formula_reduced = structure.composition.reduced_formula
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?
     chemical_formula_descriptive = structure.composition.formula
