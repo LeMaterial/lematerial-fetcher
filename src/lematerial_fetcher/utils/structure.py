@@ -21,20 +21,19 @@ def get_composition_reduced_from_reduced_dict(reduced_dict: dict[str, float]) ->
         f"{element}{int(reduced_dict[element])}"
         if int(reduced_dict[element]) > 1
         else element
-        for element in sorted(
-            list(reduced_dict.keys()), key=lambda x: reduced_dict[x], reverse=True
-        )
+        for element in sorted(list(reduced_dict.keys()))  # alphabetical order
     ]
     chemical_formula_reduced = "".join(items_reduced)
     return chemical_formula_reduced
 
 
-def get_composition_reduced_from_descriptive_formula(descriptive_formula: str) -> dict:
-    """
-    Extracts the composition from a descriptive formula.
-    """
-    composition = Composition(descriptive_formula)
-    return get_composition_reduced_from_reduced_dict(composition.to_reduced_dict)
+def get_composition_reduced_from_descriptive_formula(batch):
+    for i in range(len(batch["chemical_formula_descriptive"])):
+        composition = Composition(batch["chemical_formula_descriptive"][i])
+        batch["chemical_formula_reduced"][i] = (
+            get_composition_reduced_from_reduced_dict(composition.to_reduced_dict)
+        )
+    return batch
 
 
 def get_optimade_from_pymatgen(structure: Structure) -> dict:
