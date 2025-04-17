@@ -1,5 +1,5 @@
 import numpy as np
-from pymatgen.core import Structure
+from pymatgen.core import Composition, Structure
 
 
 def get_element_ratios_from_composition_reduced(
@@ -11,6 +11,30 @@ def get_element_ratios_from_composition_reduced(
 
     element_ratios = [ratios[i] / sum(ratios) for i in np.argsort(elements)]
     return element_ratios
+
+
+def get_composition_reduced_from_reduced_dict(reduced_dict: dict[str, float]) -> dict:
+    """
+    Extracts the composition from a reduced dictionary.
+    """
+    items_reduced = [
+        f"{element}{int(reduced_dict[element])}"
+        if int(reduced_dict[element]) > 1
+        else element
+        for element in sorted(
+            list(reduced_dict.keys()), key=lambda x: reduced_dict[x], reverse=True
+        )
+    ]
+    chemical_formula_reduced = "".join(items_reduced)
+    return chemical_formula_reduced
+
+
+def get_composition_reduced_from_descriptive_formula(descriptive_formula: str) -> dict:
+    """
+    Extracts the composition from a descriptive formula.
+    """
+    composition = Composition(descriptive_formula)
+    return get_composition_reduced_from_reduced_dict(composition.to_reduced_dict)
 
 
 def get_optimade_from_pymatgen(structure: Structure) -> dict:
@@ -36,7 +60,7 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     elements_ratios = get_element_ratios_from_composition_reduced(reduced_dict)
 
     # Formula fields
-    chemical_formula_reduced = structure.composition.reduced_formula
+    chemical_formula_reduced = get_composition_reduced_from_reduced_dict(reduced_dict)
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?
     chemical_formula_descriptive = structure.composition.formula
