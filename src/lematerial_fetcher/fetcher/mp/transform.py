@@ -444,45 +444,53 @@ class MPTrajectoryTransformer(
             parameters = task.attributes["input"]["parameters"]
             NELM = parameters["NELM"] if parameters is not None else None
             for ionic_step in calc["output"]["ionic_steps"]:
-                input_structure_fields = self._transform_structure(
-                    task, ionic_step["structure"]
-                )
-                output_targets = self._get_ionic_step_targets(ionic_step, NELM)
+                try:
+                    input_structure_fields = self._transform_structure(
+                        task, ionic_step["structure"]
+                    )
+                    output_targets = self._get_ionic_step_targets(ionic_step, NELM)
 
-                cross_compatibility = self._get_cross_compatibility_from_composition(
-                    task.attributes["composition_reduced"]
-                )
+                    cross_compatibility = (
+                        self._get_cross_compatibility_from_composition(
+                            task.attributes["composition_reduced"]
+                        )
+                    )
 
-                trajectory = Trajectory(
-                    # For one material_id, there can be multiple trajectories even for the same functional
-                    # So we need to add a number to the trajectory id to differentiate them
-                    id=f"{material_id}-{trajectory_number}-{functional.value}-{relaxation_step}",
-                    source="mp",
-                    immutable_id=f"{material_id}-{trajectory_number}",
-                    **input_structure_fields,
-                    **output_targets,
-                    functional=functional,
-                    last_modified=task.attributes["last_updated"]["$date"],
-                    relaxation_step=relaxation_step,
-                    relaxation_number=i,
-                    cross_compatibility=cross_compatibility,
-                    energy_corrected=(
-                        output_targets["energy"] + energy_correction
-                        if output_targets["energy"] is not None
-                        and energy_correction is not None
+                    trajectory = Trajectory(
+                        # For one material_id, there can be multiple trajectories even for the same functional
+                        # So we need to add a number to the trajectory id to differentiate them
+                        id=f"{material_id}-{trajectory_number}-{functional.value}-{relaxation_step}",
+                        source="mp",
+                        immutable_id=f"{material_id}",
+                        **input_structure_fields,
+                        **output_targets,
+                        functional=functional,
+                        last_modified=task.attributes["last_updated"]["$date"],
+                        relaxation_step=relaxation_step,
+                        relaxation_number=i,
+                        cross_compatibility=cross_compatibility,
+                        energy_corrected=(
+                            output_targets["energy"] + energy_correction
+                            if output_targets["energy"] is not None
+                            and energy_correction is not None
+                            else None
+                        ),
+                    )
+                    # avoid having to recompute the energy correction
+                    # for every snapshot of the trajectory
+                    energy_correction = (
+                        trajectory.energy_corrected - trajectory.energy
+                        if trajectory.energy is not None
+                        and trajectory.energy_corrected is not None
                         else None
-                    ),
-                )
-                # avoid having to recompute the energy correction
-                # for every snapshot of the trajectory
-                energy_correction = (
-                    trajectory.energy_corrected - trajectory.energy
-                    if trajectory.energy is not None
-                    and trajectory.energy_corrected is not None
-                    else None
-                )
+                    )
 
-                trajectories.append(trajectory)
+                    trajectories.append(trajectory)
+                except Exception as e:
+                    logger.debug(
+                        f"Error transforming step {relaxation_step} of with functional {functional.value}: {e}"
+                    )
+                    continue
                 relaxation_step += 1
 
         trajectories = has_trajectory_converged(trajectories)
@@ -516,9 +524,12 @@ class MPTrajectoryTransformer(
         list[Trajectory]
             The transformed Trajectory objects.
         """
-
         tasks, calc_types = extract_static_structure_optimization_tasks(
-            raw_structure, source_db, task_table_name, extract_static=False
+            raw_structure,
+            source_db,
+            task_table_name,
+            extract_static=False,
+            fallback_to_static=False,
         )
         functionals = map_tasks_to_functionals(
             tasks, calc_types, keep_all_calculations=True
@@ -549,6 +560,7 @@ class MPTrajectoryTransformer(
             if len(all_functional_trajectories) == 0:
                 continue
 
+            trajectories.extend(all_functional_trajectories[0])
             for trajectory in all_functional_trajectories[1:]:
                 if close_to_primary_task(all_functional_trajectories[0], trajectory):
                     trajectories.extend(trajectory)

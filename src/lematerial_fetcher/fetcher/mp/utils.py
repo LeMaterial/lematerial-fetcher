@@ -295,8 +295,16 @@ def map_tasks_to_functionals(
             functional_tasks[Functional.PBE] = functional_tasks["GGA+U"]
 
     def _static_lowest_energy(task: RawStructure) -> RawStructure:
+        parameters = task.attributes["input"]["parameters"]
+
+        tags_score = sum(
+            (parameters.get(tag, False) if parameters else False)
+            for tag in ["LASPH", "ISPIN"]
+        )
+
         return (
             -int(task.attributes["task_type"] == TaskType.STATIC.value),
+            -tags_score,
             task.attributes["output"]["energy"] / task.attributes["nsites"],
         )
 
