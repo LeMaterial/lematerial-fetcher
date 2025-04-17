@@ -56,6 +56,11 @@ class Push:
     ):
         self.config = config
         self.data_type = data_type
+        self.table_names = (
+            [self.config.source_table_name]
+            if isinstance(self.config.source_table_name, str)
+            else self.config.source_table_name
+        )
 
         assert self.data_type in ["optimade", "trajectories", "any"], (
             f"Invalid data type: {self.data_type}, "
@@ -76,7 +81,7 @@ class Push:
         self.max_rows = self.config.max_rows
 
         if self.config.data_dir is None:
-            self.data_dir = get_cache_dir() / f"push/{self.config.source_table_name}"
+            self.data_dir = get_cache_dir() / f"push/{'_'.join(self.table_names)}"
         else:
             self.data_dir = Path(self.config.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -163,10 +168,8 @@ class Push:
         # and bawl_fingerprint in trajectories
         del features["magnetic_moments"]
         del features["dos_ef"]
-        del features["energy_corrected"]
         del features["charges"]
         del features["total_magnetization"]
-        del features["space_group_it_number"]
         del features["bawl_fingerprint"]
 
         convert_features_dict.update(
@@ -199,6 +202,7 @@ class Push:
 
         # Cross compatible entries:
         for functional in Functional:
+            functional = Functional.PBESOL
             limit_query = (
                 f"WHERE functional = '{functional.value}' AND cross_compatibility = 't'"
             )
@@ -275,93 +279,98 @@ class Push:
         conn = psycopg2.connect(self.conn_str)
         try:
             # Check if the table is empty
-            with conn.cursor(name="server_cursor") as cur:
-                query = f"SELECT EXISTS(SELECT 1 FROM {self.config.source_table_name} {limit_query} LIMIT 1);"
-                cur.execute(query)
-                has_rows = cur.fetchone()[0]
+            for table_name in self.table_names:
+                logger.info(f"Processing table: {table_name}")
 
-                if not has_rows:
-                    return None
+                with conn.cursor(name="server_cursor") as cur:
+                    query = f"SELECT EXISTS(SELECT 1 FROM {table_name} {limit_query} LIMIT 1);"
+                    cur.execute(query)
+                    has_rows = cur.fetchone()[0]
 
-            # Get all the ids in the table to have faster queries later
-            with conn.cursor(name="server_cursor") as cur:
-                query = f"SELECT id FROM {self.config.source_table_name} {limit_query}"
+                    if not has_rows:
+                        return None
+
+                # Get all the ids in the table to have faster queries later
+                with conn.cursor(name="server_cursor") as cur:
+                    query = f"SELECT id FROM {table_name} {limit_query}"
+                    if self.max_rows is not None and self.max_rows != -1:
+                        query += f" LIMIT {self.max_rows};"
+                    else:
+                        query += ";"
+                    cur.execute(query)
+                    ids = [row[0] for row in cur.fetchall()]
+
+                total_rows = len(ids)
+                logger.info(f"Total rows: {total_rows}")
+
+                # Apply max_rows limit if specified
                 if self.max_rows is not None and self.max_rows != -1:
-                    query += f" LIMIT {self.max_rows};"
+                    total_rows = min(self.max_rows, total_rows)
+
+                chunk_size = min(self.config.chunk_size, total_rows)
+                num_chunks = (total_rows + chunk_size - 1) // chunk_size
+
+                # Will copy all columns if data_type is "any"
+                if self.columns is None:
+                    columns = "*"
                 else:
-                    query += ";"
-                cur.execute(query)
-                ids = [row[0] for row in cur.fetchall()]
+                    columns = ", ".join(self.columns)
 
-            total_rows = len(ids)
-            logger.info(f"Total rows: {total_rows}")
+                ids_at_offset = [ids[i * chunk_size] for i in range(num_chunks)]
+                del ids
 
-            # Apply max_rows limit if specified
-            if self.max_rows is not None and self.max_rows != -1:
-                total_rows = min(self.max_rows, total_rows)
+                # Process chunks in parallel if not in debug mode
+                if self.debug:
+                    for i in range(num_chunks):
+                        self.process_chunk(
+                            chunk_index=i,
+                            id_at_offset=ids_at_offset[i],
+                            chunk_size=chunk_size,
+                            num_chunks=num_chunks,
+                            data_dir=data_dir,
+                            conn_str=self.conn_str,
+                            config=self.config,
+                            limit_query=limit_query,
+                            columns=columns,
+                            table_name=table_name,
+                        )
+                else:
+                    chunk_tasks = [
+                        (
+                            i,
+                            ids_at_offset[i],
+                            chunk_size,
+                            num_chunks,
+                            data_dir,
+                            self.conn_str,
+                            self.config,
+                            limit_query,
+                            columns,
+                            table_name,
+                        )
+                        for i in range(num_chunks)
+                    ]
 
-            chunk_size = min(self.config.chunk_size, total_rows)
-            num_chunks = (total_rows + chunk_size - 1) // chunk_size
+                    with ProcessPoolExecutor(
+                        max_workers=self.config.num_workers
+                    ) as executor:
+                        futures = {
+                            executor.submit(self.process_chunk, *task): task
+                            for task in chunk_tasks
+                        }
 
-            # Will copy all columns if data_type is "any"
-            if self.columns is None:
-                columns = "*"
-            else:
-                columns = ", ".join(self.columns)
-
-            ids_at_offset = [ids[i * chunk_size] for i in range(num_chunks)]
-            del ids
-
-            # Process chunks in parallel if not in debug mode
-            if self.debug:
-                for i in range(num_chunks):
-                    self.process_chunk(
-                        chunk_index=i,
-                        id_at_offset=ids_at_offset[i],
-                        chunk_size=chunk_size,
-                        num_chunks=num_chunks,
-                        data_dir=data_dir,
-                        conn_str=self.conn_str,
-                        config=self.config,
-                        limit_query=limit_query,
-                        columns=columns,
-                    )
-            else:
-                chunk_tasks = [
-                    (
-                        i,
-                        ids_at_offset[i],
-                        chunk_size,
-                        num_chunks,
-                        data_dir,
-                        self.conn_str,
-                        self.config,
-                        limit_query,
-                        columns,
-                    )
-                    for i in range(num_chunks)
-                ]
-
-                with ProcessPoolExecutor(
-                    max_workers=self.config.num_workers
-                ) as executor:
-                    futures = {
-                        executor.submit(self.process_chunk, *task): task
-                        for task in chunk_tasks
-                    }
-
-                    # Process results as they complete
-                    for future in futures:
-                        try:
-                            result = future.result()
-                            if not result:
-                                logger.warning(
-                                    f"Failed to process chunk {futures[future][0]}"
+                        # Process results as they complete
+                        for future in futures:
+                            try:
+                                result = future.result()
+                                if not result:
+                                    logger.warning(
+                                        f"Failed to process chunk {futures[future][0]}"
+                                    )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error processing chunk {futures[future][0]}: {str(e)}"
                                 )
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing chunk {futures[future][0]}: {str(e)}"
-                            )
 
         finally:
             conn.close()
@@ -383,8 +392,9 @@ class Push:
         config,
         limit_query,
         columns,
+        table_name,
     ):
-        chunk_file = data_dir / f"chunk_{chunk_index}.jsonl"
+        chunk_file = data_dir / f"chunk_{chunk_index}_{table_name}.jsonl"
 
         # Skip if file already exists
         if chunk_file.exists():
@@ -402,7 +412,7 @@ class Push:
                         SELECT row_to_json(t)
                         FROM (
                             SELECT {columns}
-                            FROM {config.source_table_name}
+                            FROM {table_name}
                             {limit_query}
                 """
 
