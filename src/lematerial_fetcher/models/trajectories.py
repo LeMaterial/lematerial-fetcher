@@ -1,12 +1,13 @@
 # Copyright 2025 Entalpic
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from lematerial_fetcher.models.optimade import OptimadeStructure
 from lematerial_fetcher.utils.logging import logger
 
-ENERGY_CONVERGENCE_THRESHOLD = 2e-2  # MPtrj default
-FORCE_CONVERGENCE_THRESHOLD = 0.2
+# MPtrj defaults
+ENERGY_CONVERGENCE_THRESHOLD = 2e-2  # Difference with the primary MP task
+MAX_ENERGY_DIFF = 1  # 1 eV
 
 
 class Trajectory(OptimadeStructure):
@@ -14,6 +15,14 @@ class Trajectory(OptimadeStructure):
     relaxation_number: int = Field(
         ..., description="Relaxation number of the trajectory"
     )
+
+    @field_validator("forces")
+    @classmethod
+    def validate_forces_too_high(
+        cls, v: list[list[float]] | None
+    ) -> list[list[float]] | None:
+        """Override the parent class validator to avoid checking forces."""
+        return v
 
     @model_validator(mode="after")
     def validate_relaxation_trajectories(self):
@@ -28,50 +37,101 @@ class Trajectory(OptimadeStructure):
         return self
 
 
-def has_trajectory_converged(
-    trajectories: list[Trajectory],
-    energy_threshold: float | None = ENERGY_CONVERGENCE_THRESHOLD,
-    force_threshold: float | None = FORCE_CONVERGENCE_THRESHOLD,
+def close_to_primary_task(
+    primary_trajectories: list[Trajectory], trajectories: list[Trajectory]
 ) -> bool:
     """
-    Check if the full trajectory has converged.
+    This guarantees that the final structure's energy is close to the primary
+    trajectory's final structure's energy.
 
-    This also excludes trajectories where no last step has no forces
-    or energy.
+    This is used for MP to only keep the most appropriate trajectories for
+    a given material.
 
     Parameters
     ----------
+    primary_trajectories : list[Trajectory]
+        The primary trajectories.
     trajectories : list[Trajectory]
         The trajectories to check.
 
     Returns
     -------
     bool
-        True if the trajectory has converged, False otherwise.
+        True if the trajectory is close to the primary trajectory, False otherwise.
     """
-    # If the last step has no energy or forces, we cannot check for convergence
-    # and we don't want the trajectory to be pushed
-    if trajectories[-1].energy is None or trajectories[-1].forces is None:
-        logger.warning(
-            f"Trajectory {trajectories[-1].id} has no energy or forces, skipping"
-        )
+    if len(trajectories) == 0 or len(primary_trajectories) == 0:
         return False
 
-    if energy_threshold is not None and len(trajectories) > 1:
-        if np.abs(trajectories[-1].energy - trajectories[-2].energy) > energy_threshold:
-            logger.warning(
-                f"Trajectory {trajectories[-1].id} has not converged, energy difference: {np.abs(trajectories[-1].energy - trajectories[-2].energy):.2f} eV"
-            )
-            return False
+    if trajectories[-1].energy is None or primary_trajectories[-1].energy is None:
+        return False
 
-    if force_threshold is not None:
-        if (
-            np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max()
-            > force_threshold
-        ):
-            logger.warning(
-                f"Trajectory {trajectories[-1].id} has not converged, max force norm: {np.linalg.norm(np.array(trajectories[-1].forces), axis=1).max():.2f} eV/A"
-            )
-            return False
+    energy_diff = np.abs(
+        trajectories[-1].energy / trajectories[-1].nsites
+        - primary_trajectories[-1].energy / primary_trajectories[-1].nsites
+    )
+    if energy_diff <= ENERGY_CONVERGENCE_THRESHOLD:
+        return True
 
-    return True
+    logger.debug(
+        f"Trajectory {trajectories[-1].id} has energy difference: {energy_diff:.4f} eV"
+    )
+    return False
+
+
+def has_trajectory_converged(
+    trajectories: list[Trajectory],
+    max_energy_diff: float | None = MAX_ENERGY_DIFF,
+) -> bool:
+    """
+    Check if the full trajectory has converged.
+
+    This also excludes trajectories where forces or energy are not available.
+
+    Parameters
+    ----------
+    trajectories : list[Trajectory]
+        The trajectories to check.
+    max_energy_diff : float | None
+        The maximum energy difference between a structure and the last structure
+        in the trajectory.
+
+    Returns
+    -------
+    bool
+        True if the trajectory has converged, False otherwise.
+    """
+    filtered_trajectories = []
+
+    for i, trajectory in enumerate(trajectories):
+        if trajectory.energy is None or trajectory.forces is None:
+            logger.debug(
+                f"Trajectory {trajectory.id} has no energy or forces, skipping"
+            )
+            continue
+        filtered_trajectories.append(trajectory)
+
+    trajectories = filtered_trajectories
+
+    if len(trajectories) == 0:
+        return []
+
+    final_trajectory = trajectories[-1]
+
+    filtered_trajectories = []
+
+    for i, trajectory in enumerate(trajectories):
+        if i != len(trajectories) - 1:
+            energy_diff = (
+                trajectory.energy / trajectory.nsites
+                - final_trajectory.energy / final_trajectory.nsites
+            )
+            if (
+                energy_diff <= max_energy_diff
+            ):  # check if frame has energy higher than 1eV/atom
+                filtered_trajectories.append(trajectory)
+            else:
+                logger.debug(
+                    f"Trajectory {trajectory.id} has not converged, energy difference: {energy_diff:.4f} eV"
+                )
+
+    return filtered_trajectories

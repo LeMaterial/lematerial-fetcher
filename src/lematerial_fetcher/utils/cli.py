@@ -257,6 +257,7 @@ def add_push_options(f):
             "--table-name",
             type=str,
             envvar="LEMATERIALFETCHER_TABLE_NAME",
+            multiple=True,
             help="Table name to push data from.",
         ),
         click.option(

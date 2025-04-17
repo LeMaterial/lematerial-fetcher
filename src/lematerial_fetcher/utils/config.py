@@ -48,7 +48,7 @@ class TransformerConfig(BaseConfig):
 @dataclass
 class PushConfig(BaseConfig):
     source_db_conn_str: str
-    source_table_name: str
+    source_table_name: str | list[str]
     hf_repo_id: str
     hf_token: str | None = None
     data_dir: str | None = None
@@ -345,7 +345,7 @@ def load_push_config(
     db_user: Optional[str] = None,
     db_host: str = "localhost",
     db_name: Optional[str] = None,
-    table_name: Optional[str] = None,
+    table_name: Optional[str | list[str]] = None,
     hf_repo_id: Optional[str] = None,
     hf_token: Optional[str] = None,
     data_dir: Optional[str] = None,
