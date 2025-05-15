@@ -225,3 +225,72 @@ This code base is the property of Entalpic and is licensed under the Apache Lice
 ```text
 Copyright 2025 Entalpic
 ```
+
+## Docker Setup
+
+For easy deployment and execution, we provide a Docker setup that includes both PostgreSQL and MySQL databases. This setup allows you to run the entire pipeline with a single command.
+
+### Building the Docker Image
+
+```bash
+docker build -t lematerial-fetcher .
+```
+
+### Running the Pipeline
+
+1. **Basic Run**
+   ```bash
+   docker run -it lematerial-fetcher run-pipeline
+   ```
+
+2. **With Hugging Face Integration**
+   ```bash
+   docker run -it \
+     -e LEMATERIALFETCHER_HF_TOKEN=your_huggingface_token \
+     lematerial-fetcher run-pipeline
+   ```
+
+3. **Interactive Shell**
+   ```bash
+   docker run -it lematerial-fetcher bash
+   ```
+
+4. **Persistent Data Storage**
+   ```bash
+   docker run -it \
+     -v $(pwd)/data:/app/data \
+     -v $(pwd)/logs:/app/logs \
+     lematerial-fetcher run-pipeline
+   ```
+
+### Database Access
+
+The Docker container exposes the following ports:
+- PostgreSQL: 5432
+- MySQL: 3306
+
+You can connect to the databases using these credentials:
+- PostgreSQL:
+  - Host: localhost
+  - Port: 5432
+  - User: root
+  - Password: root
+  - Database: lematerial
+
+- MySQL:
+  - Host: localhost
+  - Port: 3306
+  - User: root
+  - Password: root
+  - Database: lematerial
+
+### Environment Variables
+
+You can customize the setup using environment variables:
+```bash
+docker run -it \
+  -e LEMATERIALFETCHER_DB_PASSWORD=your_password \
+  -e LEMATERIALFETCHER_MYSQL_PASSWORD=your_mysql_password \
+  -e LEMATERIALFETCHER_HF_TOKEN=your_huggingface_token \
+  lematerial-fetcher run-pipeline
+```
