@@ -2,7 +2,6 @@
 import gzip
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -16,13 +15,15 @@ from lematerial_fetcher.utils.logging import logger
 MP_FUNCTIONAL_MAPPING = {
     "GGA": Functional.PBE,
     "GGA+U": Functional.PBE,
-    "PBESol": Functional.PBESOL,
+    "PBEsol": Functional.PBESOL,
+    "r2SCAN": Functional.r2SCAN,
     "SCAN": Functional.SCAN,
 }
 
 
 class TaskType(Enum):
     STRUCTURE_OPTIMIZATION = "Structure Optimization"
+    STATIC = "Static"
     DEPRECATED = "Deprecated"
 
 
@@ -125,13 +126,17 @@ def add_jsonl_file_to_db(gzipped_file, db: Database, log_every: int = 1000):
     logger.info(f"Completed processing {processed} records")
 
 
-def extract_structure_optimization_tasks(
-    raw_structure: RawStructure, source_db: StructuresDatabase, task_table_name: str
+def extract_static_structure_optimization_tasks(
+    raw_structure: RawStructure,
+    source_db: StructuresDatabase,
+    task_table_name: str,
+    extract_static: bool = True,
+    fallback_to_static: bool = False,
 ) -> tuple[dict[str, RawStructure], dict[str, str]]:
     """
-    Extract non deprecated structure optimization tasks from a raw Materials Project structure.
+    Extract non deprecated structure optimization and static tasks from a raw Materials Project structure.
 
-    This function retrieves the structure optimization tasks from the task table
+    This function retrieves the structure optimization and static tasks from the task table
     and returns them as a list of OptimadeStructure objects.
 
     Parameters
@@ -142,6 +147,10 @@ def extract_structure_optimization_tasks(
         The source database instance to read from.
     task_table_name : str
         The name of the task table to read from.
+    extract_static : bool
+        Whether to extract static tasks.
+    fallback_to_static : bool
+        Whether to fallback to static tasks if no structure optimization tasks are found.
 
     Returns
     -------
@@ -150,13 +159,16 @@ def extract_structure_optimization_tasks(
         - The first dictionary maps task IDs to RawStructure objects.
         - The second dictionary maps task IDs to the calculation type.
     """
+    include_list = [TaskType.STRUCTURE_OPTIMIZATION.value]
+    if extract_static:
+        include_list.append(TaskType.STATIC.value)
 
     # This means that the raw structure is a material
     if "task_types" in raw_structure.attributes:
-        structure_optimization_tasks = [
+        static_and_structure_optimization_tasks = [
             mp_id
             for mp_id, task_type in raw_structure.attributes["task_types"].items()
-            if task_type == TaskType.STRUCTURE_OPTIMIZATION.value
+            if task_type in include_list
         ]
     else:
         raise ValueError(
@@ -167,9 +179,19 @@ def extract_structure_optimization_tasks(
 
     non_deprecated_task_ids = [
         mp_id
-        for mp_id in structure_optimization_tasks
+        for mp_id in static_and_structure_optimization_tasks
         if mp_id not in raw_structure.attributes["deprecated_tasks"]
     ]
+
+    # If no non-deprecated tasks are found, fallback to static tasks
+    if not non_deprecated_task_ids and fallback_to_static:
+        non_deprecated_task_ids = [
+            mp_id
+            for mp_id, task_type in raw_structure.attributes["task_types"].items()
+            if mp_id not in raw_structure.attributes["deprecated_tasks"]
+            and task_type == TaskType.STATIC.value
+        ]
+
     calc_types = {
         mp_id: raw_structure.attributes["calc_types"][mp_id]
         for mp_id in non_deprecated_task_ids
@@ -202,7 +224,7 @@ def map_task_to_functional(
     if task_calc_type is None:
         task_calc_type = task.attributes["calc_type"]
 
-    functional = task_calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
+    functional = task_calc_type.split(" ")[0]  # Extracts the functional
     if functional in MP_FUNCTIONAL_MAPPING:
         return MP_FUNCTIONAL_MAPPING[functional]
     else:
@@ -210,28 +232,44 @@ def map_task_to_functional(
 
 
 def map_tasks_to_functionals(
-    tasks: list[RawStructure], task_calc_types: dict[str, str]
-) -> dict[str, RawStructure]:
+    tasks: list[RawStructure],
+    task_calc_types: dict[str, str],
+    keep_all_calculations: bool = False,
+) -> dict[str, RawStructure | list[RawStructure]]:
     """
     Map tasks to functionals, selecting the most appropriate task for each functional.
 
-    For most functionals, the most recent task is selected.
-    For PBE, GGA+U is preferred over GGA regardless of date.
+    We follow the Materials Project strategy for selecting the most appropriate
+    task for each functional [1]:
+    For most functionals, we
+    - Only include non-deprecated tasks (valid calculations)
+    - Prefer a static calculation over a structure optimization
+    - We pick the structure with the lowest energy output
+    For PBE, GGA+U is preferred over GGA regardless of energy value.
 
     Parameters
     ----------
     tasks : List[RawStructure]
         List of task structures to process
+    task_calc_types : dict[str, str]
+        Dictionary mapping task IDs to calculation types
+    keep_all_calculations : bool
+        Whether to keep all calculations or only the most appropriate one
+        per material. This is useful for extracting trajectories.
 
     Returns
     -------
     Dict[str, RawStructure]
         Dictionary mapping functional names to selected task
+
+    References
+    ----------
+    [1] https://github.com/materialsproject/emmet/blob/682277da9f11af40073d5a4fa6b306fda9a1d582/emmet-core/emmet/core/vasp/material.py#L109
     """
     functional_tasks = defaultdict(list)
 
     for task_id, calc_type in task_calc_types.items():
-        functional = calc_type.split(" " + TaskType.STRUCTURE_OPTIMIZATION.value)[0]
+        functional = calc_type.split(" ")[0]  # Extracts the functional
         if task_id not in tasks:
             logger.warning(
                 f"Task {task_id} was not found in your tasks databases, "
@@ -248,54 +286,35 @@ def map_tasks_to_functionals(
                 )
 
     # For PBE, prefer GGA+U over GGA
+    # Except for trajectories, where we take both
+    # and let the filtering decide which steps to keep
     if "GGA+U" in functional_tasks:
-        functional_tasks[Functional.PBE] = functional_tasks["GGA+U"]
+        if keep_all_calculations:
+            functional_tasks[Functional.PBE].extend(functional_tasks["GGA+U"])
+        else:
+            functional_tasks[Functional.PBE] = functional_tasks["GGA+U"]
+
+    def _static_lowest_energy(task: RawStructure) -> RawStructure:
+        parameters = task.attributes["input"]["parameters"]
+
+        tags_score = sum(
+            (parameters.get(tag, False) if parameters else False)
+            for tag in ["LASPH", "ISPIN"]
+        )
+
+        return (
+            -int(task.attributes["task_type"] == TaskType.STATIC.value),
+            -tags_score,
+            task.attributes["output"]["energy"] / task.attributes["nsites"],
+        )
 
     selected_tasks = {}
-
     for functional, task_list in functional_tasks.items():
-        selected_task = select_most_recent_task(task_list)
+        sorted_tasks = sorted(task_list, key=_static_lowest_energy)
 
-        if selected_task:
-            selected_tasks[functional] = selected_task
+        if keep_all_calculations:
+            selected_tasks[functional] = sorted_tasks
+        else:
+            selected_tasks[functional] = sorted_tasks[0]
 
     return selected_tasks
-
-
-def select_most_recent_task(tasks: list[RawStructure]) -> Optional[RawStructure]:
-    """
-    Select the most recent task from a list of tasks.
-
-    Parameters
-    ----------
-    tasks : List[RawStructure]
-        List of tasks to choose from
-
-    Returns
-    -------
-    Optional[RawStructure]
-        The most recent task, or None if no valid tasks
-    """
-    if not tasks:
-        return None
-
-    latest_task = None
-    latest_date = datetime.min.replace(tzinfo=timezone.utc)
-
-    for task in tasks:
-        # Extract the completion date from task attributes
-        date_info = task.attributes.get("last_updated", {})
-        date_str = date_info.get("$date", "")
-        if not date_str:
-            continue
-
-        try:
-            # Parse the date string from format: '2016-09-16T06:29:25Z'
-            task_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            if task_date > latest_date:
-                latest_date = task_date
-                latest_task = task
-        except (ValueError, TypeError):
-            logger.warning(f"Could not parse date '{date_str}' for task {task.id}")
-
-    return latest_task if latest_task else None

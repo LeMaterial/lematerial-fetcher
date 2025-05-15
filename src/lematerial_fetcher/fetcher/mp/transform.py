@@ -10,12 +10,16 @@ from lematerial_fetcher.database.postgres import (
     TrajectoriesDatabase,
 )
 from lematerial_fetcher.fetcher.mp.utils import (
-    extract_structure_optimization_tasks,
+    extract_static_structure_optimization_tasks,
     map_tasks_to_functionals,
 )
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
-from lematerial_fetcher.models.trajectories import Trajectory, has_trajectory_converged
+from lematerial_fetcher.models.trajectories import (
+    Trajectory,
+    close_to_primary_task,
+    has_trajectory_converged,
+)
 from lematerial_fetcher.transform import BaseTransformer
 from lematerial_fetcher.utils.logging import logger
 
@@ -67,12 +71,6 @@ class BaseMPTransformer:
 
         pmg_structure = Structure.from_dict(mp_structure)
 
-        # TODO(ramlaoui): This does not handle with disordered structures
-
-        species_at_sites = [str(site.specie) for site in pmg_structure.sites]
-        cartesian_site_positions = pmg_structure.cart_coords.tolist()
-        lattice_vectors = pmg_structure.lattice.matrix.tolist()
-
         chemical_formula_reduced_dict = raw_structure.attributes["composition_reduced"]
         chemical_formula_reduced_elements = list(chemical_formula_reduced_dict.keys())
         chemical_formula_reduced_ratios = list(chemical_formula_reduced_dict.values())
@@ -115,25 +113,25 @@ class BaseMPTransformer:
             "elements": raw_structure.attributes["elements"],
             "nelements": raw_structure.attributes["nelements"],
             "elements_ratios": element_ratios,
-            # sites
-            "nsites": raw_structure.attributes["nsites"],
-            "cartesian_site_positions": cartesian_site_positions,
-            "species_at_sites": species_at_sites,
-            "species": species,
             # chemistry
             "chemical_formula_anonymous": raw_structure.attributes["formula_anonymous"],
             "chemical_formula_descriptive": str(pmg_structure.composition),
             "chemical_formula_reduced": chemical_formula_reduced,
+            "species": species,
             # dimensionality
             "dimension_types": [1, 1, 1],
             "nperiodic_dimensions": 3,
-            "lattice_vectors": lattice_vectors,
         }
 
     def _get_calc_targets(self, calc_output: dict[str, Any]) -> dict[str, Any]:
         """
-        Get the targets of a calculation.
+        Get the targets of a calculation. These are extracted from a task and are then
+        either associated to a material or a trajectory.
+
         These targets include:
+        - cartesian_site_positions
+        - species_at_sites
+        - nsites
         - energy
         - forces
         - stress tensor
@@ -144,6 +142,7 @@ class BaseMPTransformer:
         ----------
         calc_output : dict[str, Any]
             The output of an MP task calculation.
+            (task -> output)
         composition_reduced : dict[str, float]
             The composition of the material in reduced form.
 
@@ -154,21 +153,36 @@ class BaseMPTransformer:
         """
 
         targets = {}
+
+        pmg_structure = Structure.from_dict(calc_output["structure"])
+        targets["lattice_vectors"] = pmg_structure.lattice.matrix.tolist()
+        targets["cartesian_site_positions"] = pmg_structure.cart_coords.tolist()
+        # For some calculations, the unit cell contains less species than other for the same material ID
+        # So we need to determine them from the output structure of the calculation.
+        targets["species_at_sites"] = [str(site.specie) for site in pmg_structure.sites]
+        targets["nsites"] = len(targets["species_at_sites"])
+
         targets["energy"] = calc_output["energy"]
+
         try:
             targets["magnetic_moments"] = [
                 site["properties"]["magmom"]
                 for site in calc_output["structure"]["sites"]
             ]
         except (TypeError, KeyError):
-            logger.warning("No magnetic moments")
             targets["magnetic_moments"] = None
-        targets["forces"] = calc_output["ionic_steps"][-1]["forces"]
+
+        targets["forces"] = calc_output["forces"]
+        targets["band_gap_indirect"] = calc_output["bandgap"]
+        # MP Charges are stored in an external file
+        targets["charges"] = None
+
         # TODO(ramlaoui): Check if these are correct
         targets["dos_ef"] = calc_output.get("efermi", None)  # dos_ef
         targets["total_magnetization"] = calc_output.get("magnetization", {}).get(
             "total_magnetization", None
         )
+
         try:
             targets["stress_tensor"] = calc_output["stress"]
         except KeyError:
@@ -198,14 +212,16 @@ class BaseMPTransformer:
 
         cross_compatible = True
         non_compatible_elements = ["V", "Cs"]
-        # TODO(msiron): What about Yb?
+        # NB: We keep Yb for Materials Project since Yb_3 is now used
         for element in non_compatible_elements:
             if element in composition_reduced.keys():
                 cross_compatible = False
 
         return cross_compatible
 
-    def _get_ionic_step_targets(self, ionic_step: dict[str, Any]) -> dict[str, Any]:
+    def _get_ionic_step_targets(
+        self, ionic_step: dict[str, Any], NELM: int
+    ) -> dict[str, Any]:
         """
         Get the targets of an ionic step.
         These targets include:
@@ -217,6 +233,9 @@ class BaseMPTransformer:
         ----------
         ionic_step : dict[str, Any]
             The ionic step to get the targets from.
+        NELM : int
+            The number of electronic steps as parameter of the task.
+            This is used to determine if the ionic step is converged.
 
         Returns
         -------
@@ -227,6 +246,17 @@ class BaseMPTransformer:
         targets["forces"] = ionic_step["forces"]
         targets["stress_tensor"] = ionic_step["stress"]
         targets["energy"] = ionic_step["e_fr_energy"]
+
+        pmg_structure = Structure.from_dict(ionic_step["structure"])
+        targets["lattice_vectors"] = pmg_structure.lattice.matrix.tolist()
+        targets["cartesian_site_positions"] = pmg_structure.cart_coords.tolist()
+        targets["species_at_sites"] = [str(site.specie) for site in pmg_structure.sites]
+        targets["nsites"] = len(targets["species_at_sites"])
+
+        if NELM is not None and len(ionic_step["electronic_steps"]) == NELM:
+            raise ValueError(
+                f"Ionic step has {len(ionic_step['electronic_steps'])} electronic steps, expected {NELM}"
+            )
 
         return targets
 
@@ -255,14 +285,21 @@ class BaseMPTransformer:
             The target parameters of the task.
         """
         try:
-            targets = self._get_calc_targets(
-                task.attributes["output"], task.attributes["composition_reduced"]
-            )
+            targets = self._get_calc_targets(task.attributes["output"])
         except KeyError as e:
             logger.warning(
                 f"Error getting targets for {material_id} with functional {functional}: {e}"
             )
             return {}
+
+        last_ionic_step = task.attributes["calcs_reversed"][-1]["output"][
+            "ionic_steps"
+        ][-1]
+        NELM = task.attributes["input"]["parameters"]["NELM"]
+        if len(last_ionic_step["electronic_steps"]) == NELM:
+            raise ValueError(
+                f"Last ionic step has {len(last_ionic_step['electronic_steps'])} electronic steps, expected {NELM}"
+            )
 
         return targets
 
@@ -299,10 +336,12 @@ class MPTransformer(
             The transformed OptimadeStructure objects.
             If the list is empty, nothing from the structure should be included in the database.
         """
-        tasks, calc_types = extract_structure_optimization_tasks(
+        tasks, calc_types = extract_static_structure_optimization_tasks(
             raw_structure, source_db, task_table_name
         )
-        functionals = map_tasks_to_functionals(tasks, calc_types)
+        functionals = map_tasks_to_functionals(
+            tasks, calc_types, keep_all_calculations=False
+        )
 
         if not functionals:
             return []
@@ -324,7 +363,7 @@ class MPTransformer(
         for functional in functionals.keys():
             targets = targets_functionals[functional]
             optimade_structure = OptimadeStructure(
-                id=f"{raw_structure.attributes['material_id']}-{functional}",
+                id=f"{raw_structure.attributes['material_id']}-{functional.value}",
                 source="mp",
                 # Basic fields
                 immutable_id=raw_structure.attributes["material_id"],
@@ -337,6 +376,8 @@ class MPTransformer(
                 cross_compatibility=cross_compatibility,
                 # targets
                 **targets,
+                compute_space_group=True,
+                compute_bawl_hash=True,
             )
 
             optimade_structures.append(optimade_structure)
@@ -365,7 +406,11 @@ class MPTrajectoryTransformer(
         )
 
     def transform_tasks(
-        self, task: RawStructure, functional: Functional, material_id: str
+        self,
+        task: RawStructure,
+        functional: Functional,
+        material_id: str,
+        trajectory_number: int = 0,
     ) -> list[Trajectory]:
         """
         Transform a raw Materials Project structure into Trajectory objects.
@@ -378,6 +423,8 @@ class MPTrajectoryTransformer(
             The functional to use for the transformation.
         material_id : str
             The material id of the task.
+        trajectory_number : int
+            The number of the trajectory to use for the transformation.
 
         Returns
         -------
@@ -388,39 +435,65 @@ class MPTrajectoryTransformer(
         trajectories = []
 
         relaxation_step = 0
+        energy_correction = None
         for i, calc in enumerate(task.attributes["calcs_reversed"]):
             # TODO(ramlaoui): What about this input?
             # input_structure_fields = self._transform_structure(raw_structure, calc["input"]["structure"])
 
             # ionic steps are stored in normal order (first step first)
+            parameters = task.attributes["input"]["parameters"]
+            NELM = parameters["NELM"] if parameters is not None else None
             for ionic_step in calc["output"]["ionic_steps"]:
-                input_structure_fields = self._transform_structure(
-                    task, ionic_step["structure"]
-                )
-                output_targets = self._get_ionic_step_targets(ionic_step)
+                try:
+                    input_structure_fields = self._transform_structure(
+                        task, ionic_step["structure"]
+                    )
+                    output_targets = self._get_ionic_step_targets(ionic_step, NELM)
 
-                cross_compatibility = self._get_cross_compatibility_from_composition(
-                    task.attributes["composition_reduced"]
-                )
+                    cross_compatibility = (
+                        self._get_cross_compatibility_from_composition(
+                            task.attributes["composition_reduced"]
+                        )
+                    )
 
-                trajectory = Trajectory(
-                    id=f"{material_id}-{functional.value}-{relaxation_step}",
-                    source="mp",
-                    immutable_id=material_id,
-                    **input_structure_fields,
-                    **output_targets,
-                    functional=functional,
-                    last_modified=task.attributes["last_updated"]["$date"],
-                    relaxation_step=relaxation_step,
-                    relaxation_number=i,
-                    cross_compatibility=cross_compatibility,
-                )
+                    trajectory = Trajectory(
+                        # For one material_id, there can be multiple trajectories even for the same functional
+                        # So we need to add a number to the trajectory id to differentiate them
+                        id=f"{material_id}-{trajectory_number}-{functional.value}-{relaxation_step}",
+                        source="mp",
+                        immutable_id=f"{material_id}",
+                        **input_structure_fields,
+                        **output_targets,
+                        functional=functional,
+                        last_modified=task.attributes["last_updated"]["$date"],
+                        relaxation_step=relaxation_step,
+                        relaxation_number=i,
+                        cross_compatibility=cross_compatibility,
+                        energy_corrected=(
+                            output_targets["energy"] + energy_correction
+                            if output_targets["energy"] is not None
+                            and energy_correction is not None
+                            else None
+                        ),
+                    )
+                    # avoid having to recompute the energy correction
+                    # for every snapshot of the trajectory
+                    energy_correction = (
+                        trajectory.energy_corrected - trajectory.energy
+                        if trajectory.energy is not None
+                        and trajectory.energy_corrected is not None
+                        else None
+                    )
 
-                trajectories.append(trajectory)
+                    trajectories.append(trajectory)
+                except Exception as e:
+                    logger.debug(
+                        f"Error transforming step {relaxation_step} of with functional {functional.value}: {e}"
+                    )
+                    continue
                 relaxation_step += 1
 
-        if not has_trajectory_converged(trajectories):
-            return []
+        trajectories = has_trajectory_converged(trajectories)
 
         return trajectories
 
@@ -451,11 +524,16 @@ class MPTrajectoryTransformer(
         list[Trajectory]
             The transformed Trajectory objects.
         """
-
-        tasks, calc_types = extract_structure_optimization_tasks(
-            raw_structure, source_db, task_table_name
+        tasks, calc_types = extract_static_structure_optimization_tasks(
+            raw_structure,
+            source_db,
+            task_table_name,
+            extract_static=False,
+            fallback_to_static=False,
         )
-        functionals = map_tasks_to_functionals(tasks, calc_types)
+        functionals = map_tasks_to_functionals(
+            tasks, calc_types, keep_all_calculations=True
+        )
 
         # Only keep tasks with a BY-C license
         license = raw_structure.attributes["builder_meta"]["license"]
@@ -472,9 +550,19 @@ class MPTrajectoryTransformer(
             return []
 
         trajectories = []
-        for functional, task in functionals.items():
-            trajectories.extend(
-                self.transform_tasks(task, functional, raw_structure.id)
-            )
+        for functional, tasks_list in functionals.items():
+            all_functional_trajectories = [
+                self.transform_tasks(
+                    task, functional, raw_structure.id, trajectory_number
+                )
+                for trajectory_number, task in enumerate(tasks_list)
+            ]
+            if len(all_functional_trajectories) == 0:
+                continue
+
+            trajectories.extend(all_functional_trajectories[0])
+            for trajectory in all_functional_trajectories[1:]:
+                if close_to_primary_task(all_functional_trajectories[0], trajectory):
+                    trajectories.extend(trajectory)
 
         return trajectories

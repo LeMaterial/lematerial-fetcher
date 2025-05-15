@@ -21,6 +21,9 @@ dependencies = [
     "beautifulsoup4>=4.13.3",
     "datasets>=3.4.1",
     "ijson>=3.3.0",
+    "moyopy>=0.4.2",
+    "ase>=3.24.0",
+    "material-hasher",
 ]
 
 [project.scripts]
@@ -50,6 +53,9 @@ dev-dependencies = [
     "requests>=2.32.3",
     "botocore>=1.36.20",
 ]
+
+[tool.uv.sources]
+material-hasher = { git = "https://github.com/LeMaterial/lematerial-hasher.git" }
 
 
 [tool.ruff.lint]

@@ -88,4 +88,6 @@ class Logger:
         self.term_logger.fatal(message, stacklevel=2, *args, **kwargs)
 
 
-logger = Logger()
+logger = Logger(
+    level="DEBUG" if os.environ.get("LEMATERIALFETCHER_DEBUG", None) else "INFO"
+)

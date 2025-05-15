@@ -1,8 +1,13 @@
+<p align="center">
+  <img src="https://cdn-uploads.huggingface.co/production/uploads/65a67b0ee65b8ffd3b91572f/nMqy0cpsj15EIliGzfOo_.png" alt="LeMaterial" width="700"/>
+</p>
+
+
 # LeMaterial-Fetcher
 
-`lematerial-fetcher` is designed to fetch data from a specified OPTIMADE's compatible JSON-API, process it, and store it in a PostgreSQL database. It is highly concurrent, to handle data fetching and processing efficiently.
+LeMaterial-Fetcher is designed to fetch data any external source, process it, and store it in a PostgreSQL database in a pre-defined format with structure-level validation and database-level validators. It is highly concurrent, to handle data fetching and processing efficiently.
 
-The objective is to retrieve information from various OPTIMADE sources and establish a local database. This database will enable us to process and utilize the data according to our specific requirements, which can then be uploaded to an online and easily accessible place like Hugging Face.
+The objective is to retrieve information from various sources and establish a local database that can be unified. This database will enable us to process and utilize the data according to our specific requirements, which can then be uploaded to an online and easily accessible place like Hugging Face.
 
 **Explore the datasets built with this tool on [Hugging Face](https://huggingface.co/LeMaterial)** 🤗:
 
@@ -29,18 +34,21 @@ We gratefully acknowledge these projects and their dedication to open materials 
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone git@github.com:LeMaterial/lematerial-fetcher.git
    cd lematerial-fetcher
    ```
 
 2. Set up your environment variables. Copy the provided template and customize it:
+
    ```bash
    cp .env.example .env
    vim .env
    ```
 
 3. Install the package:
+
    ```bash
    # Using uv (recommended)
    uv add git+https://github.com/LeMaterial/lematerial-fetcher.git
@@ -91,6 +99,7 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
 ### Available Commands
 
 1. **Materials Project (MP)**
+
    ```bash
    # Fetch structures
    lematerial-fetcher mp fetch --table-name mp_structures --num-workers 4
@@ -103,6 +112,7 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
    ```
 
 2. **Alexandria**
+
    ```bash
    # Fetch structures
    lematerial-fetcher alexandria fetch --table-name alex_structures --functional pbe
@@ -115,6 +125,7 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
    ```
 
 3. **OQMD**
+
    ```bash
    # Fetch data
    lematerial-fetcher oqmd fetch --table-name oqmd_structures
@@ -124,6 +135,7 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
    ```
 
 4. **Push to Hugging Face**
+
    ```bash
    lematerial-fetcher push --table-name my_table --hf-repo-id my-repo
    ```
@@ -133,12 +145,14 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
 These options are available across most commands:
 
 #### Database Options
+
 - `--db-conn-str STR`: Complete database connection string
 - `--db-user USER`: Database username
 - `--db-host HOST`: Database host (default: localhost)
 - `--db-name NAME`: Database name (default: lematerial)
 
 #### Processing Options
+
 - `--num-workers N`: Number of parallel workers
 - `--log-dir DIR`: Directory for logs (default: ./logs)
 - `--max-retries N`: Maximum retry attempts (default: 3)
@@ -146,11 +160,13 @@ These options are available across most commands:
 - `--log-every N`: Log frequency (default: 1000)
 
 #### Fetch Options
+
 - `--offset N`: Starting offset (default: 0)
 - `--table-name NAME`: Target table name
 - `--limit N`: Items per API request (default: 500)
 
 #### Transformer Options
+
 - `--batch-size N`: Batch processing size (default: 500)
 - `--dest-table-name NAME`: Destination table name
 - `--traj`: Transform trajectory data
@@ -158,6 +174,7 @@ These options are available across most commands:
 ### Examples
 
 1. **Fetch from Materials Project with custom configuration**:
+
    ```bash
    lematerial-fetcher mp fetch \
      --table-name mp_structures \
@@ -168,6 +185,7 @@ These options are available across most commands:
    ```
 
 2. **Transform Alexandria data with source and destination databases**:
+
    ```bash
    lematerial-fetcher alexandria transform \
      --table-name source_table \
@@ -178,6 +196,7 @@ These options are available across most commands:
    ```
 
 3. **Push to Hugging Face with custom chunk size**:
+
    ```bash
    lematerial-fetcher push \
      --table-name my_table \
@@ -193,6 +212,7 @@ These options are available across most commands:
 You can configure the database connection in two ways:
 
 1. **Using individual parameters**:
+
    ```bash
    # Set password in environment
    export LEMATERIALFETCHER_DB_PASSWORD=your_password
@@ -202,6 +222,7 @@ You can configure the database connection in two ways:
    ```
 
 2. **Using a connection string**:
+
    ```bash
    lematerial-fetcher mp fetch --db-conn-str="host=localhost user=username password=password dbname=database_name sslmode=disable"
    ```
@@ -209,6 +230,7 @@ You can configure the database connection in two ways:
 ### MySQL Configuration (for OQMD)
 
 MySQL-specific options:
+
 - `--mysql-host HOST`: MySQL host (default: localhost)
 - `--mysql-user USER`: MySQL username
 - `--mysql-database NAME`: MySQL database name (default: lematerial)

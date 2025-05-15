@@ -1,5 +1,5 @@
 import numpy as np
-from pymatgen.core import Structure
+from pymatgen.core import Composition, Structure
 
 
 def get_element_ratios_from_composition_reduced(
@@ -11,6 +11,29 @@ def get_element_ratios_from_composition_reduced(
 
     element_ratios = [ratios[i] / sum(ratios) for i in np.argsort(elements)]
     return element_ratios
+
+
+def get_composition_reduced_from_reduced_dict(reduced_dict: dict[str, float]) -> dict:
+    """
+    Extracts the composition from a reduced dictionary.
+    """
+    items_reduced = [
+        f"{element}{int(reduced_dict[element])}"
+        if int(reduced_dict[element]) > 1
+        else element
+        for element in sorted(list(reduced_dict.keys()))  # alphabetical order
+    ]
+    chemical_formula_reduced = "".join(items_reduced)
+    return chemical_formula_reduced
+
+
+def get_composition_reduced_from_descriptive_formula(batch):
+    for i in range(len(batch["chemical_formula_descriptive"])):
+        composition = Composition(batch["chemical_formula_descriptive"][i])
+        batch["chemical_formula_reduced"][i] = (
+            get_composition_reduced_from_reduced_dict(composition.to_reduced_dict)
+        )
+    return batch
 
 
 def get_optimade_from_pymatgen(structure: Structure) -> dict:
@@ -36,13 +59,10 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     elements_ratios = get_element_ratios_from_composition_reduced(reduced_dict)
 
     # Formula fields
-    chemical_formula_reduced = "".join(
-        f"{element}{int(ratio)}" if int(ratio) > 1 else element
-        for element, ratio in zip(elements, elements_ratios)
-    )
+    chemical_formula_reduced = get_composition_reduced_from_reduced_dict(reduced_dict)
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?
-    chemical_formula_descriptive = str(structure.composition)
+    chemical_formula_descriptive = structure.composition.formula
 
     # Site and position data
     cartesian_site_positions = structure.cart_coords.tolist()
@@ -50,14 +70,14 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
     species = [
         {
             "mass": None,
-            "name": str(site.specie),
+            "name": element,
             "attached": None,
             "nattached": None,
             "concentration": [1],
             "original_name": None,
-            "chemical_symbols": [str(site.specie)],
+            "chemical_symbols": [element],
         }
-        for site in structure.sites
+        for element in elements
     ]
 
     # Structure metadata
