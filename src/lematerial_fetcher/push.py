@@ -202,7 +202,6 @@ class Push:
 
         # Cross compatible entries:
         for functional in Functional:
-            functional = Functional.PBESOL
             limit_query = (
                 f"WHERE functional = '{functional.value}' AND cross_compatibility = 't'"
             )
