@@ -5,6 +5,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Optional
+from pymatgen.core import Structure
+import numpy as np
+import pandas as pd
+import pickle
 
 import lzma
 import multiprocessing as mp
@@ -17,6 +21,7 @@ PathType = str | Path
 
 
 from lematerial_fetcher.utils.logging import logger
+from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
 OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
 
@@ -237,3 +242,124 @@ def convert_pyg_data(data: Data):
     """
 
     return Data(**{k: v for k, v in data.__dict__.items() if v is not None})
+
+
+def oc20_to_structures(data_row):
+    """Extract slab and adsorbate as pymatgen.Structure objects from OC20 row."""
+    atomic_numbers = data_row["atomic_numbers"]
+    positions = data_row["pos"]
+    tags = data_row["tags"]
+    lattice = data_row["cell"]
+
+    # Boolean masks
+    slab_mask = np.isin(tags, [0, 1])
+    molecule_mask = tags == 2
+
+    # Extract structures
+    slab = Structure(
+        lattice=lattice,
+        species=atomic_numbers[slab_mask],
+        coords=positions[slab_mask],
+        coords_are_cartesian=True,
+    )
+    molecule = Structure(
+        lattice=lattice,
+        species=atomic_numbers[molecule_mask],
+        coords=positions[molecule_mask],
+        coords_are_cartesian=True,
+    )
+    adslab = Structure(
+        lattice=lattice,
+        species=atomic_numbers,
+        coords=positions,
+        coords_are_cartesian=True,
+    )
+    return slab, molecule, adslab
+
+
+def oc20_to_optimade_dicts(data_row):
+    slab, molecule, adslab = oc20_to_structures(data_row)
+    molecule_energy = 0.0
+    slab_energy = data_row["y_init"] - molecule_energy
+    adslab_energy = data_row["y_relaxed"]
+
+    eq_left = molecule.composition.formula + " + " + slab.composition.formula
+    eq_right = adslab.composition.formula
+    equation = f"{eq_left} -> {eq_right}"
+
+    reaction_energy = adslab_energy - slab_energy - molecule_energy
+
+    row = {
+        "publication": "oc20",
+        "equation": equation,
+        "reaction_energy": reaction_energy,
+        "activation_energy": None,
+        "dftCode": "VASP",
+        "dftFunctional": "PBE",
+        "miller_index": (None, None, None),
+        "sites": None,
+        "other_structure": [],
+        "other_structure_energy": [],
+        "bulk_structure": [],
+        "bulk_structure_energy": [],
+        "neb_structure": [],
+        "neb_structure_energy": [],
+    }
+
+    for role in ["slab", "molecule", "adslab", "other"]:
+        row[f"reactant_{role}"] = []
+        row[f"reactant_{role}_energy"] = []
+        row[f"product_{role}"] = []
+        row[f"product_{role}_energy"] = []
+
+    row["reactant_slab"].append(get_optimade_from_pymatgen(slab))
+    row["reactant_slab_energy"].append(slab_energy)
+
+    row["reactant_molecule"].append(get_optimade_from_pymatgen(molecule))
+    row["reactant_molecule_energy"].append(molecule_energy)
+
+    row["product_adslab"].append(get_optimade_from_pymatgen(adslab))
+    row["product_adslab_energy"].append(adslab_energy)
+
+    row["sid"] = data_row["sid"]
+
+    return row
+
+
+def oc20_dataset_to_df(dataset, mapping_pickle_path, save_csv_path):
+    # Load mapping
+    mapping = pickle.load(open(mapping_pickle_path, "rb"))
+    mapping_df = pd.DataFrame(mapping)
+    mapping_df["join_key"] = "random" + mapping_df["sid"].astype(str)
+
+    rows = []
+    for data in dataset:  # dataset is a list of OC20 Data objects
+        row_dict = oc20_to_optimade_dicts(data)
+        join_key = "random" + str(row_dict["sid"])
+        row_dict["join_key"] = join_key
+        rows.append(row_dict)
+        
+
+    oc20_df = pd.DataFrame(rows)
+
+    # Merge with mapping
+    merged = oc20_df.merge(mapping_df, on="join_key", how="left")
+    merged.to_csv(save_csv_path, index=False)
+    return merged
+
+
+def load_metadata(downloaded_pkl_path):
+    metadata = pickle.load(
+        open(
+            Path(downloaded_pkl_path),
+            "rb",
+        )
+    )
+    # Handle dict of dicts
+    if isinstance(metadata, dict):
+        df = pd.DataFrame.from_dict(metadata, orient="index").reset_index()
+        df.rename(columns={"index": "sid"}, inplace=True)
+    else:
+        # Assume it's already a list of dicts
+        df = pd.DataFrame(metadata)
+    return df

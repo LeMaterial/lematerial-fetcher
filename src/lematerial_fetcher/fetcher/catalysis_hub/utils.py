@@ -6,6 +6,10 @@ import tempfile
 from datetime import datetime
 from typing import Optional
 import json
+import pandas as pd
+import numpy as np
+from datasets import Dataset
+from pathlib import Path
 
 from lematerial_fetcher.database.mysql import MySQLDatabase, execute_sql_file
 from lematerial_fetcher.utils.io import (
@@ -161,159 +165,6 @@ def primitive_cell(atoms):
     return AseAtomsAdaptor.get_structure(prim_sys)
 
 
-def parse_reactions(pub_ids):
-    data = []
-
-    for pub_id in pub_ids:
-        print(f"Treating publication : {pub_id}")
-        try:
-            raw_reactions = reactions_from_dataset(pub_id)
-            reactions = copy.deepcopy(raw_reactions)
-            print("Number of reactions in publication :", len(reactions))
-            aseify_reactions(reactions)
-            # breakpoint()
-            for r in reactions:
-                reactants = list(json.loads(r["reactants"]).keys())
-                products = list(json.loads(r["products"]).keys())
-                system_names = list(r["reactionSystems"].keys())
-
-                star_in_reactants = "star" in reactants
-
-                adslab_key = next(
-                    (name for name in products if "star" in name and name != "star"),
-                    None,
-                )
-
-                gas_in_reactants = [name for name in reactants if "gas" in name.lower()]
-                gas_in_products = [name for name in products if "gas" in name.lower()]
-                has_one_gas_only_in_reactants = (
-                    len(gas_in_reactants) == 1 and not gas_in_products
-                )
-
-                bulk_key = next(
-                    (name for name in system_names if "bulk" in name.lower()), None
-                )
-
-                if star_in_reactants and adslab_key and has_one_gas_only_in_reactants:
-                    slab_structure = AseAtomsAdaptor.get_structure(
-                        r["reactionSystems"]["star"]["atoms"]
-                    )
-                    adslab_structure = AseAtomsAdaptor.get_structure(
-                        r["reactionSystems"][adslab_key]["atoms"]
-                    )
-                    adsorbate_structure = AseAtomsAdaptor.get_structure(
-                        r["reactionSystems"][gas_in_reactants[0]]["atoms"]
-                    )
-
-                    # if bulk_key is not None:
-                    #     bulk_structure = AseAtomsAdaptor.get_structure(
-                    #         r["reactionSystems"][bulk_key]["atoms"]
-                    #     )
-
-                    # else:
-                    #     bulk_structure = primitive_cell(
-                    #         r["reactionSystems"]["star"]["atoms"]
-                    #     )
-
-                    # # initialize the hasher
-                    # emh = BAWLHasher()
-                    # # get the hash
-                    # bulk_hash = emh.get_material_hash(bulk_structure)
-                    slab_energy = r["reactionSystems"]["star"]["energy"]
-                    adslab_energy = r["reactionSystems"][adslab_key]["energy"]
-                    adsorbate_energy = r["reactionSystems"][gas_in_reactants[0]][
-                        "energy"
-                    ]
-
-                    facet = r.get("facet", "")
-                    sites = r.get("sites", "")
-                    reaction_energy = r.get("reactionEnergy", "")
-                    activation_energy = r.get("activationEnergy", "")
-                    dftCode = r.get("dftCode", "")
-                    dftFunctional = r.get("dftFunctional", "")
-                    data.append(
-                        {
-                            "publication": pub_id,
-                            # "bulk_hash": bulk_hash,
-                            "slab_structure": slab_structure,
-                            "slab_energy": slab_energy,
-                            "adsorbate_structure": adsorbate_structure,
-                            "adsorbate_energy": adsorbate_energy,
-                            "adslab_structure": adslab_structure,
-                            "adslab_energy": adslab_energy,
-                            "reaction_energy": reaction_energy,
-                            "activation_energy": activation_energy,
-                            "dftCode": dftCode,
-                            "dftFunctional": dftFunctional,
-                            "facet": facet,
-                            "sites": sites,
-                        }
-                    )
-
-        except Exception as e:
-            print(f"Erreur avec {pub_id}: {e}")
-
-    return data
-
-
-def parse_reactions_surface(pub_ids):
-    data = []
-
-    for pub_id in pub_ids:
-        print(f"Treating publication : {pub_id}", flush=True)
-        try:
-            raw_reactions = reactions_from_dataset(pub_id)
-            reactions = copy.deepcopy(raw_reactions)
-            print("Number of reactions in publication :", len(reactions), flush=True)
-            aseify_reactions(reactions)
-
-            for r in reactions:
-                bulk_key = next(
-                    (name for name in r["reactionSystems"] if "bulk" in name.lower()),
-                    None,
-                )
-                if bulk_key is not None:
-                    bulk_structure = AseAtomsAdaptor.get_structure(
-                        r["reactionSystems"][bulk_key]["atoms"]
-                    )
-                    bulk_energy = r["reactionSystems"][bulk_key]["energy"]
-
-                    # initialize the hasher
-                    emh = BAWLHasher()
-                    # get the hash
-                    bulk_hash = emh.get_material_hash(bulk_structure)
-
-                    if "star" in r["reactionSystems"]:
-                        slab_structure = AseAtomsAdaptor.get_structure(
-                            r["reactionSystems"]["star"]["atoms"]
-                        )
-                        slab_energy = r["reactionSystems"]["star"]["energy"]
-
-                        facet = r.get("facet", "")
-                        sites = r.get("sites", "")
-                        dftCode = r.get("dftCode", "")
-                        dftFunctional = r.get("dftFunctional", "")
-
-                        data.append(
-                            {
-                                "publication": pub_id,
-                                "bulk_structure": bulk_structure,
-                                "bulk_energy": bulk_energy,
-                                "bulk_hash": bulk_hash,
-                                "slab_structure": slab_structure,
-                                "slab_energy": slab_energy,
-                                "dftCode": dftCode,
-                                "dftFunctional": dftFunctional,
-                                "facet": facet,
-                                "sites": sites,
-                            }
-                        )
-
-        except Exception as e:
-            print(f"Erreur avec {pub_id}: {e}", flush=True)
-    return data
-
-
 def get_system_role(name: str) -> str:
     """
     Returns the role of the system based on its name.
@@ -376,10 +227,6 @@ def parse_reactions_with_roles(pub_ids):
                     for name in systems
                     if name not in reactants_dict and name not in products_dict
                 }
-
-                # print("reactant", reactants_dict)
-                # print("products", products_dict)
-                # print("other", other_dict)
 
                 # Initialize row with lists and all expected keys
                 row = {
@@ -456,6 +303,103 @@ def parse_reactions_with_roles(pub_ids):
             print(f"Error with {pub_id}: {e}")
 
     return data
+
+
+def get_concatenated_df(output_dir):
+    all_dfs = []
+
+    for fname in os.listdir(output_dir):
+        if fname.endswith(".pkl") and "concatenated" not in fname:
+            full_path = os.path.join(output_dir, fname)
+            try:
+                df = pd.read_pickle(full_path)
+                all_dfs.append(df)
+            except Exception as e:
+                print(f"Failed to read {fname}: {e}")
+
+    if not all_dfs:
+        logger.info("No valid .pkl files found.")
+        return pd.DataFrame()
+
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+
+    return combined_df
+
+
+def is_empty_or_na(x):
+    if x is None:
+        return True
+    if isinstance(x, float) and pd.isna(x):
+        return True
+    if isinstance(x, (list, tuple)) and len(x) == 0:
+        return True
+    if isinstance(x, np.ndarray) and x.size == 0:
+        return True
+    return False
+
+
+def adsorption_reactions_dataset(df_path: str, store_path: str):
+    """
+    Filters the dataset to retain only valid adsorption reactions of the form:
+    slab + molecule → adslab, with all other roles empty.
+
+    Parameters
+    ----------
+    df_path : str
+        Path to the input pickle file containing all reactions.
+    store_path : str
+        Path where the filtered DataFrame will be stored.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame with only valid adsorption reactions.
+    """
+    df = pd.read_pickle(df_path)
+    logger.info("Pickle file read to DataFrame. Number of rows:", len(df))
+    df_ads = df[
+        df["publication"].notna()
+        & df["equation"].notna()
+        & df["reaction_energy"].notna()
+        & df["reactant_slab"].apply(lambda x: isinstance(x, list) and len(x) == 1)
+        & df["reactant_molecule"].apply(lambda x: isinstance(x, list) and len(x) == 1)
+        & df["product_adslab"].apply(lambda x: isinstance(x, list) and len(x) == 1)
+        & df["product_slab"].apply(is_empty_or_na)
+        & df["product_molecule"].apply(is_empty_or_na)
+        & df["reactant_adslab"].apply(is_empty_or_na)
+        & df["reactant_other"].apply(is_empty_or_na)
+        & df["product_other"].apply(is_empty_or_na)
+    ]
+
+    df_ads.to_pickle(store_path)
+    logger.info("Filtered DataFrame saved to:", store_path)
+
+    return df_ads
+
+
+def upload_pkl_to_huggingface_dataset(pkl_path: str, dataset_name: str):
+    """
+    Convert a pickle file containing structures to OPTIMADE format and upload it to the Hugging Face Hub.
+
+    Parameters
+    ----------
+    pkl_path : str
+        Path to the pickle file containing the adsorption reaction dataset.
+    dataset_name : str
+        Name of the dataset on the Hugging Face Hub (e.g. "username/dataset_name").
+
+    Returns
+    -------
+    None
+    """
+    df = pd.read_pickle(pkl_path)
+    print("Pickle file read to DataFrame. Number of rows:", len(df))
+
+    hf_dataset = Dataset.from_pandas(df)
+    print(f"Uploading dataset to Hugging Face Hub as '{dataset_name}'...")
+    hf_dataset.push_to_hub(dataset_name)
+
+    print("Dataset uploaded successfully.")
 
 
 if __name__ == "__main__":

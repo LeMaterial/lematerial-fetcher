@@ -9,9 +9,10 @@ from lematerial_fetcher.fetcher.catalysis_hub.utils import (
     fetch_all_pub_ids,
     reactions_from_dataset,
     aseify_reactions,
-    parse_reactions,
-    parse_reactions_surface,
+    adsorption_reactions_dataset,
     parse_reactions_with_roles,
+    get_concatenated_df,
+    upload_pkl_to_huggingface_dataset,
 )
 import pandas as pd
 
@@ -49,53 +50,80 @@ class CatalysisHubFetcher(BaseFetcher):
         logger.info(f"Worker {worker_id} wrote {len(df)} entries to {output_path}")
         return True
 
-    def get_concatenated_df(self) -> pd.DataFrame:
+    def formatting(self) -> pd.DataFrame:
         """
-        Reads and concatenates all .pkl DataFrames from a directory.
+        Reads and concatenates all .pkl DataFrames
+        from reactions directory, creating the all reactions dataset.
+        Filters on adsorption reactions criterias
+        and creates an adsorption reactions specific dataset.
+        Uploads both datasets on Hugging Face.
 
-        Parameters
-        ----------
-        directory : str
-            Path to the directory containing .pkl files.
-        save_path : str, optional
-            If provided, saves the combined DataFrame to this path.
-
-        Returns
-        -------
-        pd.DataFrame
-            The concatenated DataFrame.
         """
-        all_dfs = []
         output_dir = self.config.output_dir
+        # output_dir = "/lustre/catalysis-hub-surfaces/reaction_dataset"
 
-        for fname in os.listdir(output_dir):
-            if fname.endswith(".pkl") and "concatenated" not in fname:
-                full_path = os.path.join(output_dir, fname)
-                try:
-                    df = pd.read_pickle(full_path)
-                    all_dfs.append(df)
-                except Exception as e:
-                    print(f"Failed to read {fname}: {e}")
+        combined_df = get_concatenated_df(output_dir)
 
-        if not all_dfs:
-            logger.info("No valid .pkl files found.")
-            return pd.DataFrame()
+        combined_df_output_path = (
+            Path(output_dir) / "concatenated_reactions_dataset.pkl"
+        )
+        combined_df.to_pickle(combined_df_output_path)
 
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-        print(f"Total number of reactions: {len(combined_df)}")
+        logger.info("Saved all reactions DataFrame")
 
-        output_path = Path(output_dir) / "concatenated_reactions_dataset.pkl"
-        combined_df.to_pickle(output_path)
-        logger.info("Saved combined DataFrame")
+        # upload_pkl_to_huggingface_dataset(
+        #     pkl_path=combined_df_output_path,
+        #     dataset_name="Entalpic/Catalysis_Hub_all_reactions_dataset",
+        # )
 
-        return combined_df
+        logger.info("Uploaded Catalysis_Hub_all_reactions_dataset on HF")
+
+        adsorption_output_path = Path(output_dir) / "adsorption_reactions_dataset.pkl"
+
+        adsorption_df = adsorption_reactions_dataset(
+            df_path=combined_df_output_path,
+            store_path=adsorption_output_path,
+        )
+        logger.info("Saved adsorption reactions DataFrame")
+
+        # upload_pkl_to_huggingface_dataset(
+        #     pkl_path=adsorption_df,
+        #     dataset_name="Entalpic/Catalysis_Hub_adsorption_reactions_dataset",
+        # )
+
+        logger.info("Uploaded Catalysis_Hub_adsorption_reactions_dataset on HF")
+
+        return len(combined_df), len(adsorption_df)
 
     def cleanup_resources(self) -> None:
         """Clean up resources."""
-        self.get_concatenated_df()
+        self.formatting()
         logger.info("Cleaning up Catalysis-Hub fetcher resources")
         super().cleanup_resources()
 
     def get_new_version(self) -> str:
         """Get a new version string."""
         return "catalysishub_v1"
+
+
+if __name__ == "__main__":
+    config = FetcherConfig(
+        output_dir=str(Path("/lustre/catalysis-hub-surfaces/reaction_dataset")),
+        log_dir="/tmp",  # dummy
+        max_retries=1,  # dummy
+        num_workers=1,  # dummy
+        retry_delay=1,  # dummy
+        log_every=10,  # dummy
+        page_offset=0,  # dummy
+        page_limit=100,  # dummy
+        base_url="http://dummy",  # dummy
+        db_conn_str="sqlite:///:memory:",  # dummy
+        table_name="dummy",  # dummy
+        mp_bucket_name="dummy",  # dummy
+        mp_bucket_prefix="dummy",  # dummy
+    )
+
+    fetcher = CatalysisHubFetcher(config=config, debug=True)
+
+    n_all, n_ads = fetcher.formatting()
+    print(f"Formatting done : {n_all} total, {n_ads} adsorption.")
