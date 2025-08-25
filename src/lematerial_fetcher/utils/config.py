@@ -30,6 +30,7 @@ class FetcherConfig(BaseConfig):
     mp_bucket_prefix: str
     mysql_config: Optional[dict] = None
     oqmd_download_dir: Optional[str] = None
+    output_dir: Optional[str] = None
 
 
 @dataclass
@@ -161,6 +162,7 @@ def load_fetcher_config(
     # No MySQL password parameter
     mysql_database: str = "lematerial",
     mysql_cert_path: Optional[str] = None,
+    output_dir: str | None = None,
     **base_config_kwargs: Any,
 ) -> FetcherConfig:
     """Loads fetcher config from passed arguments.
@@ -189,6 +191,7 @@ def load_fetcher_config(
         "mp_bucket_name": mp_bucket_name,
         "mp_bucket_prefix": mp_bucket_prefix,
         "oqmd_download_dir": oqmd_download_dir,
+        "output_dir": output_dir,
     }
 
     # Validate required fields

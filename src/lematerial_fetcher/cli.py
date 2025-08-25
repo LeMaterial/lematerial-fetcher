@@ -33,6 +33,10 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTrajectoryTransformer,
     OQMDTransformer,
 )
+from lematerial_fetcher.fetcher.catalysis_hub.fetch import CatalysisHubFetcher
+from lematerial_fetcher.fetcher.oc20.fetch import OC20Fetcher
+
+
 from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
     add_common_options,
@@ -62,6 +66,10 @@ _ALEXANDRIA_TRAJECTORY_BASE_URL = {
     "pbesol": "https://alexandria.icams.rub.de/data/pbesol/geo_opt_paths/",
 }
 _OQMD_BASE_URL = "https://oqmd.org/download/"
+
+_OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
+
+_CATALYSIS_HUB_ = "http://api.catalysis-hub.org/graphql"
 
 
 @click.group()
@@ -114,9 +122,25 @@ def oqmd_cli(ctx):
     pass
 
 
+@click.group(name="oc20")
+@click.pass_context
+def oc20_cli(ctx):
+    """Commands for fetching data from OC20."""
+    pass
+
+
+@click.group(name="catalysis_hub")
+@click.pass_context
+def catalysis_hub_cli(ctx):
+    """Commands for fetching data from Catalysis Hub."""
+    pass
+
+
 cli.add_command(mp_cli)
 cli.add_command(alexandria_cli)
 cli.add_command(oqmd_cli)
+cli.add_command(oc20_cli)
+cli.add_command(catalysis_hub_cli)
 
 # ------------------------------------------------------------------------------
 # MP commands
@@ -219,17 +243,17 @@ def alexandria_fetch(ctx, traj, base_url, functional, **config_kwargs):
     """
     if not base_url:
         if traj:
-            assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, (
-                f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
-            )
+            assert (
+                functional in _ALEXANDRIA_TRAJECTORY_BASE_URL
+            ), f"Functional {functional} not supported for trajectory data. Must be one of {_ALEXANDRIA_TRAJECTORY_BASE_URL.keys()}."
             config_kwargs["base_url"] = _ALEXANDRIA_TRAJECTORY_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria trajectory base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
             )
         else:
-            assert functional in _ALEXANDRIA_BASE_URL, (
-                f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
-            )
+            assert (
+                functional in _ALEXANDRIA_BASE_URL
+            ), f"Functional {functional} not supported for structure data. Must be one of {_ALEXANDRIA_BASE_URL.keys()}."
             config_kwargs["base_url"] = _ALEXANDRIA_BASE_URL[functional]
             logger.info(
                 f"Using Alexandria structure base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
@@ -325,6 +349,137 @@ def oqmd_transform(ctx, traj, **config_kwargs):
     """Transform materials from OQMD.
 
     This command transforms materials from OQMD.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    config = load_transformer_config(**config_kwargs)
+    try:
+        if traj:
+            transformer = OQMDTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
+        else:
+            transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
+        transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# Catalysis-Hub commands
+# ------------------------------------------------------------------------------
+
+
+@catalysis_hub_cli.command(name="fetch")
+@click.pass_context
+@click.option(
+    "--output_dir",
+    is_flag=False,
+    help="Fetch task data from Catalysis Hub. If false, fetch structure data.",
+)
+@add_common_options
+@add_fetch_options
+def catalysis_hub_fetch(ctx, **config_kwargs):
+    """Fetch materials from Catalysis Hub.
+
+    This command fetches raw materials data from Catalysis Hub and stores them in a database.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+
+    config_kwargs["base_url"] = _CATALYSIS_HUB_
+    logger.info(
+        f"Using Catalysis Hub base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+    )
+
+    config = load_fetcher_config(**config_kwargs)
+    try:
+        fetcher = CatalysisHubFetcher(config=config, debug=ctx.obj["debug"])
+        fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@catalysis_hub_cli.command(name="transform")
+@click.pass_context
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Transform trajectory data from OQMD.",
+)
+@add_common_options
+@add_transformer_options
+@add_mysql_options
+def catalysis_hub_transform(ctx, traj, **config_kwargs):
+    """Transform materials from Catalysis Hub.
+
+    This command transforms materials from Catalysis Hub.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+    config = load_transformer_config(**config_kwargs)
+    try:
+        if traj:
+            transformer = OQMDTrajectoryTransformer(
+                config=config, debug=ctx.obj["debug"]
+            )
+        else:
+            transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
+        transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# OC20 commands
+# ------------------------------------------------------------------------------
+
+
+@oc20_cli.command(name="fetch")
+@click.pass_context
+@click.option(
+    "--output_dir",
+    is_flag=False,
+    help="Fetch task data from Catalysis Hub. If false, fetch structure data.",
+)
+
+@add_common_options
+@add_fetch_options
+def oc20_fetch(ctx, **config_kwargs):
+    """Fetch materials from OC20.
+
+    This command fetches raw materials data from OC20 and stores them in a database.
+    Options can be provided via command line arguments or environment variables.
+    See individual option help for corresponding environment variables.
+    """
+
+    config_kwargs["base_url"] = _OC20_BASE_URL
+    logger.info(
+        f"Using Catalysis Hub base URL: {config_kwargs['base_url']}. You can change this by setting the --base-url option."
+    )
+
+    config = load_fetcher_config(**config_kwargs)
+    try:
+        fetcher = OC20Fetcher(config=config, debug=ctx.obj["debug"])
+        fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@oc20_cli.command(name="transform")
+@click.pass_context
+@click.option(
+    "--traj",
+    is_flag=True,
+    help="Transform trajectory data from OQMD.",
+)
+@add_common_options
+@add_transformer_options
+@add_mysql_options
+def oc20_transform(ctx, traj, **config_kwargs):
+    """Transform materials from OC20.
+
+    This command transforms materials from OC20.
     Options can be provided via command line arguments or environment variables.
     See individual option help for corresponding environment variables.
     """

@@ -56,8 +56,8 @@ class BaseFetcher(ABC):
         self.config = config
         self.debug = debug
         self._db = None
-        self.version_db = DatasetVersions(self.config.db_conn_str)
-        self.version_db.create_table()
+        # self.version_db = DatasetVersions(self.config.db_conn_str)
+        # self.version_db.create_table()
 
     @property
     def db(self) -> StructuresDatabase:
@@ -148,8 +148,8 @@ class BaseFetcher(ABC):
             logger.info(f"Starting fetch process for {self.__class__.__name__}")
 
             # Get current version
-            current_version = self.get_current_version()
-            logger.info(f"Current dataset version: {current_version or 'Not set'}")
+            # current_version = self.get_current_version()
+            # logger.info(f"Current dataset version: {current_version or 'Not set'}")
 
             # Initialize resources
             self.setup_resources()
@@ -164,10 +164,10 @@ class BaseFetcher(ABC):
             self.process_items(items_info)
 
             # Update version after successful processing
-            new_version = self.get_new_version()
-            if new_version != current_version:
-                self.update_version(new_version)
-                logger.info(f"Updated dataset version to: {new_version}")
+            # new_version = self.get_new_version()
+            # if new_version != current_version:
+            #     self.update_version(new_version)
+            #     logger.info(f"Updated dataset version to: {new_version}")
 
             # Cleanup
             self.cleanup_resources()
