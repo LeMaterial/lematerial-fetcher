@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-lematerial-fetcher = "lematerial_fetcher.cli:main"
+lematerial_fetcher = "lematerial_fetcher.cli:main"
 
 [build-system]
 requires = ["hatchling"]
