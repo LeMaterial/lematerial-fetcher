@@ -197,8 +197,8 @@ def load_fetcher_config(
     # Validate required fields
     required_fields = [
         ("base_url", "base_url"),
-        ("table_name", "table_name"),
-        ("db_conn_str", "db credentials"),
+        # ("table_name", "table_name"),
+        # ("db_conn_str", "db credentials"),
     ]
     missing_fields = [(label, key) for key, label in required_fields if not config[key]]
     if missing_fields:
