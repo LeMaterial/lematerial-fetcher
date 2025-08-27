@@ -40,7 +40,7 @@ def get_composition_reduced_from_descriptive_formula(batch):
     return batch
 
 
-def get_optimade_from_pymatgen(structure: Structure) -> dict:
+def get_optimade_from_pymatgen(structure: Structure, role: str = None) -> dict:
     """
     Extracts the possible fields from a pymatgen Structure object
     that are compatible with the OPTIMADE schema.
@@ -83,6 +83,16 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
         }
         for element in elements
     ]
+    # Determine dimensionality metadata
+    if role == "molecule":
+        dimension_types = [0, 0, 0]
+        nperiodic_dimensions = 0
+    elif role == "slab":
+        dimension_types = [1, 0, 1]
+        nperiodic_dimensions = 2
+    else:  # bulk, adslab, other
+        dimension_types = [1, 1, 1]
+        nperiodic_dimensions = 3
 
     # Structure metadata
     nsites = len(structure.sites)
@@ -90,8 +100,6 @@ def get_optimade_from_pymatgen(structure: Structure) -> dict:
 
     # Lattice and dimensionality
     lattice_vectors = structure.lattice.matrix.tolist()
-    nperiodic_dimensions = 3  # Assuming 3D structure, adjust if needed
-    dimension_types = [1, 1, 1]  # Assuming 3D periodic, adjust if needed
 
     return {
         # Required fields
