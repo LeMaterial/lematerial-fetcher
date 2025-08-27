@@ -142,7 +142,7 @@ def stress_matrix_from_voigt_6_stress(voigt_6_stress: list[float]) -> list[float
     ]
 
 
-def get_optimade_from_atoms(atoms: Atoms) -> dict:
+def get_optimade_from_atoms(atoms: Atoms, role: str = None) -> dict:
     """
     Extract OPTIMADE-compliant structure metadata from an ASE Atoms object.
     """
@@ -166,6 +166,17 @@ def get_optimade_from_atoms(atoms: Atoms) -> dict:
     nsites = len(atoms)
     lattice_vectors = atoms.get_cell().tolist()
     cartesian_site_positions = atoms.get_positions().tolist()
+
+    # Determine dimensionality metadata
+    if role == "molecule":
+        dimension_types = [0, 0, 0]
+        nperiodic_dimensions = 0
+    elif role == "slab":
+        dimension_types = [1, 0, 1]
+        nperiodic_dimensions = 2
+    else:  # bulk, adslab, other
+        dimension_types = [1, 1, 1]
+        nperiodic_dimensions = 3
 
     # Handle species
     species = [
@@ -192,7 +203,7 @@ def get_optimade_from_atoms(atoms: Atoms) -> dict:
         "chemical_formula_anonymous": chemical_formula_anonymous,
         "chemical_formula_descriptive": formula.format("hill"),
         "chemical_formula_reduced": chemical_formula_reduced,
-        "dimension_types": [1, 1, 1],
-        "nperiodic_dimensions": 3,
+        "dimension_types": dimension_types,
+        "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
     }
