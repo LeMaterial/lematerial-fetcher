@@ -14,6 +14,9 @@ from lematerial_fetcher.fetcher.oc20.utils import (
     uncompress_dir,
     uncompress_xz,
     convert_pyg_data,
+    data_to_row,
+    get_concatenated_df,
+    upload_pkl_to_huggingface_dataset,
 )
 import lmdb
 import pickle
@@ -30,7 +33,7 @@ class OC20Fetcher(BaseFetcher):
         self.manager_dict["occurred"] = False
 
     def setup_resources(self) -> None:
-        logger.info("No external resources to set up for oc20.")
+        logger.info("Setting up OC20 resources (downloading mapping if needed)")
 
     def get_items_to_process(self) -> ItemsInfo:
         # path = Path(download_and_extract(target_dir=self.config.output_dir))
@@ -53,62 +56,63 @@ class OC20Fetcher(BaseFetcher):
             meminit=False,
             max_readers=1,
         )
-        env_length = env.stat()["entries"]
+        mapping_pickle_path = "/home/amandine_rossello_entalpic_ai/lematerial-fetcher/src/lematerial_fetcher/fetcher/oc20/oc20_data_mapping.pkl"
+
+        mapping = pickle.load(open(mapping_pickle_path, "rb"))
+        mapping = pd.DataFrame(mapping).T
+        mapping = mapping.reset_index().rename(columns={"index": "join_key"})
+
+        rows = []
         with env.begin() as txn:
             cursor = txn.cursor()
-            keys = [key for key, _ in cursor]
-            for key in keys:
-                item = txn.get(key)
-                item = pickle.loads(item)
+            for key, value in cursor:
+                item = pickle.loads(value)
                 data = convert_pyg_data(item)
+                row_dict = data_to_row(data)
+                row_dict["join_key"] = "random" + str(row_dict["sid"])
+                rows.append(row_dict)
 
-        logger.info(data)
+        oc20_df = pd.DataFrame(rows)
+        merged = oc20_df.merge(mapping, on="join_key", how="left")
+        
+        output_path = Path(config.output_dir) / f"reactions_{batch}.pkl"
+        merged.to_pickle(output_path)
+
+        logger.info(f"Worker {worker_id} wrote {len(merged)} entries to {output_path}")
         return True
 
-    def get_concatenated_df(self) -> pd.DataFrame:
+    def formatting(self) -> pd.DataFrame:
         """
-        Reads and concatenates all .pkl DataFrames from a directory.
+        Reads and concatenates all .pkl DataFrames
+        from reactions directory, creating the all reactions dataset.
+        Filters on adsorption reactions criterias
+        and creates an adsorption reactions specific dataset.
+        Uploads both datasets on Hugging Face.
 
-        Parameters
-        ----------
-        directory : str
-            Path to the directory containing .pkl files.
-        save_path : str, optional
-            If provided, saves the combined DataFrame to this path.
-
-        Returns
-        -------
-        pd.DataFrame
-            The concatenated DataFrame.
         """
-        all_dfs = []
         output_dir = self.config.output_dir
 
-        for fname in os.listdir(output_dir):
-            if fname.endswith(".pkl") and "concatenated" not in fname:
-                full_path = os.path.join(output_dir, fname)
-                try:
-                    df = pd.read_pickle(full_path)
-                    all_dfs.append(df)
-                except Exception as e:
-                    print(f"Failed to read {fname}: {e}")
+        combined_df = get_concatenated_df(output_dir)
 
-        if not all_dfs:
-            logger.info("No valid .pkl files found.")
-            return pd.DataFrame()
+        combined_df_output_path = (
+            Path(output_dir) / "concatenated_reactions_dataset.pkl"
+        )
+        combined_df.to_pickle(combined_df_output_path)
 
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-        print(f"Total number of reactions: {len(combined_df)}")
+        logger.info("Saved all reactions DataFrame")
 
-        output_path = Path(output_dir) / "concatenated_reactions_dataset.pkl"
-        combined_df.to_pickle(output_path)
-        logger.info("Saved combined DataFrame")
+        # upload_pkl_to_huggingface_dataset(
+        #     pkl_path=combined_df_output_path,
+        #     dataset_name="Entalpic/Catalysis_Hub_all_reactions_dataset",
+        # )
 
-        return combined_df
+        # logger.info("Uploaded Catalysis_Hub_all_reactions_dataset on HF")
+
+        return len(combined_df)
 
     def cleanup_resources(self) -> None:
         """Clean up resources."""
-        self.get_concatenated_df()
+        self.formatting()
         logger.info("Cleaning up Catalysis-Hub fetcher resources")
         super().cleanup_resources()
 
