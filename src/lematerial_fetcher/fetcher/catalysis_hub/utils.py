@@ -228,15 +228,19 @@ def parse_reactions_with_roles(pub_ids):
                     if name not in reactants_dict and name not in products_dict
                 }
 
+                facet_raw = r.get("facet", "")
+                miller_index = [None, None, None]
+                if isinstance(facet_raw, str) and facet_raw.isdigit():
+                    for i, char in enumerate(facet_raw[:3]):
+                        miller_index[i] = int(char)
+
                 # Initialize row with lists and all expected keys
                 row = {
                     "publication": pub_id,
                     "equation": r["Equation"],
                     "reaction_energy": r.get("reactionEnergy", ""),
                     "activation_energy": r.get("activationEnergy", ""),
-                    "dftCode": r.get("dftCode", ""),
-                    "dftFunctional": r.get("dftFunctional", ""),
-                    "facet": r.get("facet", ""),
+                    "miller_index": miller_index,
                     "sites": r.get("sites", ""),
                     "other_structure": [],
                     "other_structure_energy": [],
@@ -254,7 +258,8 @@ def parse_reactions_with_roles(pub_ids):
                     atoms = system.get("atoms")
                     energy = system.get("energy")
                     try:
-                        optimade_structure = get_optimade_from_atoms(atoms)
+                        optimade_structure = get_optimade_from_atoms(atoms, role=role)
+
                     except Exception as e:
                         print(
                             f"Failed to convert atoms to optimade for system '{name}': {e}"
@@ -270,7 +275,8 @@ def parse_reactions_with_roles(pub_ids):
                     atoms = system.get("atoms")
                     energy = system.get("energy")
                     try:
-                        optimade_structure = get_optimade_from_atoms(atoms)
+                        optimade_structure = get_optimade_from_atoms(atoms, role=role)
+
                     except Exception as e:
                         print(
                             f"Failed to convert atoms to optimade for system '{name}': {e}"
@@ -287,7 +293,10 @@ def parse_reactions_with_roles(pub_ids):
                     atoms = system.get("atoms")
                     energy = system.get("energy")
                     try:
-                        optimade_structure = get_optimade_from_atoms(atoms)
+                        optimade_structure = get_optimade_from_atoms(
+                            atoms, role="other"
+                        )
+
                     except Exception as e:
                         print(
                             f"Failed to convert atoms to optimade for system '{name}': {e}"
@@ -356,7 +365,6 @@ def adsorption_reactions_dataset(df_path: str, store_path: str):
         Filtered DataFrame with only valid adsorption reactions.
     """
     df = pd.read_pickle(df_path)
-    logger.info("Pickle file read to DataFrame. Number of rows:", len(df))
     df_ads = df[
         df["publication"].notna()
         & df["equation"].notna()
@@ -372,8 +380,6 @@ def adsorption_reactions_dataset(df_path: str, store_path: str):
     ]
 
     df_ads.to_pickle(store_path)
-    logger.info("Filtered DataFrame saved to:", store_path)
-
     return df_ads
 
 
@@ -393,13 +399,9 @@ def upload_pkl_to_huggingface_dataset(pkl_path: str, dataset_name: str):
     None
     """
     df = pd.read_pickle(pkl_path)
-    print("Pickle file read to DataFrame. Number of rows:", len(df))
 
     hf_dataset = Dataset.from_pandas(df)
-    print(f"Uploading dataset to Hugging Face Hub as '{dataset_name}'...")
     hf_dataset.push_to_hub(dataset_name)
-
-    print("Dataset uploaded successfully.")
 
 
 if __name__ == "__main__":

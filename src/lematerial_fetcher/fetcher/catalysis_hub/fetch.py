@@ -32,6 +32,10 @@ class CatalysisHubFetcher(BaseFetcher):
 
     def get_items_to_process(self) -> ItemsInfo:
         pub_ids = fetch_all_pub_ids()
+        # logger.info(f"{pub_ids}")
+        # breakpoint()
+        pub_ids = ["MamunHighT2019", "JungSpin2025"]
+
         start_offset = self.config.page_offset
         return ItemsInfo(start_offset, items=pub_ids, total_count=len(pub_ids))
 
@@ -39,7 +43,12 @@ class CatalysisHubFetcher(BaseFetcher):
     def _process_batch(
         batch: BatchInfo, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
     ) -> bool:
+        logger.info(f"Treating publication: {batch}")
+
         data = parse_reactions_with_roles([batch])
+
+        logger.info(f"Parsed {len(data)} reactions for {batch}")
+
         df = pd.DataFrame(data)
         if len(df) == 0:
             return True
@@ -60,7 +69,6 @@ class CatalysisHubFetcher(BaseFetcher):
 
         """
         output_dir = self.config.output_dir
-        # output_dir = "/lustre/catalysis-hub-surfaces/reaction_dataset"
 
         combined_df = get_concatenated_df(output_dir)
 
@@ -76,7 +84,7 @@ class CatalysisHubFetcher(BaseFetcher):
         #     dataset_name="Entalpic/Catalysis_Hub_all_reactions_dataset",
         # )
 
-        logger.info("Uploaded Catalysis_Hub_all_reactions_dataset on HF")
+        # logger.info("Uploaded Catalysis_Hub_all_reactions_dataset on HF")
 
         adsorption_output_path = Path(output_dir) / "adsorption_reactions_dataset.pkl"
 
@@ -91,7 +99,7 @@ class CatalysisHubFetcher(BaseFetcher):
         #     dataset_name="Entalpic/Catalysis_Hub_adsorption_reactions_dataset",
         # )
 
-        logger.info("Uploaded Catalysis_Hub_adsorption_reactions_dataset on HF")
+        # logger.info("Uploaded Catalysis_Hub_adsorption_reactions_dataset on HF")
 
         return len(combined_df), len(adsorption_df)
 
@@ -104,26 +112,3 @@ class CatalysisHubFetcher(BaseFetcher):
     def get_new_version(self) -> str:
         """Get a new version string."""
         return "catalysishub_v1"
-
-
-if __name__ == "__main__":
-    config = FetcherConfig(
-        output_dir=str(Path("/lustre/catalysis-hub-surfaces/reaction_dataset")),
-        log_dir="/tmp",  # dummy
-        max_retries=1,  # dummy
-        num_workers=1,  # dummy
-        retry_delay=1,  # dummy
-        log_every=10,  # dummy
-        page_offset=0,  # dummy
-        page_limit=100,  # dummy
-        base_url="http://dummy",  # dummy
-        db_conn_str="sqlite:///:memory:",  # dummy
-        table_name="dummy",  # dummy
-        mp_bucket_name="dummy",  # dummy
-        mp_bucket_prefix="dummy",  # dummy
-    )
-
-    fetcher = CatalysisHubFetcher(config=config, debug=True)
-
-    n_all, n_ads = fetcher.formatting()
-    print(f"Formatting done : {n_all} total, {n_ads} adsorption.")
