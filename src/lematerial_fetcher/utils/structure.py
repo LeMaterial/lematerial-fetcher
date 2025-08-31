@@ -40,7 +40,9 @@ def get_composition_reduced_from_descriptive_formula(batch):
     return batch
 
 
-def get_optimade_from_pymatgen(structure: Structure, role: str = None) -> dict:
+def get_optimade_from_pymatgen(
+    structure: Structure, role: str = None, name: str = None
+) -> dict:
     """
     Extracts the possible fields from a pymatgen Structure object
     that are compatible with the OPTIMADE schema.
@@ -116,6 +118,7 @@ def get_optimade_from_pymatgen(structure: Structure, role: str = None) -> dict:
         "dimension_types": dimension_types,
         "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
+        "system_name": name,
     }
 
 
@@ -150,7 +153,7 @@ def stress_matrix_from_voigt_6_stress(voigt_6_stress: list[float]) -> list[float
     ]
 
 
-def get_optimade_from_atoms(atoms: Atoms, role: str = None) -> dict:
+def get_optimade_from_atoms(atoms: Atoms, role: str = None, name: str = None) -> dict:
     """
     Extract OPTIMADE-compliant structure metadata from an ASE Atoms object.
     """
@@ -182,7 +185,7 @@ def get_optimade_from_atoms(atoms: Atoms, role: str = None) -> dict:
     elif role == "slab":
         dimension_types = [1, 0, 1]
         nperiodic_dimensions = 2
-    else:  # bulk, adslab, other
+    else:  # adslab, other_structures
         dimension_types = [1, 1, 1]
         nperiodic_dimensions = 3
 
@@ -214,4 +217,5 @@ def get_optimade_from_atoms(atoms: Atoms, role: str = None) -> dict:
         "dimension_types": dimension_types,
         "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
+        "system_name": name,
     }
