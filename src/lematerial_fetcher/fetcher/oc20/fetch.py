@@ -17,6 +17,7 @@ from lematerial_fetcher.fetcher.oc20.utils import (
     data_to_row,
     get_concatenated_df,
     upload_pkl_to_huggingface_dataset,
+    clean_merge,
 )
 import lmdb
 import pickle
@@ -40,6 +41,7 @@ class OC20Fetcher(BaseFetcher):
         # path = uncompress_dir(path, recursive=True, num_workers=self.config.num_workers)
         path = Path(self.config.output_dir)
         lmdb_files = list(path.glob("**/*.lmdb"))
+        # lmdb_files = [lmdb_files[0]]
         start_offset = self.config.page_offset
         return ItemsInfo(start_offset, items=lmdb_files, total_count=len(lmdb_files))
 
@@ -47,6 +49,7 @@ class OC20Fetcher(BaseFetcher):
     def _process_batch(
         batch: BatchInfo, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
     ) -> bool:
+        # breakpoint()
         env = lmdb.open(
             str(batch.resolve()),
             subdir=False,
@@ -69,14 +72,33 @@ class OC20Fetcher(BaseFetcher):
                 item = pickle.loads(value)
                 data = convert_pyg_data(item)
                 row_dict = data_to_row(data)
-                row_dict["join_key"] = "random" + str(row_dict["sid"])
                 rows.append(row_dict)
 
         oc20_df = pd.DataFrame(rows)
+        logger.info(f"oc20_df number of rows processed : {len(oc20_df)}")
+
         merged = oc20_df.merge(mapping, on="join_key", how="left")
-        
-        output_path = Path(config.output_dir) / f"reactions_{batch}.pkl"
+        logger.info("merge done")
+
+        merged = clean_merge(merged)
+        logger.info("clean merge done")
+
+        relative_parts = Path(batch).parts[-5:]
+        logger.info(f"relative_parts of batch {relative_parts}")
+
+        last_part = Path(relative_parts[-1]).stem
+        logger.info(f"last_part of batch {last_part}")
+
+        safe_name = (
+            "reactions_" + "_".join(list(relative_parts[:-1]) + [last_part]) + ".pkl"
+        )
+        logger.info(f"safe_name of batch {safe_name}")
+
+        output_path = Path(config.output_dir) / safe_name
+        logger.info(f"output_path {output_path}")
+
         merged.to_pickle(output_path)
+        logger.info("you just got pickled")
 
         logger.info(f"Worker {worker_id} wrote {len(merged)} entries to {output_path}")
         return True
