@@ -36,8 +36,23 @@ from lematerial_fetcher.utils.structure import (
 GRAPHQL = "http://api.catalysis-hub.org/graphql"
 
 
+# def fetch(query):
+#     return requests.get(GRAPHQL, {"query": query}).json()["data"]
+
+
 def fetch(query):
-    return requests.get(GRAPHQL, {"query": query}).json()["data"]
+    logger.info("Fetch Requested")
+
+    try:
+        response = requests.get(GRAPHQL, params={"query": query})
+        response.raise_for_status()
+        data = response.json()
+        return data.get("data", {})
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request failed: {e}")
+    except ValueError:
+        logger.error(f"Invalid JSON response: {response.text}")
+    return {}
 
 
 def fetch_all_pub_ids():
@@ -108,7 +123,6 @@ def reactions_from_dataset(pub_id, page_size=10):
             }}
           }}
         }}"""
-
         data = fetch(query)
         page_info = data["reactions"]["pageInfo"]
         edges = data["reactions"]["edges"]
@@ -257,15 +271,18 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    role = get_system_role(name)
+
                     try:
-                        optimade_structure = get_optimade_from_atoms(atoms, role=role)
+                        optimade_structure = get_optimade_from_atoms(
+                            atoms, role=role, name=name
+                        )
 
                     except Exception as e:
                         print(
                             f"Failed to convert atoms to optimade for system '{name}': {e}"
                         )
                         optimade_structure = None
-                    role = get_system_role(name)
                     row[f"reactant_{role}"].append(optimade_structure)
                     row[f"reactant_{role}_energy"].append(energy)
 
@@ -274,8 +291,12 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    role = get_system_role(name)
+
                     try:
-                        optimade_structure = get_optimade_from_atoms(atoms, role=role)
+                        optimade_structure = get_optimade_from_atoms(
+                            atoms, role=role, name=name
+                        )
 
                     except Exception as e:
                         print(
@@ -283,7 +304,6 @@ def parse_reactions_with_roles(pub_ids):
                         )
                         optimade_structure = None
 
-                    role = get_system_role(name)
                     row[f"product_{role}"].append(optimade_structure)
                     row[f"product_{role}_energy"].append(energy)
 
@@ -292,9 +312,11 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    role = get_system_role(name)
+
                     try:
                         optimade_structure = get_optimade_from_atoms(
-                            atoms, role="other"
+                            atoms, role=role, name=name
                         )
 
                     except Exception as e:
@@ -318,7 +340,11 @@ def get_concatenated_df(output_dir):
     all_dfs = []
 
     for fname in os.listdir(output_dir):
-        if fname.endswith(".pkl") and "concatenated" not in fname:
+        if (
+            fname.endswith(".pkl")
+            and "concatenated" not in fname
+            and "adsorption" not in fname
+        ):
             full_path = os.path.join(output_dir, fname)
             try:
                 df = pd.read_pickle(full_path)
@@ -405,7 +431,6 @@ def upload_pkl_to_huggingface_dataset(pkl_path: str, dataset_name: str):
 
 
 if __name__ == "__main__":
-    pub_ids = ["JiangModelling2021"]
+    pub_ids = fetch_all_pub_ids()
 
-    name = "Hstar"
-    print(get_system_role(name))
+    print(pub_ids)
