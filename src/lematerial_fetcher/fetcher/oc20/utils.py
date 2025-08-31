@@ -282,7 +282,7 @@ def data_to_row(data_row):
     slab, molecule, adslab = get_structures(data_row)
     molecule_energy = None
     slab_energy = None
-    adslab_energy = data_row["y_relaxed"]
+    adslab_energy = data_row.get("y_relaxed", None)
 
     eq_left = molecule.composition.formula + " + " + slab.composition.formula
     eq_right = adslab.composition.formula
@@ -293,14 +293,8 @@ def data_to_row(data_row):
         "equation": equation,
         "reaction_energy": None,
         "activation_energy": None,
-        "miller_index": [None, None, None],
-        "sites": [],
         "other_structure": [],
         "other_structure_energy": [],
-        "bulk_structure": [],
-        "bulk_structure_energy": [],
-        "neb_structure": [],
-        "neb_structure_energy": [],
     }
 
     for role in ["slab", "molecule", "adslab", "other"]:
@@ -309,20 +303,63 @@ def data_to_row(data_row):
         row[f"product_{role}"] = []
         row[f"product_{role}_energy"] = []
 
-    row["reactant_slab"].append(get_optimade_from_pymatgen(slab, role="slab"))
+    row["join_key"] = "random" + str(data_row["sid"])
+
+    row["reactant_slab"].append(
+        get_optimade_from_pymatgen(slab, role="slab", name="star")
+    )
     row["reactant_slab_energy"].append(slab_energy)
 
     row["reactant_molecule"].append(
-        get_optimade_from_pymatgen(molecule, role="molecule")
+        get_optimade_from_pymatgen(
+            molecule, role="molecule", name=molecule.composition.formula + "gas"
+        )
     )
     row["reactant_molecule_energy"].append(molecule_energy)
 
-    row["product_adslab"].append(get_optimade_from_pymatgen(adslab, role="adslab"))
+    row["product_adslab"].append(
+        get_optimade_from_pymatgen(
+            adslab, role="adslab", name=molecule.composition.formula + "star"
+        )
+    )
     row["product_adslab_energy"].append(adslab_energy)
 
-    row["sid"] = data_row["sid"]
-
     return row
+
+
+def clean_merge(merged_df):
+
+    cols_to_drop = [
+        "bulk_id",
+        "ads_id",
+        "bulk_mpid",
+        "bulk_symbols",
+        "ads_symbols",
+        "class",
+        "anomaly",
+        "split",
+    ]
+    clean_merge = merged_df.drop(columns=cols_to_drop, errors="ignore")
+    clean_merge["miller_index"] = clean_merge["miller_index"].apply(
+        lambda x: (
+            [int(i) for i in x] if isinstance(x, (tuple, list)) else [None, None, None]
+        )
+    )
+    # logger.info(f'Miller index {clean_merge["miller_index"]}')
+
+    clean_merge["sites"] = clean_merge.apply(
+        lambda row: {
+            "shift": row["shift"],
+            "top": row["top"],
+            "sites_coords": row["adsorption_site"],
+        },
+        axis=1,
+    )
+    logger.info(f'sites {clean_merge["sites"]}')
+
+    clean_merge.drop(columns=["shift", "top", "adsorption_site"], inplace=True)
+
+    return clean_merge
 
 
 def load_metadata(downloaded_pkl_path):
