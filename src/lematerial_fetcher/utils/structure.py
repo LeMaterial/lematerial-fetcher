@@ -85,12 +85,19 @@ def get_optimade_from_pymatgen(
         }
         for element in elements
     ]
+    # Lattice and dimensionality
+    lattice_vectors = structure.lattice.matrix.tolist()
+
     # Determine dimensionality metadata
     if role == "molecule":
         dimension_types = [0, 0, 0]
         nperiodic_dimensions = 0
     elif role == "slab":
-        dimension_types = [1, 0, 1]
+        # Identifying the largest lattice vector (i.e., the vacuum direction).
+        lengths = [np.linalg.norm(vec) for vec in lattice_vectors]
+        non_periodic_axis = int(np.argmax(lengths))
+        dimension_types = [1, 1, 1]
+        dimension_types[non_periodic_axis] = 0
         nperiodic_dimensions = 2
     else:  # bulk, adslab, other
         dimension_types = [1, 1, 1]
@@ -99,9 +106,6 @@ def get_optimade_from_pymatgen(
     # Structure metadata
     nsites = len(structure.sites)
     nelements = len(elements)
-
-    # Lattice and dimensionality
-    lattice_vectors = structure.lattice.matrix.tolist()
 
     return {
         # Required fields
@@ -183,7 +187,11 @@ def get_optimade_from_atoms(atoms: Atoms, role: str = None, name: str = None) ->
         dimension_types = [0, 0, 0]
         nperiodic_dimensions = 0
     elif role == "slab":
-        dimension_types = [1, 0, 1]
+        dimension_types = [1, 1, 1]
+        # Identifying the largest lattice vector (i.e., the vacuum direction).
+        lengths = [np.linalg.norm(vec) for vec in atoms.get_cell()]
+        non_periodic_axis = int(np.argmax(lengths))
+        dimension_types[non_periodic_axis] = 0
         nperiodic_dimensions = 2
     else:  # adslab, other_structures
         dimension_types = [1, 1, 1]
