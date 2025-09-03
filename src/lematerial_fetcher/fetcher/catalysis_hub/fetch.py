@@ -32,10 +32,8 @@ class CatalysisHubFetcher(BaseFetcher):
 
     def get_items_to_process(self) -> ItemsInfo:
         pub_ids = fetch_all_pub_ids()
-        # logger.info(f"{pub_ids}")
-        # breakpoint()
-        pub_ids = ["MamunHighT2019", "JungSpin2025"]
-
+        logger.info(f"Number of publications in Catalysis Hub: {len(pub_ids)}")
+        logger.info(f"List of publications in Catalysis Hub: {pub_ids}")
         start_offset = self.config.page_offset
         return ItemsInfo(start_offset, items=pub_ids, total_count=len(pub_ids))
 
@@ -77,7 +75,9 @@ class CatalysisHubFetcher(BaseFetcher):
         )
         combined_df.to_pickle(combined_df_output_path)
 
-        logger.info("Saved all reactions DataFrame")
+        logger.info(
+            f"Saved concatenated dataset to one pkl file : {combined_df_output_path}"
+        )
 
         # upload_pkl_to_huggingface_dataset(
         #     pkl_path=combined_df_output_path,
@@ -92,7 +92,10 @@ class CatalysisHubFetcher(BaseFetcher):
             df_path=combined_df_output_path,
             store_path=adsorption_output_path,
         )
-        logger.info("Saved adsorption reactions DataFrame")
+
+        logger.info(
+            f"Saved adsorption reactions dataset to one pkl file : {adsorption_output_path}"
+        )
 
         # upload_pkl_to_huggingface_dataset(
         #     pkl_path=adsorption_df,

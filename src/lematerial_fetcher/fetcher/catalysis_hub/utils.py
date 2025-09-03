@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 from datasets import Dataset
 from pathlib import Path
-
+import pickle
 from lematerial_fetcher.database.mysql import MySQLDatabase, execute_sql_file
 from lematerial_fetcher.utils.io import (
     download_file,
@@ -352,11 +352,15 @@ def get_concatenated_df(output_dir):
             except Exception as e:
                 print(f"Failed to read {fname}: {e}")
 
+    logger.info(f"Number of pkl files to concatenate {len(all_dfs)}")
+
     if not all_dfs:
         logger.info("No valid .pkl files found.")
         return pd.DataFrame()
 
     combined_df = pd.concat(all_dfs, ignore_index=True)
+
+    logger.info(f"Number of rows in concatenated dataset: {len(combined_df)}")
 
     return combined_df
 
@@ -405,6 +409,8 @@ def adsorption_reactions_dataset(df_path: str, store_path: str):
         & df["product_other"].apply(is_empty_or_na)
     ]
 
+    logger.info(f"Number of rows in adsorption dataset: {len(df_ads)}")
+
     df_ads.to_pickle(store_path)
     return df_ads
 
@@ -424,9 +430,13 @@ def upload_pkl_to_huggingface_dataset(pkl_path: str, dataset_name: str):
     -------
     None
     """
-    df = pd.read_pickle(pkl_path)
-
+    with open(pkl_path, "rb") as f:
+        df = pickle.load(f)
+    print("opened pkl")
+    df = pd.DataFrame(df)
+    print("to dataframe ok")
     hf_dataset = Dataset.from_pandas(df)
+    print("to Dataset ok")
     hf_dataset.push_to_hub(dataset_name)
 
 
