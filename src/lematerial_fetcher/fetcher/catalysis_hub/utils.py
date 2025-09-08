@@ -115,6 +115,7 @@ def reactions_from_dataset(pub_id, page_size=10):
                 reactionSystems {{
                   name
                   systems {{
+                    id
                     energy
                     InputFile(format: "json")
                   }}
@@ -148,6 +149,7 @@ def aseify_reactions(reactions):
             with io.StringIO() as tmp_file:
                 system = reaction["reactionSystems"][j].pop("systems")
                 energy = system.pop("energy")
+                system_id = system.pop("id")
                 tmp_file.write(system.pop("InputFile"))
                 tmp_file.seek(0)
                 atoms = ase.io.read(tmp_file, format="json")
@@ -157,8 +159,10 @@ def aseify_reactions(reactions):
             atoms.calc = calculator
             reaction["reactionSystems"][j]["atoms"] = atoms
             reaction["reactionSystems"][j]["energy"] = energy
+            reaction["reactionSystems"][j]["id"] = system_id
+
         reaction["reactionSystems"] = {
-            x["name"]: {"atoms": x["atoms"], "energy": x["energy"]}
+            x["name"]: {"atoms": x["atoms"], "energy": x["energy"], "id": x["id"]}
             for x in reaction["reactionSystems"]
         }
 
@@ -250,10 +254,9 @@ def parse_reactions_with_roles(pub_ids):
 
                 # Initialize row with lists and all expected keys
                 row = {
-                    "publication": pub_id,
+                    "publication": "CatalysisHub-" + pub_id,
                     "equation": r["Equation"],
                     "reaction_energy": r.get("reactionEnergy", ""),
-                    "activation_energy": r.get("activationEnergy", ""),
                     "miller_index": miller_index,
                     "sites": r.get("sites", ""),
                     "other_structure": [],
@@ -271,11 +274,16 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    system_id = system.get("id")
+                    immutable_id = f"CatalysisHub-{system_id}" if system_id else None
                     role = get_system_role(name)
 
                     try:
                         optimade_structure = get_optimade_from_atoms(
-                            atoms, role=role, name=name
+                            atoms,
+                            role=role,
+                            name=name,
+                            immutable_id=immutable_id,
                         )
 
                     except Exception as e:
@@ -291,11 +299,16 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    system_id = system.get("id")
+                    immutable_id = f"CatalysisHub-{system_id}" if system_id else None
                     role = get_system_role(name)
 
                     try:
                         optimade_structure = get_optimade_from_atoms(
-                            atoms, role=role, name=name
+                            atoms,
+                            role=role,
+                            name=name,
+                            immutable_id=immutable_id,
                         )
 
                     except Exception as e:
@@ -312,11 +325,16 @@ def parse_reactions_with_roles(pub_ids):
                     system = r["reactionSystems"][name]
                     atoms = system.get("atoms")
                     energy = system.get("energy")
+                    system_id = system.get("id")
+                    immutable_id = f"CatalysisHub-{system_id}" if system_id else None
                     role = get_system_role(name)
 
                     try:
                         optimade_structure = get_optimade_from_atoms(
-                            atoms, role=role, name=name
+                            atoms,
+                            role=role,
+                            name=name,
+                            immutable_id=immutable_id,
                         )
 
                     except Exception as e:
