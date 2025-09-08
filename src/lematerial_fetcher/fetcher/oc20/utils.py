@@ -25,6 +25,9 @@ from lematerial_fetcher.utils.logging import logger
 from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
 OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
+OC20_MAPPING_URL = (
+    "https://dl.fbaipublicfiles.com/opencatalystproject/data/oc20_data_mapping.pkl"
+)
 
 
 def download_and_extract(
@@ -284,15 +287,18 @@ def data_to_row(data_row):
     slab_energy = None
     adslab_energy = data_row.get("y_relaxed", None)
 
-    eq_left = molecule.composition.formula + " + " + slab.composition.formula
-    eq_right = adslab.composition.formula
+    eq_left = (
+        molecule.composition.to_pretty_string()
+        + " + "
+        + slab.composition.to_pretty_string()
+    )
+    eq_right = adslab.composition.to_pretty_string()
     equation = f"{eq_left} -> {eq_right}"
 
     row = {
         "publication": "oc20",
         "equation": equation,
         "reaction_energy": None,
-        "activation_energy": None,
         "other_structure": [],
         "other_structure_energy": [],
     }
@@ -305,21 +311,31 @@ def data_to_row(data_row):
 
     row["join_key"] = "random" + str(data_row["sid"])
 
+    immutable_id = "oc20-" + str(data_row["sid"])
+
     row["reactant_slab"].append(
-        get_optimade_from_pymatgen(slab, role="slab", name="star")
+        get_optimade_from_pymatgen(
+            slab, role="slab", name="star", immutable_id=immutable_id
+        )
     )
     row["reactant_slab_energy"].append(slab_energy)
 
     row["reactant_molecule"].append(
         get_optimade_from_pymatgen(
-            molecule, role="molecule", name=molecule.composition.formula + "gas"
+            molecule,
+            role="molecule",
+            name=molecule.composition.to_pretty_string() + "gas",
+            immutable_id=immutable_id,
         )
     )
     row["reactant_molecule_energy"].append(molecule_energy)
 
     row["product_adslab"].append(
         get_optimade_from_pymatgen(
-            adslab, role="adslab", name=molecule.composition.formula + "star"
+            adslab,
+            role="adslab",
+            name=molecule.composition.to_pretty_string() + "star",
+            immutable_id=immutable_id,
         )
     )
     row["product_adslab_energy"].append(adslab_energy)
@@ -328,6 +344,23 @@ def data_to_row(data_row):
 
 
 def clean_merge(merged_df):
+
+    merged_df["reactant_molecule"] = merged_df.apply(update_immutable_id_ads, axis=1)
+
+    merged_df["miller_index"] = merged_df["miller_index"].apply(
+        lambda x: (
+            [int(i) for i in x] if isinstance(x, (tuple, list)) else [None, None, None]
+        )
+    )
+
+    merged_df["sites"] = merged_df.apply(
+        lambda row: {
+            "shift": row["shift"],
+            "top": row["top"],
+            "sites_coords": row["adsorption_site"],
+        },
+        axis=1,
+    )
 
     cols_to_drop = [
         "bulk_id",
@@ -338,28 +371,66 @@ def clean_merge(merged_df):
         "class",
         "anomaly",
         "split",
+        "shift",
+        "top",
+        "adsorption_site",
     ]
-    clean_merge = merged_df.drop(columns=cols_to_drop, errors="ignore")
-    clean_merge["miller_index"] = clean_merge["miller_index"].apply(
-        lambda x: (
-            [int(i) for i in x] if isinstance(x, (tuple, list)) else [None, None, None]
+
+    merged_df.drop(columns=cols_to_drop, inplace=True)
+
+    mapping_adslab_slab = "/home/amandine_rossello_entalpic_ai/lematerial-fetcher/src/lematerial_fetcher/fetcher/oc20/slab_energy.pkl"
+    mapping_adslab_slab = pickle.load(open(mapping_adslab_slab, "rb"))
+    mapping_adslab_slab = pd.DataFrame(mapping_adslab_slab)
+
+    merged_df["reactant_slab"] = merged_df.apply(
+        lambda row: update_slab_immutable_id(row, mapping_adslab_slab), axis=1
+    )
+    merged_df["reactant_slab_energy"] = merged_df.apply(
+        lambda row: get_slab_energy_from_mapping(row, mapping_adslab_slab), axis=1
+    )
+
+    return merged_df
+
+
+def update_immutable_id_ads(row):
+    ads_id = row.get("ads_id")
+    molecules = row.get("reactant_molecule", [])
+    for struct in molecules:
+        struct["immutable_id"] = (
+            "oc20-" + str(ads_id) if ads_id is not None else struct.get("immutable_id")
         )
-    )
-    # logger.info(f'Miller index {clean_merge["miller_index"]}')
+    return molecules
 
-    clean_merge["sites"] = clean_merge.apply(
-        lambda row: {
-            "shift": row["shift"],
-            "top": row["top"],
-            "sites_coords": row["adsorption_site"],
-        },
-        axis=1,
-    )
-    logger.info(f'sites {clean_merge["sites"]}')
 
-    clean_merge.drop(columns=["shift", "top", "adsorption_site"], inplace=True)
+def update_slab_immutable_id(row, mapping_df):
+    slab = row.get("reactant_slab", [])
+    adslab = row.get("reactant_adslab", [])
 
-    return clean_merge
+    if not adslab or not slab:
+        return slab
+
+    adslab_immutable_id = adslab[0].get("immutable_id", "")
+    adslab_rid = adslab_immutable_id.replace("oc20-", "")
+    mapping_df["adslab_rid"] = mapping_df["adslab_rid"].astype(str)
+
+    match = mapping_df[mapping_df["adslab_rid"] == adslab_rid]
+    if not match.empty:
+        slab_rid = match.iloc[0]["slab_rid"]
+        slab[0]["immutable_id"] = f"oc20-{slab_rid}"
+    return slab
+
+
+def get_slab_energy_from_mapping(row, mapping_df):
+    adslab = row.get("reactant_adslab", [])
+    if not adslab:
+        return None
+
+    adslab_immutable_id = adslab[0].get("immutable_id", "")
+    adslab_rid = adslab_immutable_id.replace("oc20-", "")
+    mapping_df["adslab_rid"] = mapping_df["adslab_rid"].astype(str)
+
+    match = mapping_df[mapping_df["adslab_rid"] == adslab_rid]
+    return match.iloc[0]["slab_energy"] if not match.empty else None
 
 
 def load_metadata(downloaded_pkl_path):
