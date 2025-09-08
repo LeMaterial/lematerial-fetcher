@@ -41,7 +41,7 @@ def get_composition_reduced_from_descriptive_formula(batch):
 
 
 def get_optimade_from_pymatgen(
-    structure: Structure, role: str = None, name: str = None
+    structure: Structure, role: str = None, name: str = None, immutable_id: str = None
 ) -> dict:
     """
     Extracts the possible fields from a pymatgen Structure object
@@ -68,7 +68,7 @@ def get_optimade_from_pymatgen(
     chemical_formula_reduced = get_composition_reduced_from_reduced_dict(reduced_dict)
     chemical_formula_anonymous = structure.composition.anonymized_formula
     # TODO(Ramlaoui): Maybe we should use the factor here?
-    chemical_formula_descriptive = structure.composition.formula
+    chemical_formula_descriptive = structure.composition.to_pretty_string()
 
     # Site and position data
     cartesian_site_positions = structure.cart_coords.tolist()
@@ -123,6 +123,7 @@ def get_optimade_from_pymatgen(
         "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
         "system_name": name,
+        "immutable_id": immutable_id,
     }
 
 
@@ -157,7 +158,9 @@ def stress_matrix_from_voigt_6_stress(voigt_6_stress: list[float]) -> list[float
     ]
 
 
-def get_optimade_from_atoms(atoms: Atoms, role: str = None, name: str = None) -> dict:
+def get_optimade_from_atoms(
+    atoms: Atoms, role: str = None, name: str = None, immutable_id: str = None
+) -> dict:
     """
     Extract OPTIMADE-compliant structure metadata from an ASE Atoms object.
     """
@@ -226,4 +229,5 @@ def get_optimade_from_atoms(atoms: Atoms, role: str = None, name: str = None) ->
         "nperiodic_dimensions": nperiodic_dimensions,
         "lattice_vectors": lattice_vectors,
         "system_name": name,
+        "immutable_id": immutable_id,
     }
