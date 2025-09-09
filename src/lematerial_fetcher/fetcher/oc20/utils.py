@@ -22,7 +22,7 @@ PathType = str | Path
 
 
 from lematerial_fetcher.utils.logging import logger
-from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
+from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen_oc20
 
 OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
 OC20_MAPPING_URL = (
@@ -287,17 +287,8 @@ def data_to_row(data_row):
     slab_energy = None
     adslab_energy = data_row.get("y_relaxed", None)
 
-    eq_left = (
-        molecule.composition.to_pretty_string()
-        + " + "
-        + slab.composition.to_pretty_string()
-    )
-    eq_right = adslab.composition.to_pretty_string()
-    equation = f"{eq_left} -> {eq_right}"
-
     row = {
         "publication": "oc20",
-        "equation": equation,
         "reaction_energy": None,
         "other_structure": [],
         "other_structure_energy": [],
@@ -310,35 +301,38 @@ def data_to_row(data_row):
         row[f"product_{role}_energy"] = []
 
     row["join_key"] = "random" + str(data_row["sid"])
-
     immutable_id = "oc20-" + str(data_row["sid"])
 
     row["reactant_slab"].append(
-        get_optimade_from_pymatgen(
-            slab, role="slab", name="star", immutable_id=immutable_id
-        )
+        get_optimade_from_pymatgen_oc20(slab, role="slab", immutable_id=immutable_id)
     )
     row["reactant_slab_energy"].append(slab_energy)
 
     row["reactant_molecule"].append(
-        get_optimade_from_pymatgen(
+        get_optimade_from_pymatgen_oc20(
             molecule,
             role="molecule",
-            name=molecule.composition.to_pretty_string() + "gas",
             immutable_id=immutable_id,
         )
     )
     row["reactant_molecule_energy"].append(molecule_energy)
 
     row["product_adslab"].append(
-        get_optimade_from_pymatgen(
+        get_optimade_from_pymatgen_oc20(
             adslab,
             role="adslab",
-            name=molecule.composition.to_pretty_string() + "star",
             immutable_id=immutable_id,
         )
     )
     row["product_adslab_energy"].append(adslab_energy)
+
+    eq_left = (
+        row["reactant_molecule"][0]["system_name"]
+        + " + "
+        + row["reactant_slab"][0]["system_name"]
+    )
+    eq_right = row["product_adslab"][0]["system_name"]
+    row["equation"] = f"{eq_left} -> {eq_right}"
 
     return row
 
@@ -374,6 +368,7 @@ def clean_merge(merged_df):
         "shift",
         "top",
         "adsorption_site",
+        "join_key",
     ]
 
     merged_df.drop(columns=cols_to_drop, inplace=True)
