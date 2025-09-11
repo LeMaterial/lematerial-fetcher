@@ -10,6 +10,7 @@ import numpy as np
 from datasets import Dataset
 import pandas as pd
 import pickle
+from ase import Atoms
 
 import lzma
 import multiprocessing as mp
@@ -22,7 +23,10 @@ PathType = str | Path
 
 
 from lematerial_fetcher.utils.logging import logger
-from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen_oc20
+from lematerial_fetcher.utils.structure import (
+    get_optimade_from_pymatgen_oc20,
+    get_optimade_from_atoms,
+)
 
 OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
 OC20_MAPPING_URL = (
@@ -251,45 +255,47 @@ def convert_pyg_data(data: Data):
 def get_structures(data_row):
     """Extract slab and adsorbate as pymatgen.Structure objects from OC20 row."""
     atomic_numbers = data_row["atomic_numbers"]
-    positions = data_row["pos"]
+    initial_positions = data_row["pos"]
+    final_positions = data_row["pos_relaxed"]
     tags = data_row["tags"]
     lattice = data_row["cell"]
 
     # Boolean masks
-    slab_mask = np.isin(tags, [0, 1])
+    # slab_mask = np.isin(tags, [0, 1])
     molecule_mask = tags == 2
 
     # Extract structures
-    slab = Structure(
-        lattice=lattice,
-        species=atomic_numbers[slab_mask],
-        coords=positions[slab_mask],
-        coords_are_cartesian=True,
-    )
+    # slab = Structure(
+    #     lattice=lattice,
+    #     species=atomic_numbers[slab_mask],
+    #     coords=final_positions[slab_mask],
+    #     coords_are_cartesian=True,
+    # )
     molecule = Structure(
         lattice=lattice,
         species=atomic_numbers[molecule_mask],
-        coords=positions[molecule_mask],
+        coords=initial_positions[molecule_mask],
         coords_are_cartesian=True,
     )
     adslab = Structure(
         lattice=lattice,
         species=atomic_numbers,
-        coords=positions,
+        coords=final_positions,
         coords_are_cartesian=True,
     )
-    return slab, molecule, adslab
+    return molecule, adslab
 
 
 def data_to_row(data_row):
-    slab, molecule, adslab = get_structures(data_row)
-    molecule_energy = None
-    slab_energy = None
-    adslab_energy = data_row.get("y_relaxed", None)
+    molecule, adslab = get_structures(data_row)
+    # molecule_energy = None
+    # slab_energy = None
+    # adslab_energy = None
+    reaction_energy = data_row.get("y_relaxed", None)
 
     row = {
         "publication": "oc20",
-        "reaction_energy": None,
+        "reaction_energy": reaction_energy,
         "other_structure": [],
         "other_structure_energy": [],
     }
@@ -303,10 +309,10 @@ def data_to_row(data_row):
     row["join_key"] = "random" + str(data_row["sid"])
     immutable_id = "oc20-" + str(data_row["sid"])
 
-    row["reactant_slab"].append(
-        get_optimade_from_pymatgen_oc20(slab, role="slab", immutable_id=immutable_id)
-    )
-    row["reactant_slab_energy"].append(slab_energy)
+    # row["reactant_slab"].append(
+    #     get_optimade_from_pymatgen_oc20(slab, role="slab", immutable_id=immutable_id)
+    # )
+    # row["reactant_slab_energy"].append(slab_energy)
 
     row["reactant_molecule"].append(
         get_optimade_from_pymatgen_oc20(
@@ -315,7 +321,7 @@ def data_to_row(data_row):
             immutable_id=immutable_id,
         )
     )
-    row["reactant_molecule_energy"].append(molecule_energy)
+    # row["reactant_molecule_energy"].append(molecule_energy)
 
     row["product_adslab"].append(
         get_optimade_from_pymatgen_oc20(
@@ -324,30 +330,32 @@ def data_to_row(data_row):
             immutable_id=immutable_id,
         )
     )
-    row["product_adslab_energy"].append(adslab_energy)
+    # row["product_adslab_energy"].append(adslab_energy)
 
-    eq_left = (
-        row["reactant_molecule"][0]["system_name"]
-        + " + "
-        + row["reactant_slab"][0]["system_name"]
+    row["product_adslab"][0]["system_name"] = (
+        row["reactant_molecule"][0]["chemical_formula_reduced"] + "star"
     )
+
+    eq_left = row["reactant_molecule"][0]["system_name"] + " + " + "star"
     eq_right = row["product_adslab"][0]["system_name"]
     row["equation"] = f"{eq_left} -> {eq_right}"
 
     return row
 
 
-def clean_merge(merged_df):
+def get_left_out_fields(oc_20_df_metadata, oc20_slab):
 
-    merged_df["reactant_molecule"] = merged_df.apply(update_immutable_id_ads, axis=1)
+    oc_20_df_metadata["reactant_molecule"] = oc_20_df_metadata.apply(
+        update_immutable_id_ads, axis=1
+    )
 
-    merged_df["miller_index"] = merged_df["miller_index"].apply(
+    oc_20_df_metadata["miller_index"] = oc_20_df_metadata["miller_index"].apply(
         lambda x: (
             [int(i) for i in x] if isinstance(x, (tuple, list)) else [None, None, None]
         )
     )
 
-    merged_df["sites"] = merged_df.apply(
+    oc_20_df_metadata["sites"] = oc_20_df_metadata.apply(
         lambda row: {
             "shift": row["shift"],
             "top": row["top"],
@@ -371,20 +379,18 @@ def clean_merge(merged_df):
         "join_key",
     ]
 
-    merged_df.drop(columns=cols_to_drop, inplace=True)
+    oc_20_df_metadata.drop(columns=cols_to_drop, inplace=True)
 
-    mapping_adslab_slab = "/home/amandine_rossello_entalpic_ai/lematerial-fetcher/src/lematerial_fetcher/fetcher/oc20/slab_energy.pkl"
-    mapping_adslab_slab = pickle.load(open(mapping_adslab_slab, "rb"))
-    mapping_adslab_slab = pd.DataFrame(mapping_adslab_slab)
-
-    merged_df["reactant_slab"] = merged_df.apply(
-        lambda row: update_slab_immutable_id(row, mapping_adslab_slab), axis=1
-    )
-    merged_df["reactant_slab_energy"] = merged_df.apply(
-        lambda row: get_slab_energy_from_mapping(row, mapping_adslab_slab), axis=1
+    oc_20_df_metadata["reactant_slab"] = oc_20_df_metadata.apply(
+        lambda row: update_slab_immutable_id(row, oc20_slab), axis=1
     )
 
-    return merged_df
+    oc_20_df_metadata["reactant_slab_energy"] = oc_20_df_metadata.apply(
+        lambda row: get_slab_energy_from_mapping(row, oc20_slab), axis=1
+    )
+
+    # logger.info(f'reactant slab energy: {oc_20_df_metadata["reactant_slab_energy"]}')
+    return oc_20_df_metadata
 
 
 def update_immutable_id_ads(row):
@@ -399,33 +405,42 @@ def update_immutable_id_ads(row):
 
 def update_slab_immutable_id(row, mapping_df):
     slab = row.get("reactant_slab", [])
-    adslab = row.get("reactant_adslab", [])
+    adslab = row.get("product_adslab", [])
 
-    if not adslab or not slab:
-        return slab
-
-    adslab_immutable_id = adslab[0].get("immutable_id", "")
-    adslab_rid = adslab_immutable_id.replace("oc20-", "")
-    mapping_df["adslab_rid"] = mapping_df["adslab_rid"].astype(str)
+    adslab_immutable_id = adslab[0]["immutable_id"]
+    adslab_rid = int(adslab_immutable_id.replace("oc20-", ""))
 
     match = mapping_df[mapping_df["adslab_rid"] == adslab_rid]
+
     if not match.empty:
-        slab_rid = match.iloc[0]["slab_rid"]
-        slab[0]["immutable_id"] = f"oc20-{slab_rid}"
+        atoms = match.iloc[0]["last_atoms"]
+        if not isinstance(atoms, Atoms):
+            # Skip this row if it's not a valid structure (nan)
+            return slab
+
+        slab_rid = "oc20-" + str(match.iloc[0]["slab_rid"])
+        slab_structure = get_optimade_from_atoms(
+            atoms=atoms, role="slab", name="star", immutable_id=slab_rid
+        )
+        slab.append(slab_structure)
+
     return slab
 
 
 def get_slab_energy_from_mapping(row, mapping_df):
-    adslab = row.get("reactant_adslab", [])
-    if not adslab:
-        return None
+    reactant_slab_energy = row.get("reactant_slab_energy", [])
+    adslab = row.get("product_adslab", [])
 
-    adslab_immutable_id = adslab[0].get("immutable_id", "")
-    adslab_rid = adslab_immutable_id.replace("oc20-", "")
-    mapping_df["adslab_rid"] = mapping_df["adslab_rid"].astype(str)
+    adslab_immutable_id = adslab[0]["immutable_id"]
+    adslab_rid = int(adslab_immutable_id.replace("oc20-", ""))
 
     match = mapping_df[mapping_df["adslab_rid"] == adslab_rid]
-    return match.iloc[0]["slab_energy"] if not match.empty else None
+
+    if not match.empty:
+        slab_energy = match.iloc[0]["slab_energy"]
+        reactant_slab_energy.append(slab_energy)
+
+    return reactant_slab_energy
 
 
 def load_metadata(downloaded_pkl_path):
