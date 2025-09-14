@@ -11,6 +11,7 @@ from datasets import Dataset
 import pandas as pd
 import pickle
 from ase import Atoms
+from pymatgen.core import Composition
 
 import lzma
 import multiprocessing as mp
@@ -29,9 +30,23 @@ from lematerial_fetcher.utils.structure import (
 )
 
 OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz"
-OC20_MAPPING_URL = (
+OC20_METADATA_URL = (
     "https://dl.fbaipublicfiles.com/opencatalystproject/data/oc20_data_mapping.pkl"
 )
+OC20_SLAB_URL = (
+    "https://dl.fbaipublicfiles.com/opencatalystproject/data/mapping_adslab_slab.pkl"
+)
+OC20_ADSLAB_H_URL = (
+    "https://dl.fbaipublicfiles.com/opencatalystproject/data/per_adsorbate_is2res/1.tar"
+)
+
+
+REF_ENERGIES = {
+    "H": -3.477,
+    "O": -7.204,
+    "C": -7.282,
+    "N": -8.083,
+}
 
 
 def download_and_extract(
@@ -233,6 +248,64 @@ def uncompress_dir(
     return path
 
 
+def download_and_extract_tar(
+    url: str,
+    target_dir: Optional[str] = None,
+    unlink: bool = False,
+) -> str:
+    """
+    Download a .tar/.tar.gz/.tar.xz file and extract it.
+
+    Parameters
+    ----------
+    url : str
+        URL to download the tar archive from.
+    target_dir : Optional[str]
+        Directory to extract into. If None, uses current working directory.
+    unlink : bool
+        Whether to remove the downloaded archive after extraction.
+
+    Returns
+    -------
+    str
+        Path to the directory containing the extracted files.
+    """
+    if target_dir is None:
+        target_dir = os.getcwd()
+    os.makedirs(target_dir, exist_ok=True)
+
+    # File to save archive
+    archive_path = os.path.join(target_dir, os.path.basename(url))
+
+    # Download with progress
+    if not os.path.exists(archive_path):
+        print(f"Downloading {url} to {archive_path}...")
+        with tqdm(
+            unit="B", unit_scale=True, desc=f"Downloading {os.path.basename(url)}"
+        ) as pbar:
+
+            def report_progress(block_num, block_size, total_size):
+                if total_size > 0:
+                    if block_num == 0:
+                        pbar.total = total_size
+                    pbar.update(block_size)
+
+            urllib.request.urlretrieve(
+                url, filename=archive_path, reporthook=report_progress
+            )
+
+    # Extract tar (auto-detect compression)
+    print(f"Extracting {archive_path}...")
+    with tarfile.open(archive_path, "r:*") as tar:
+        tar.extractall(path=target_dir)
+
+    # Optional cleanup
+    if unlink:
+        os.remove(archive_path)
+
+    return target_dir
+
+
 def convert_pyg_data(data: Data):
     """
     Recreates the PyTorch Geometric Data object, useful to convert old
@@ -250,6 +323,37 @@ def convert_pyg_data(data: Data):
     """
 
     return Data(**{k: v for k, v in data.__dict__.items() if v is not None})
+
+
+def ref_molecule_energy(
+    chemical_formula: str, ref_energies: dict[str, float] = REF_ENERGIES
+) -> float:
+    """
+    Compute the reference energy of a molecule from its descriptive formula,
+    using a linear combination of atomic reference energies.
+
+    Parameters
+    ----------
+    chemical_formula : str
+        A chemical formula string (e.g. "H2O", "CH4", "NH3", etc.)
+    ref_energies : dict[str, float]
+        Reference atomic energies (in eV/atom)
+
+    Returns
+    -------
+    float
+        Total reference energy of the molecule (eV)
+    """
+    comp = Composition(chemical_formula)
+    counts = {el: int(round(amt)) for el, amt in comp.get_el_amt_dict().items()}
+
+    total_energy = 0.0
+    for el, n in counts.items():
+        if el not in ref_energies:
+            raise ValueError(f"No reference energy defined for element {el}")
+        total_energy += n * ref_energies[el]
+
+    return total_energy
 
 
 def get_structures(data_row):
@@ -321,7 +425,12 @@ def data_to_row(data_row):
             immutable_id=immutable_id,
         )
     )
-    # row["reactant_molecule_energy"].append(molecule_energy)
+
+    molecule_energy = ref_molecule_energy(
+        row["reactant_molecule"][0]["chemical_formula_descriptive"]
+    )
+
+    row["reactant_molecule_energy"].append(molecule_energy)
 
     row["product_adslab"].append(
         get_optimade_from_pymatgen_oc20(
