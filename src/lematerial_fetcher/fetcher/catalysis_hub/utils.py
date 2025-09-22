@@ -258,7 +258,7 @@ def parse_reactions_with_roles(pub_ids):
                     "equation": r["Equation"],
                     "reaction_energy": r.get("reactionEnergy", ""),
                     "miller_index": miller_index,
-                    "sites": r.get("sites", ""),
+                    "sites": {r.get("sites", "")},
                     "other_structure": [],
                     "other_structure_energy": [],
                 }
