@@ -163,7 +163,10 @@ def get_optimade_from_pymatgen_oc20(
     if role == "molecule":
         dimension_types = [0, 0, 0]
         nperiodic_dimensions = 0
+        if chemical_formula_descriptive in {"N1", "O1", "H1", "Cl1", "F1", "Br1", "I1"}:
+            chemical_formula_reduced = chemical_formula_descriptive[:-1]
         name = chemical_formula_reduced + "gas"
+
     elif role == "slab":
         # Identifying the largest lattice vector (i.e., the vacuum direction).
         lengths = [np.linalg.norm(vec) for vec in lattice_vectors]
@@ -247,7 +250,7 @@ def get_optimade_from_atoms(
     # Use your utility functions
     elements_ratios = get_element_ratios_from_composition_reduced(reduced_dict)
     chemical_formula_reduced = get_composition_reduced_from_reduced_dict(reduced_dict)
-
+    chemical_formula_descriptive = formula.format("hill")
     # Try to get anonymous formula (AB2, A2B, etc.)
     try:
         chemical_formula_anonymous = formula.stoichiometry()[0].format()
@@ -263,6 +266,8 @@ def get_optimade_from_atoms(
     if role == "molecule":
         dimension_types = [0, 0, 0]
         nperiodic_dimensions = 0
+        if chemical_formula_descriptive in {"N1", "O1", "H1", "Cl1", "F1", "Br1", "I1"}:
+            chemical_formula_reduced = chemical_formula_descriptive[:-1]
     elif role == "slab":
         dimension_types = [1, 1, 1]
         # Identifying the largest lattice vector (i.e., the vacuum direction).
@@ -297,7 +302,7 @@ def get_optimade_from_atoms(
         "species_at_sites": symbols,
         "species": species,
         "chemical_formula_anonymous": chemical_formula_anonymous,
-        "chemical_formula_descriptive": formula.format("hill"),
+        "chemical_formula_descriptive": chemical_formula_descriptive,
         "chemical_formula_reduced": chemical_formula_reduced,
         "dimension_types": dimension_types,
         "nperiodic_dimensions": nperiodic_dimensions,
