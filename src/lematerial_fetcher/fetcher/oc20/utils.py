@@ -33,8 +33,11 @@ OC20_BASE_URL = "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_
 OC20_METADATA_URL = (
     "https://dl.fbaipublicfiles.com/opencatalystproject/data/oc20_data_mapping.pkl"
 )
-OC20_SLAB_URL = (
+OC20_ADSLAB_SLAB_MAPPING_URL = (
     "https://dl.fbaipublicfiles.com/opencatalystproject/data/mapping_adslab_slab.pkl"
+)
+OC20_SLAB_URL = (
+    "https://dl.fbaipublicfiles.com/opencatalystproject/data/slab_trajectories.tar"
 )
 OC20_ADSLAB_H_URL = (
     "https://dl.fbaipublicfiles.com/opencatalystproject/data/per_adsorbate_is2res/1.tar"
@@ -107,6 +110,10 @@ def download_and_extract(
             miniters=1,
             desc=f"Downloading {os.path.basename(url)}",
         ) as pbar:
+            import ssl
+
+            ssl._create_default_https_context = ssl._create_unverified_context
+
             urllib.request.urlretrieve(
                 url, filename=target_file, reporthook=report_progress
             )
