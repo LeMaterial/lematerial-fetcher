@@ -33,6 +33,10 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTrajectoryTransformer,
     OQMDTransformer,
 )
+from lematerial_fetcher.fetcher.aflow.fetch import AflowFetcher
+# Not yet updated, so we will add later.
+# from lematerial_fetcher.fetcher.aflow.transform import AflowTransformer
+
 from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
     add_common_options,
@@ -62,6 +66,8 @@ _ALEXANDRIA_TRAJECTORY_BASE_URL = {
     "pbesol": "https://alexandria.icams.rub.de/data/pbesol/geo_opt_paths/",
 }
 _OQMD_BASE_URL = "https://oqmd.org/download/"
+
+_AFLOW_BASE_URL = "http://aflow.org/API/aflux/?"
 
 
 @click.group()
@@ -114,9 +120,17 @@ def oqmd_cli(ctx):
     pass
 
 
+@click.group(name="aflow")
+@click.pass_context
+def aflow_cli(ctx):
+    """Commands for fetching data from AFLOW."""
+    pass
+
+
 cli.add_command(mp_cli)
 cli.add_command(alexandria_cli)
 cli.add_command(oqmd_cli)
+cli.add_command(aflow_cli)
 
 # ------------------------------------------------------------------------------
 # MP commands
@@ -340,6 +354,30 @@ def oqmd_transform(ctx, traj, **config_kwargs):
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
+# ------------------------------------------------------------------------------
+# AFLOW commands
+# ------------------------------------------------------------------------------
+@aflow_cli.command(name="fetch")
+@click.pass_context
+@click.option(
+    "--base-url",
+    type=str,
+    help="Base URL for AFLOW. Can be set via LEMATERIALFETCHER_API_BASE_URL.",
+)
+@add_common_options
+@add_fetch_options
+def aflow_fetch(ctx, base_url, **config_kwargs):
+    """Fetch materials from AFLOW and store in Postgres."""
+    if not base_url:
+        config_kwargs["base_url"] = _AFLOW_BASE_URL
+        logger.info(f"Using AFLOW base URL: {config_kwargs['base_url']}")
+
+    config = load_fetcher_config(**config_kwargs)
+    try:
+        fetcher = AflowFetcher(config=config, debug=ctx.obj["debug"])
+        fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
 
 # ------------------------------------------------------------------------------
 # Push commands
