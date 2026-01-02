@@ -23,7 +23,7 @@ class AflowFetcher(BaseFetcher):
     # K points are not used in the HF dataset.
     KEYWORDS = [
         "auid",
-        "compound", "geometry", "positions_cartesian", "species", "natoms"
+        "compound", "geometry", "positions_cartesian", "species", "natoms",
         "aflow_prototype_label_relax", "composition", "spacegroup_relax",
 
         "energy_cell", "forces", "stress_tensor", "spin_cell", "spin_atom",
