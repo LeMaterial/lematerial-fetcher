@@ -1,109 +1,137 @@
-"""Fetcher for AFLOW data using the AFLOW ALFUX API.
-
-We tried to use the optimade API but failed running simple queries on the
-AFLOW database so we use the native AFLUX API for which we were
-sucessful getting 5000 rows of data per page.
-"""
 import requests
 import logging
-from typing import List, Dict, Any
-from lematerial_fetcher.fetcher.base import BaseFetcher
+from datetime import datetime
+from typing import List, Any
+
+from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo, BatchInfo
+from lematerial_fetcher.utils.config import FetcherConfig
+from lematerial_fetcher.database.postgres import StructuresDatabase
 
 logger = logging.getLogger(__name__)
-
 
 class AflowFetcher(BaseFetcher):
     """
     Fetcher for AFLOW data using the AFLUX Search API.
     """
     
-    API_URL = "http://aflow.org/API/aflux/?"
-    # We explicitly list keywords to keep response size manageable and 
-    # ensure we get the fields needed for the LeMatBulk dataset.
-    # K points are not used in the HF dataset.
+    API_URL = "https://aflow.org/API/aflux/?"
+    
     KEYWORDS = [
+        # --- Identifiers & Composition ---
         "auid",
-        "compound", "geometry", "positions_cartesian", "species", "natoms",
-        "aflow_prototype_label_relax", "composition", "spacegroup_relax",
-
-        "energy_cell", "forces", "stress_tensor", "spin_cell", "spin_atom",
-
+        "compound", 
+        "species", 
+        "natoms", 
+        "composition", 
+        "species_pp_version",      # Pseudopotential info
         
+        # --- Structure ---
+        "geometry",               # Full geometry string
+        "positions_cartesian",    # Cartesian positions
+        "spacegroup_relax",       # Relaxed spacegroup info
+        "aflow_prototype_label_relax", 
+        
+        # --- Energetics (Corrected Keys) ---
+        "enthalpy_formation_atom", # Was 'enthalpy_atom' (incorrect)
+        "energy_cell",
+        "energy_cutoff",
+        "dft_type", 
+        "kpoints_relax", 
+        
+        # --- Metadata ---
+        "aflowlib_date",          # Was 'aflowlib_entry_date' (incorrect)
+        
+        # --- Electronic / Magnetic ---
+        "spin_cell", 
+        "spin_atom",
+        
+        # --- Hubbard U (LDA+U) ---
+        "ldau_type", 
+        "ldau_l", 
+        "ldau_u", 
+        "ldau_j",
 
-        "dft_type", "kpoints_relax", "aflowlib_entry_date", "energy_cutoff",
-        # The Hubbard keys are only sometimes present.
-        # ldau_type=2
-        # ldau_l=[0, 2, 2]
-        # ldau_u=[0, 2.1, 3]
-        # ldau_j=[0, 0, 0]
-        # ldau_TLUJ=[2, [0, 2, 2], [0, 2.1, 3], [0, 0, 0]] # captures all in one.
-        "ldau_type", "ldau_l", "ldau_u", "ldau_j",
-        # Pseudopotential version of the species: ['Cr_pv:PAW_PBE:07Sep2000']
-        "species_pp_version"
+        # --- HEAVY FIELDS (Warning: High risk of 'DB Fail!null' timeouts) ---
+        # Uncomment these only if you absolutely need them.
+        "forces", 
+        "stress_tensor", 
     ]
-    PAGE_SIZE = 5000
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.table_name = "raw_aflow"
+    def setup_resources(self) -> None:
+        pass
 
-    def get_tasks(self) -> List[int]:
-        """
-        Determines the total number of entries and returns a list of page numbers.
-        """
+    def get_new_version(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def get_items_to_process(self) -> ItemsInfo:
         logger.info("Querying AFLOW for total entry count...")
-        
-        # AFLUX trick: paging(0) returns the total count in the response headers 
-        # or a small response containing the total count 'N'.
-        # We use a minimal query just to get the count.
-        query = f"catalog(),paging(0,0),format(json)"
-        response = requests.get(self.API_URL + query, timeout=60)
-        response.raise_for_status()
-        
-        # AFLOW returns meta info in a dictionary if paging(0,0) is used
-        meta = response.json()
-        total_count = int(meta.get("results_count", 3000000)) # Fallback to ~3M if key missing
-        
-        total_pages = (total_count // self.PAGE_SIZE) + 1
-        logger.info(f"Total entries: {total_count}, Total pages: {total_pages}")
-        
-        return list(range(1, total_pages + 1))
+        # Minimal query to get count without crashing
+        query = f"paging(0,0),format(json)"
+        try:
+            response = requests.get(self.API_URL + query, timeout=60)
+            response.raise_for_status()
+            meta = response.json()
+            total_count = int(meta.get("results_count", 3500000))
+        except Exception as e:
+            logger.warning(f"Could not determine total count: {e}. Defaulting to unlimited.")
+            total_count = None 
+        return ItemsInfo(start_offset=0, total_count=total_count)
 
-    def process_task(self, page_number: int) -> List[Dict[str, Any]]:
-        """
-        Fetches a single page of data from AFLOW.
-        """
+    @staticmethod
+    def _process_batch(
+        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+    ) -> bool:
+        page_size = batch.limit
+        page_number = (batch.offset // page_size) + 1
+        
+        logger.info(f"[Worker {worker_id}] Fetching Page {page_number} (Offset {batch.offset})...")
+
         query_args = [
-            "catalog()",
-            ",".join(self.KEYWORDS),
-            f"paging({page_number},{self.PAGE_SIZE})",
+            ",".join(AflowFetcher.KEYWORDS),
+            f"paging({page_number},{page_size})",
             "format(json)"
         ]
-        url = self.API_URL + ",".join(query_args)
+        url = AflowFetcher.API_URL + ",".join(query_args)
+        
+        # DEBUG: Print the simplified URL
+        print(f"\n[DEBUG] Requesting URL: {url}")
 
+        entries = []
         try:
-            # AFLOW API can be flaky; use a timeout and handle exceptions
             response = requests.get(url, timeout=120)
             
             if response.status_code != 200:
                 logger.error(f"Error {response.status_code} on page {page_number}")
-                return []
+                return False
 
-            data = response.json()
+            try:
+                data = response.json()
+            except requests.exceptions.JSONDecodeError:
+                print(f"\n[DEBUG] AFLOW Response Preview (Page {page_number}):")
+                print(response.text[:1000])
+                logger.error(f"AFLOW returned non-JSON. See stdout for details.")
+                return False
 
-            # Handle AFLOW's inconsistent return types (list vs dict)
             if isinstance(data, dict):
-                entries = list(data.values())
+                entries = list(data.values()) 
+                if "results_count" in data: 
+                    pass 
             elif isinstance(data, list):
                 entries = data
-            else:
-                entries = []
-
-            # We return the raw data; the Transform step will handle the schema mapping
-            return entries
-
+            
         except Exception as e:
             logger.error(f"Exception on page {page_number}: {e}")
-            # Returning an empty list allows the worker to finish 
-            # without crashing the entire parallel process.
-            return []
+            return False
+
+        if not entries:
+            return False
+
+        try:
+            db = StructuresDatabase(config.db_conn_str, config.table_name)
+            formatted_data = [{"data": entry} for entry in entries]
+            db.insert_data(formatted_data) 
+            logger.info(f"[Worker {worker_id}] Saved {len(entries)} entries from Page {page_number}")
+            return True
+        except Exception as e:
+            logger.error(f"Database error on page {page_number}: {e}")
+            raise e
