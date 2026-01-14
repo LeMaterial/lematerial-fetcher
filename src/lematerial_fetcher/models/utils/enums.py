@@ -8,8 +8,8 @@ class Functional(str, Enum):
     SCAN = "scan"
     r2SCAN = "r2scan"
 
-
 class Source(str, Enum):
     ALEXANDRIA = "alexandria"
     MP = "mp"
     OQMD = "oqmd"
+    AFLOW= "aflow"

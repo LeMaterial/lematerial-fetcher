@@ -2,7 +2,11 @@ import requests
 import logging
 from datetime import datetime
 from typing import List, Any
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
+from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo, BatchInfo
 from lematerial_fetcher.utils.config import FetcherConfig
 from lematerial_fetcher.database.postgres import StructuresDatabase
@@ -28,6 +32,7 @@ class AflowFetcher(BaseFetcher):
         # --- Structure ---
         "geometry",               # Full geometry string
         "positions_cartesian",    # Cartesian positions
+        "positions_fractional",   # Fractional positions
         "spacegroup_relax",       # Relaxed spacegroup info
         "aflow_prototype_label_relax", 
         
@@ -64,18 +69,38 @@ class AflowFetcher(BaseFetcher):
         return datetime.now().strftime("%Y-%m-%d")
 
     def get_items_to_process(self) -> ItemsInfo:
-        logger.info("Querying AFLOW for total entry count...")
-        # Minimal query to get count without crashing
-        query = f"paging(0,0),format(json)"
-        try:
-            response = requests.get(self.API_URL + query, timeout=60)
-            response.raise_for_status()
-            meta = response.json()
-            total_count = int(meta.get("results_count", 3500000))
-        except Exception as e:
-            logger.warning(f"Could not determine total count: {e}. Defaulting to unlimited.")
-            total_count = None 
-        return ItemsInfo(start_offset=0, total_count=total_count)
+        """
+        Returns ItemsInfo with total_count=None.
+        This triggers 'Unlimited Mode' in BaseFetcher.
+        """
+        logger.info("Skipping global count (AFLOW API is unstable for counts).")
+        logger.info("Fetcher will run in 'Unlimited Mode' until empty response.")
+        
+        # start_offset=0, total_count=None
+        return ItemsInfo(start_offset=0, total_count=None)
+
+
+    @staticmethod
+    def get_session():
+        """
+        Creates a requests Session with automatic retry logic.
+        This is done in case we request a page from AFLOW and it fails
+        because of too many requests or a connection error, we don't want to
+        stop our pipeline.
+        Retries on: Connection errors, 500, 502, 503, 504, 429 (Too Many Requests).
+        """
+        retry_strategy = Retry(
+            total=5,  # Retry 5 times
+            backoff_factor=1,  # Wait 1s, 2s, 4s...
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
 
     @staticmethod
     def _process_batch(
@@ -94,33 +119,37 @@ class AflowFetcher(BaseFetcher):
         url = AflowFetcher.API_URL + ",".join(query_args)
         
         # DEBUG: Print the simplified URL
-        print(f"\n[DEBUG] Requesting URL: {url}")
+        logger.debug(f"\n[DEBUG] Requesting URL: {url}")
 
         entries = []
+
+        session = AflowFetcher.get_session()
         try:
-            response = requests.get(url, timeout=120)
+            # session.get will now auto-retry 5 times before raising an exception
+            response = session.get(url, timeout=120)
             
+            # If we still get a bad status after 5 retries, we log it.
             if response.status_code != 200:
-                logger.error(f"Error {response.status_code} on page {page_number}")
-                return False
+                logger.error(f"Error {response.status_code} on page {page_number} after retries.")
+                # IMPORTANT: If 404, maybe return False (end of data). 
+                # If 500, we might want to return False to skip this page but keep going?
+                # Usually, returning False stops the fetcher. 
+                return False 
 
             try:
                 data = response.json()
             except requests.exceptions.JSONDecodeError:
-                print(f"\n[DEBUG] AFLOW Response Preview (Page {page_number}):")
-                print(response.text[:1000])
-                logger.error(f"AFLOW returned non-JSON. See stdout for details.")
+                logger.error(f"Error decoding JSON on page {page_number}.")
                 return False
 
             if isinstance(data, dict):
                 entries = list(data.values()) 
-                if "results_count" in data: 
-                    pass 
             elif isinstance(data, list):
                 entries = data
             
         except Exception as e:
-            logger.error(f"Exception on page {page_number}: {e}")
+            # This catches "Max Retries Exceeded"
+            logger.error(f"Failed to fetch page {page_number} after retries: {e}")
             return False
 
         if not entries:
@@ -128,10 +157,33 @@ class AflowFetcher(BaseFetcher):
 
         try:
             db = StructuresDatabase(config.db_conn_str, config.table_name)
-            formatted_data = [{"data": entry} for entry in entries]
-            db.insert_data(formatted_data) 
-            logger.info(f"[Worker {worker_id}] Saved {len(entries)} entries from Page {page_number}")
-            return True
+        # 1. Convert dicts to RawStructure objects
+            structures_to_save = []
+            for entry in entries:
+                # Use 'auid' as the ID, fallback to unknown if missing
+                row_id = entry.get("auid", "unknown")
+                
+                # Wrap in RawStructure so the DB handler can read .attributes
+                struct = RawStructure(
+                    id=row_id,
+                    type="structure",
+                    attributes={"data": entry}, # This matches your Transformer logic
+                    last_modified=datetime.now().isoformat()
+                )
+                structures_to_save.append(struct)
+
+            # 2. Use batch_insert_data for lists
+            if structures_to_save:
+                db.batch_insert_data(structures_to_save)
+                logger.info(f"[Worker {worker_id}] Saved {len(structures_to_save)} entries from Page {page_number}")
+            
+            return True    
+            
+            
+            # formatted_data = [{"data": entry} for entry in entries]
+            # db.insert_data(formatted_data) 
+            # logger.info(f"[Worker {worker_id}] Saved {len(entries)} entries from Page {page_number}")
+            # return True
         except Exception as e:
             logger.error(f"Database error on page {page_number}: {e}")
             raise e

@@ -4,6 +4,26 @@ from lematerial_fetcher.fetcher.aflow.fetch import AflowFetcher
 from lematerial_fetcher.fetch import BatchInfo, FetcherConfig
 
 @pytest.mark.slow
+def test_aflow_unlimited_mode_config():
+    """
+    Verifies that get_items_to_process returns None for total_count,
+    triggering the BaseFetcher's unlimited pagination loop.
+    """
+    mock_config = MagicMock(spec=FetcherConfig)
+    mock_config.db_conn_str = "postgresql://dummy"
+    mock_config.table_name = "test_aflow"
+
+    with patch("lematerial_fetcher.fetch.DatasetVersions"): 
+        fetcher = AflowFetcher(config=mock_config)
+        items_info = fetcher.get_items_to_process()
+
+    print(f"\nFetched Total Count: {items_info.total_count}")
+    
+    assert items_info.total_count is None
+    assert items_info.start_offset == 0
+
+
+@pytest.mark.slow
 def test_aflow_process_batch_live():
     """
     Integration test that hits the actual AFLOW API for one page
@@ -31,25 +51,43 @@ def test_aflow_process_batch_live():
         success = AflowFetcher._process_batch(
             batch=batch, 
             config=mock_config, 
-            manager_dict={}, 
+            manager_dict={},
             worker_id=99
         )
 
         # 5. Assertions
         assert success is True, "Process batch should return True if data was found"
+
+        assert mock_db_instance.batch_insert_data.called, "Should call batch_insert_data"
         
-        # Verify DB insertion was called
-        assert mock_db_instance.insert_data.called
+        # --- FIX 2: Get args from the correct method ---
+        call_args = mock_db_instance.batch_insert_data.call_args
+        # First arg of the first call is the list of structures
+        inserted_list = call_args[0][0] 
         
-        # Check what was inserted
-        call_args = mock_db_instance.insert_data.call_args
-        inserted_data = call_args[0][0] # First arg of the first call
+        assert len(inserted_list) > 0
         
-        assert len(inserted_data) > 0
-        assert "data" in inserted_data[0]
+        # --- FIX 3: Inspect RawStructure objects ---
+        # The list now contains RawStructure objects, NOT dicts.
+        first_structure = inserted_list[0]
         
-        # Check an actual AFLOW field inside the JSON blob
-        first_entry = inserted_data[0]["data"]
+        # Verify it's a RawStructure
+        assert hasattr(first_structure, "attributes"), "Should be a RawStructure object"
+        
+        # Unwrap the data (attributes["data"])
+        first_entry = first_structure.attributes["data"]
+        
         print(f"\nFetched Entry: {first_entry.get('auid', 'Unknown')}")
         assert "auid" in first_entry
         assert "species" in first_entry
+
+        # --- DATA TYPE INSPECTION ---
+        print("\n--- DATA TYPE INSPECTION ---")
+        geo = first_entry.get("geometry")
+        print(f"Geometry Type: {type(geo)}")
+        
+        pos = first_entry.get("positions_fractional")
+        print(f"Positions Type: {type(pos)}")
+
+        comp = first_entry.get("composition")
+        print(f"Composition Type: {type(comp)}")
