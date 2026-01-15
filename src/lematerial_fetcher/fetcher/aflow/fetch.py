@@ -63,7 +63,10 @@ class AflowFetcher(BaseFetcher):
     ]
 
     def setup_resources(self) -> None:
-        pass
+        """Set up necessary resources."""
+        logger.info("Setting up AFLOW fetcher resources")
+        # This reads self.config.table_name (aflow_source) and creates it in Postgres
+        self.setup_database()
 
     def get_new_version(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
