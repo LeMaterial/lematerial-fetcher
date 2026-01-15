@@ -292,11 +292,12 @@ def alexandria_transform(ctx, traj, **config_kwargs):
 @click.pass_context
 @add_common_options
 @add_transformer_options
-def aflow_transform(ctx, **config_kwargs):
+def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     """Transform materials from AFLOW.
 
     This command processes materials from AFLOW to store them in a clean format.
     """
+    del traj # Unused parameter passed by utils.cli.add_transformer_options.
     config = load_transformer_config(**config_kwargs)
     try:
         transformer = AflowTransformer(config=config, debug=ctx.obj["debug"])
