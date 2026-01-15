@@ -34,8 +34,7 @@ from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTransformer,
 )
 from lematerial_fetcher.fetcher.aflow.fetch import AflowFetcher
-# Not yet updated, so we will add later.
-# from lematerial_fetcher.fetcher.aflow.transform import AflowTransformer
+from lematerial_fetcher.fetcher.aflow.transform import AflowTransformer
 
 from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
@@ -288,6 +287,22 @@ def alexandria_transform(ctx, traj, **config_kwargs):
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
+
+@aflow_cli.command(name="transform")
+@click.pass_context
+@add_common_options
+@add_transformer_options
+def aflow_transform(ctx, **config_kwargs):
+    """Transform materials from AFLOW.
+
+    This command processes materials from AFLOW to store them in a clean format.
+    """
+    config = load_transformer_config(**config_kwargs)
+    try:
+        transformer = AflowTransformer(config=config, debug=ctx.obj["debug"])
+        transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
 
 # ------------------------------------------------------------------------------
 # OQMD commands
