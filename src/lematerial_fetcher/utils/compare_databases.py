@@ -38,12 +38,14 @@ print(f"Hugging Face Rows: {count_hf}")
 print(f"Local Postgres Rows: {count_pg}")
 
 # Example: Find missing IDs (IDs in HF that are missing locally)
-# Assuming 'immutable_id' is the common key
+# Assuming 'id' is the common alexandria key
+
+# FIX: Change p.immutable_id to p.id
 missing_df = con.sql("""
     SELECT h.immutable_id
     FROM hf_data h
-    LEFT JOIN local_db.alexandria_source p ON h.immutable_id = p.immutable_id
-    WHERE p.immutable_id IS NULL
+    LEFT JOIN local_db.alexandria_source p ON h.immutable_id = p.id
+    WHERE p.id IS NULL
 """).df()
 
 print(f"Found {len(missing_df)} IDs present in HF but missing locally.")
