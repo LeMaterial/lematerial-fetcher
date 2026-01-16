@@ -24,6 +24,7 @@ dependencies = [
     "moyopy>=0.4.2",
     "ase>=3.24.0",
     "material-hasher",
+    "duckdb>=1.4.3",
 ]
 
 [project.scripts]
