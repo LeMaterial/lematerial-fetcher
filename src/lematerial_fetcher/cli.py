@@ -275,6 +275,9 @@ def alexandria_transform(ctx, traj, **config_kwargs):
     Options can be provided via command line arguments or environment variables.
     See individual option help for corresponding environment variables.
     """
+    if not config_kwargs.get("source_table_name"):
+        config_kwargs["source_table_name"] = "alexandria_source"
+
     config = load_transformer_config(**config_kwargs)
     try:
         if traj:
@@ -298,6 +301,10 @@ def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     This command processes materials from AFLOW to store them in a clean format.
     """
     del traj # Unused parameter passed by utils.cli.add_transformer_options.
+    # Set the destination table name for aflow data.
+    # This will overwrite defaults in your .env file.
+    if not config_kwargs.get("source_table_name"):
+        config_kwargs["source_table_name"] = "aflow_source"
     config = load_transformer_config(**config_kwargs)
     try:
         transformer = AflowTransformer(config=config, debug=ctx.obj["debug"])
@@ -384,6 +391,10 @@ def oqmd_transform(ctx, traj, **config_kwargs):
 @add_fetch_options
 def aflow_fetch(ctx, base_url, **config_kwargs):
     """Fetch materials from AFLOW and store in Postgres."""
+    # Set name of table to save aflow data. 
+    if not config_kwargs.get("table_name"):
+        config_kwargs["table_name"] = "aflow_source"
+    
     if not base_url:
         config_kwargs["base_url"] = _AFLOW_BASE_URL
         logger.info(f"Using AFLOW base URL: {config_kwargs['base_url']}")
