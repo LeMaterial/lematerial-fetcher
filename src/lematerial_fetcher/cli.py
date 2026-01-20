@@ -230,6 +230,8 @@ def alexandria_fetch(ctx, traj, base_url, functional, **config_kwargs):
     Options can be provided via command line arguments or environment variables.
     See individual option help for corresponding environment variables.
     """
+    if not config_kwargs.get("table_name"):
+        os.environ["LEMATERIALFETCHER_TABLE_NAME"] = "alexandria_source"
     if not base_url:
         if traj:
             assert functional in _ALEXANDRIA_TRAJECTORY_BASE_URL, (
@@ -276,7 +278,7 @@ def alexandria_transform(ctx, traj, **config_kwargs):
     See individual option help for corresponding environment variables.
     """
     if not config_kwargs.get("source_table_name"):
-        config_kwargs["source_table_name"] = "alexandria_source"
+        os.environ["LEMATERIALFETCHER_SOURCE_TABLE_NAME"] = "alexandria_source"
 
     config = load_transformer_config(**config_kwargs)
     try:
@@ -286,7 +288,7 @@ def alexandria_transform(ctx, traj, **config_kwargs):
             )
         else:
             transformer = AlexandriaTransformer(config=config, debug=ctx.obj["debug"])
-        transformer.transform()
+        transformer.transform()ggdggdGggdG
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
@@ -304,7 +306,7 @@ def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     # Set the destination table name for aflow data.
     # This will overwrite defaults in your .env file.
     if not config_kwargs.get("source_table_name"):
-        config_kwargs["source_table_name"] = "aflow_source"
+        os.environ["LEMATERIALFETCHER_SOURCE_TABLE_NAME"] = "aflow_source"
     config = load_transformer_config(**config_kwargs)
     try:
         transformer = AflowTransformer(config=config, debug=ctx.obj["debug"])
@@ -393,8 +395,9 @@ def aflow_fetch(ctx, base_url, **config_kwargs):
     """Fetch materials from AFLOW and store in Postgres."""
     # Set name of table to save aflow data. 
     if not config_kwargs.get("table_name"):
+        os.environ["LEMATERIALFETCHER_TABLE_NAME"] = "aflow_source"
+
         config_kwargs["table_name"] = "aflow_source"
-    
     if not base_url:
         config_kwargs["base_url"] = _AFLOW_BASE_URL
         logger.info(f"Using AFLOW base URL: {config_kwargs['base_url']}")
