@@ -288,7 +288,7 @@ def alexandria_transform(ctx, traj, **config_kwargs):
             )
         else:
             transformer = AlexandriaTransformer(config=config, debug=ctx.obj["debug"])
-        transformer.transform()ggdggdGggdG
+        transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 
@@ -397,7 +397,6 @@ def aflow_fetch(ctx, base_url, **config_kwargs):
     if not config_kwargs.get("table_name"):
         os.environ["LEMATERIALFETCHER_TABLE_NAME"] = "aflow_source"
 
-        config_kwargs["table_name"] = "aflow_source"
     if not base_url:
         config_kwargs["base_url"] = _AFLOW_BASE_URL
         logger.info(f"Using AFLOW base URL: {config_kwargs['base_url']}")
