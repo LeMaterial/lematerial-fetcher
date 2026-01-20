@@ -59,6 +59,14 @@ def process_batch(
     manager_dict : dict
         Shared dictionary to signal critical errors across processes
     """
+    # The script was crashing since if a connection to the database failed,
+    # the script in the finally block was executed and assumed a conneciton
+    # existed causing the entire program to end. This can happen if the database
+    # refuses a connection a to a worker since it already has too many connections.
+    # To fix this, we initialize variables to None outside the try block.
+    source_db = None
+    target_db = None
+
     try:
         # Create new database connections for this process
         source_db = StructuresDatabase(
@@ -117,8 +125,18 @@ def process_batch(
             manager_dict["occurred"] = True  # shared across processes
 
     finally:
-        source_db.close()
-        target_db.close()
+        # Only close if the objects connected to db that were actually created.
+        if source_db:
+            try:
+                source_db.close()
+            except Exception:
+                pass
+                
+        if target_db:
+            try:
+                target_db.close()
+            except Exception:
+                pass
 
 
 class BaseTransformer(ABC, Generic[TDatabase, TStructure]):
