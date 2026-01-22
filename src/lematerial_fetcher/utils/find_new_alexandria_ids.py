@@ -17,6 +17,24 @@ def main():
         print(f"❌ Failed to attach to Postgres: {e}")
         return
 
+    print("--- 🔍 INSPECTION MODE ---")
+
+    print("\n👉 LOCAL DB (optimade_structures) IDs:")
+    con.sql("""
+        SELECT immutable_id 
+        FROM local_db.optimade_structures 
+        WHERE source = 'alexandria' 
+        LIMIT 5
+    """).show()
+
+    print("\n👉 HUGGING FACE (Parquet) IDs:")
+    con.sql(f"""
+        SELECT immutable_id 
+        FROM read_parquet('{HF_PARQUET_PATH}') 
+        WHERE immutable_id LIKE 'agm%' 
+        LIMIT 5
+    """).show()
+
     # ---------------------------------------------------------
     # PART 1: ID Comparison (immutable_id)
     # ---------------------------------------------------------
