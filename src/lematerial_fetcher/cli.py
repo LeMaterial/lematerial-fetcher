@@ -306,10 +306,17 @@ def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     # Set the destination table name for aflow data.
     # This will overwrite defaults in your .env file.
     os.environ["LEMATERIALFETCHER_SOURCE_TABLE_NAME"] = "aflow_source"
-    # Remove source_table_name from config_kwargs to avoid conflicts with the new
-    # environment variable. This will override what is set in the .env file.
+    
     config_kwargs.pop("source_table_name", None)
     config = load_transformer_config(**config_kwargs)
+    # --- SANITY CHECK LOGGING ---
+    logger.info("\n" + "="*50)
+    logger.info("STARTING AFLOW TRANSFORM JOB")
+    logger.info("-" * 50)
+    logger.info(f"READING FROM (Source):   {config.source_table_name}")
+    logger.info(f"WRITING TO (Dest):       {config.table_name}")
+    logger.info("="*50 + "\n")
+    # ----------------------------
     try:
         transformer = AflowTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
@@ -396,14 +403,21 @@ def oqmd_transform(ctx, traj, **config_kwargs):
 def aflow_fetch(ctx, base_url, **config_kwargs):
     """Fetch materials from AFLOW and store in Postgres."""
     # Set name of table to save aflow data. 
-    if not config_kwargs.get("table_name"):
-        os.environ["LEMATERIALFETCHER_TABLE_NAME"] = "aflow_source"
-
+    os.environ["LEMATERIALFETCHER_TABLE_NAME"] = "aflow_source"
+    config_kwargs.pop("table_name", None)
     if not base_url:
         config_kwargs["base_url"] = _AFLOW_BASE_URL
         logger.info(f"Using AFLOW base URL: {config_kwargs['base_url']}")
 
     config = load_fetcher_config(**config_kwargs)
+    # --- SANITY CHECK LOGGING ---
+    logger.info("\n" + "="*50)
+    logger.info("STARTING AFLOW FETCH JOB")
+    logger.info("-" * 50)
+    logger.info(f"FETCHING FROM (URL):      {config.base_url}")
+    logger.info(f"SAVING TO (Table):        {config.table_name}")
+    logger.info("="*50 + "\n")
+    # ----------------------------
     try:
         fetcher = AflowFetcher(config=config, debug=ctx.obj["debug"])
         fetcher.fetch()
