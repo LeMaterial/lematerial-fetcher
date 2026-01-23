@@ -305,16 +305,25 @@ def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     del traj # Unused parameter passed by utils.cli.add_transformer_options.
     # Set the destination table name for aflow data.
     # This will overwrite defaults in your .env file.
-    os.environ["LEMATERIALFETCHER_SOURCE_TABLE_NAME"] = "aflow_source"
+    # In config.py, 'table_name' maps to the SOURCE table.
+    config_kwargs["table_name"] = "aflow_source"
+
+    # In config.py, 'dest_table_name' maps to the DESTINATION table.
+    config_kwargs["dest_table_name"] = "optimade_structures"
     
-    config_kwargs.pop("table_name", None)
+    # We do NOT use os.environ here because explicit args are cleaner.
+    # We do NOT set 'source_table_name' because the function doesn't accept that arg.
+    # ---------------------------------------------------------
+
     config = load_transformer_config(**config_kwargs)
+
     # --- SANITY CHECK LOGGING ---
     logger.info("\n" + "="*50)
     logger.info("STARTING AFLOW TRANSFORM JOB")
     logger.info("-" * 50)
+    # Note: config object uses specific attribute names once loaded
     logger.info(f"READING FROM (Source):   {config.source_table_name}")
-    logger.info(f"WRITING TO (Dest):       {config.table_name}")
+    logger.info(f"WRITING TO (Dest):       {config.dest_table_name}")
     logger.info("="*50 + "\n")
     # ----------------------------
     try:
