@@ -305,7 +305,6 @@ def aflow_transform(ctx, traj, **config_kwargs): # <--- Fix: Catch traj here
     del traj # Unused parameter passed by utils.cli.add_transformer_options.
     # Set the destination table name for aflow data.
     # This will overwrite defaults in your .env file.
-    config_kwargs["source_table_name"] = "aflow_source"
     os.environ["LEMATERIALFETCHER_SOURCE_TABLE_NAME"] = "aflow_source"
     
     config_kwargs.pop("table_name", None)
