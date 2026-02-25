@@ -30,6 +30,8 @@ class FetcherConfig(BaseConfig):
     mp_bucket_prefix: str
     mysql_config: Optional[dict] = None
     oqmd_download_dir: Optional[str] = None
+    lematrho_bucket_name: Optional[str] = None
+    lematrho_grid_shape: Optional[tuple[int, int, int]] = None
 
 
 @dataclass
@@ -43,6 +45,11 @@ class TransformerConfig(BaseConfig):
     db_fetch_batch_size: Optional[int] = None
     mp_task_table_name: Optional[str] = None
     mysql_config: Optional[dict] = None
+    lematrho_bucket_name: Optional[str] = None
+    bader_path: Optional[str] = None
+    chargemol_path: Optional[str] = None
+    chgsum_script_path: Optional[str] = None
+    atomic_densities_path: Optional[str] = None
 
 
 @dataclass
@@ -156,6 +163,8 @@ def load_fetcher_config(
     mp_bucket_name: Optional[str] = None,
     mp_bucket_prefix: Optional[str] = None,
     oqmd_download_dir: Optional[str] = None,
+    lematrho_bucket_name: Optional[str] = None,
+    lematrho_grid_shape: Optional[tuple[int, int, int]] = None,
     mysql_host: str = "localhost",
     mysql_user: Optional[str] = None,
     # No MySQL password parameter
@@ -189,6 +198,8 @@ def load_fetcher_config(
         "mp_bucket_name": mp_bucket_name,
         "mp_bucket_prefix": mp_bucket_prefix,
         "oqmd_download_dir": oqmd_download_dir,
+        "lematrho_bucket_name": lematrho_bucket_name,
+        "lematrho_grid_shape": lematrho_grid_shape,
     }
 
     # Validate required fields
@@ -245,6 +256,12 @@ def load_transformer_config(
     mysql_user: Optional[str] = None,
     mysql_database: str = "lematerial",
     mysql_cert_path: Optional[str] = None,
+    # LeMatRho-specific params
+    lematrho_bucket_name: Optional[str] = None,
+    bader_path: Optional[str] = None,
+    chargemol_path: Optional[str] = None,
+    chgsum_script_path: Optional[str] = None,
+    atomic_densities_path: Optional[str] = None,
     **base_config_kwargs: Any,
 ) -> TransformerConfig:
     """Loads transformer config from passed arguments.
@@ -337,6 +354,11 @@ def load_transformer_config(
         **base_config,
         **config,
         mysql_config=mysql_config,
+        lematrho_bucket_name=lematrho_bucket_name,
+        bader_path=bader_path,
+        chargemol_path=chargemol_path,
+        chgsum_script_path=chgsum_script_path,
+        atomic_densities_path=atomic_densities_path,
     )
 
 

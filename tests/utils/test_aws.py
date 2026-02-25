@@ -8,6 +8,7 @@ from botocore.stub import Stubber
 
 from lematerial_fetcher.utils.aws import (
     download_s3_object,
+    get_authenticated_aws_client,
     get_aws_client,
     get_latest_collection_version_prefix,
     list_s3_objects,
@@ -20,6 +21,39 @@ def test_get_aws_client():
 
     assert client._client_config.signature_version == UNSIGNED
     assert client._client_config.region_name == "us-east-1"
+
+
+def test_get_aws_client_unchanged():
+    """Regression: anonymous client still uses UNSIGNED after adding authenticated client"""
+    client = get_aws_client()
+    assert client._client_config.signature_version == UNSIGNED
+
+
+def test_get_authenticated_aws_client_no_unsigned():
+    """Test that authenticated client does not use UNSIGNED signature"""
+    client = get_authenticated_aws_client()
+    assert client._client_config.signature_version != UNSIGNED
+
+
+def test_get_authenticated_aws_client_has_retry_config():
+    """Test that authenticated client has adaptive retry configuration"""
+    client = get_authenticated_aws_client()
+    retry_config = client._client_config.retries
+    # boto3 converts max_attempts=3 to total_max_attempts=4 (initial + retries)
+    assert retry_config["total_max_attempts"] == 4
+    assert retry_config["mode"] == "adaptive"
+
+
+def test_get_authenticated_aws_client_default_region():
+    """Test that authenticated client defaults to us-east-1"""
+    client = get_authenticated_aws_client()
+    assert client._client_config.region_name == "us-east-1"
+
+
+def test_get_authenticated_aws_client_custom_region():
+    """Test that authenticated client accepts a custom region"""
+    client = get_authenticated_aws_client(region_name="eu-west-1")
+    assert client._client_config.region_name == "eu-west-1"
 
 
 @pytest.fixture

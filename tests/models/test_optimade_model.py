@@ -3,7 +3,9 @@ import datetime
 
 import pytest
 
+from lematerial_fetcher.database.postgres import OptimadeDatabase, TrajectoriesDatabase
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
+from lematerial_fetcher.models.utils.enums import Source
 
 # Test data for a valid structure
 VALID_STRUCTURE_DATA = {
@@ -249,3 +251,129 @@ def test_functional_enum():
         data["functional"] = func
         structure = OptimadeStructure(**data)
         assert structure.functional == func
+
+
+# -------------------------------------------------------------------
+# LeMatRho charge density field tests
+# -------------------------------------------------------------------
+
+
+def test_source_lematrho_is_valid():
+    """Test that LEMATRHO is a valid Source enum value."""
+    assert Source.LEMATRHO == "lematrho"
+    data = VALID_STRUCTURE_DATA.copy()
+    data["source"] = "lematrho"
+    structure = OptimadeStructure(**data)
+    assert structure.source == Source.LEMATRHO
+
+
+def test_charge_density_none_fields():
+    """Regression: existing VALID_STRUCTURE_DATA still passes with new optional fields as None."""
+    structure = OptimadeStructure(**VALID_STRUCTURE_DATA)
+    assert structure.compressed_charge_density is None
+    assert structure.compressed_aeccar0 is None
+    assert structure.compressed_aeccar1 is None
+    assert structure.compressed_aeccar2 is None
+    assert structure.charge_density_grid_shape is None
+    assert structure.bader_charges is None
+    assert structure.bader_atomic_volume is None
+    assert structure.ddec6_charges is None
+
+
+def test_structure_with_charge_density_fields():
+    """Test structure creation with all charge density fields populated."""
+    data = VALID_STRUCTURE_DATA.copy()
+    # nsites=2 so per-site lists must have length 2
+    data.update(
+        {
+            "compressed_charge_density": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]],
+            "compressed_aeccar0": [[[0.1, 0.2], [0.3, 0.4]], [[0.5, 0.6], [0.7, 0.8]]],
+            "compressed_aeccar1": [[[0.01, 0.02]]],
+            "compressed_aeccar2": [[[0.01, 0.02]]],
+            "charge_density_grid_shape": [2, 2, 2],
+            "bader_charges": [1.5, -1.5],
+            "bader_atomic_volume": [10.0, 12.0],
+            "ddec6_charges": [0.8, -0.8],
+        }
+    )
+    structure = OptimadeStructure(**data)
+    assert structure.charge_density_grid_shape == [2, 2, 2]
+    assert structure.bader_charges == [1.5, -1.5]
+    assert structure.bader_atomic_volume == [10.0, 12.0]
+    assert structure.ddec6_charges == [0.8, -0.8]
+    assert structure.compressed_charge_density is not None
+
+
+def test_bader_charges_wrong_length():
+    """Test that bader_charges with wrong length raises ValueError."""
+    data = VALID_STRUCTURE_DATA.copy()
+    data["bader_charges"] = [1.0, 2.0, 3.0]  # nsites=2, but 3 values
+    with pytest.raises(ValueError, match="bader_charges"):
+        OptimadeStructure(**data)
+
+
+def test_ddec6_charges_wrong_length():
+    """Test that ddec6_charges with wrong length raises ValueError."""
+    data = VALID_STRUCTURE_DATA.copy()
+    data["ddec6_charges"] = [1.0]  # nsites=2, but 1 value
+    with pytest.raises(ValueError, match="ddec6_charges"):
+        OptimadeStructure(**data)
+
+
+def test_bader_atomic_volume_wrong_length():
+    """Test that bader_atomic_volume with wrong length raises ValueError."""
+    data = VALID_STRUCTURE_DATA.copy()
+    data["bader_atomic_volume"] = [10.0, 12.0, 14.0]  # nsites=2, but 3 values
+    with pytest.raises(ValueError, match="bader_atomic_volume"):
+        OptimadeStructure(**data)
+
+
+def test_charge_density_grid_shape_validation():
+    """Test that charge_density_grid_shape must be exactly 3 elements."""
+    data = VALID_STRUCTURE_DATA.copy()
+
+    # Too short
+    data["charge_density_grid_shape"] = [15, 15]
+    with pytest.raises(ValueError):
+        OptimadeStructure(**data)
+
+    # Too long
+    data["charge_density_grid_shape"] = [15, 15, 15, 15]
+    with pytest.raises(ValueError):
+        OptimadeStructure(**data)
+
+
+def test_optimade_db_columns_include_charge_density_fields():
+    """Test that OptimadeDatabase.columns() includes the new charge density columns."""
+    cols = OptimadeDatabase.columns()
+    assert "compressed_charge_density" in cols
+    assert "compressed_aeccar0" in cols
+    assert "compressed_aeccar1" in cols
+    assert "compressed_aeccar2" in cols
+    assert "charge_density_grid_shape" in cols
+    assert "bader_charges" in cols
+    assert "bader_atomic_volume" in cols
+    assert "ddec6_charges" in cols
+
+
+def test_trajectories_db_columns_inherit_charge_density_fields():
+    """Test that TrajectoriesDatabase.columns() inherits the charge density columns."""
+    cols = TrajectoriesDatabase.columns()
+    assert "compressed_charge_density" in cols
+    assert "bader_charges" in cols
+    assert "ddec6_charges" in cols
+    # Also still has trajectory-specific columns
+    assert "relaxation_step" in cols
+    assert "relaxation_number" in cols
+
+
+def test_optimade_db_column_count_matches_insert_tuple():
+    """Guard test: verify that the number of columns matches what insert_data expects.
+
+    This prevents silent data corruption from tuple/column ordering mismatches
+    across the 4 manually maintained tuple definitions in postgres.py.
+    """
+    optimade_col_count = len(OptimadeDatabase.columns())
+    traj_col_count = len(TrajectoriesDatabase.columns())
+    # TrajectoriesDatabase should have exactly 2 more columns (relaxation_step, relaxation_number)
+    assert traj_col_count == optimade_col_count + 2

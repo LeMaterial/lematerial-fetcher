@@ -28,6 +28,8 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTrajectoryTransformer,
     MPTransformer,
 )
+from lematerial_fetcher.fetcher.lematrho.fetch import LeMatRhoFetcher
+from lematerial_fetcher.fetcher.lematrho.transform import LeMatRhoTransformer
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
 from lematerial_fetcher.fetcher.oqmd.transform import (
     OQMDTrajectoryTransformer,
@@ -37,6 +39,8 @@ from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
     add_common_options,
     add_fetch_options,
+    add_lematrho_fetch_options,
+    add_lematrho_transform_options,
     add_mp_fetch_options,
     add_mysql_options,
     add_push_options,
@@ -114,9 +118,17 @@ def oqmd_cli(ctx):
     pass
 
 
+@click.group(name="lematrho")
+@click.pass_context
+def lematrho_cli(ctx):
+    """Commands for fetching charge density data from LeMatRho."""
+    pass
+
+
 cli.add_command(mp_cli)
 cli.add_command(alexandria_cli)
 cli.add_command(oqmd_cli)
+cli.add_command(lematrho_cli)
 
 # ------------------------------------------------------------------------------
 # MP commands
@@ -336,6 +348,65 @@ def oqmd_transform(ctx, traj, **config_kwargs):
             )
         else:
             transformer = OQMDTransformer(config=config, debug=ctx.obj["debug"])
+        transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+# ------------------------------------------------------------------------------
+# LeMatRho commands
+# ------------------------------------------------------------------------------
+
+
+@lematrho_cli.command(name="fetch")
+@click.pass_context
+@add_common_options
+@add_fetch_options
+@add_lematrho_fetch_options
+def lematrho_fetch(ctx, **config_kwargs):
+    """Fetch charge density data from the LeMatRho S3 bucket.
+
+    Downloads CHGCAR/AECCAR files, compresses charge densities via pyrho,
+    and stores compressed grids in the raw_structures database table.
+
+    Requires AWS credentials (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY).
+    """
+    config_kwargs["base_url"] = "DUMMY_BASE_URL"  # Not needed for LeMatRho
+    config_kwargs["mp_bucket_name"] = ""  # Not needed for LeMatRho
+    config_kwargs["mp_bucket_prefix"] = ""  # Not needed for LeMatRho
+
+    # Convert grid_shape tuple from Click to proper format
+    if "grid_shape" in config_kwargs:
+        config_kwargs["lematrho_grid_shape"] = config_kwargs.pop("grid_shape")
+
+    config = load_fetcher_config(**config_kwargs)
+    try:
+        fetcher = LeMatRhoFetcher(config=config, debug=ctx.obj["debug"])
+        fetcher.fetch()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@lematrho_cli.command(name="transform")
+@click.pass_context
+@add_common_options
+@add_transformer_options
+@add_lematrho_transform_options
+def lematrho_transform(ctx, force, **config_kwargs):
+    """Transform raw LeMatRho structures into OPTIMADE format.
+
+    Optionally runs Bader and DDEC6 charge analysis using external tools.
+
+    External tool requirements:
+    - bader executable (--bader-path or on PATH)
+    - perl + chgsum.pl script (--chgsum-script-path)
+    - chargemol executable (--chargemol-path or on PATH)
+    - PMG_VASP_PSP_DIR environment variable for POTCAR generation
+    - Atomic densities directory (--atomic-densities-path) for DDEC6
+    """
+    config = load_transformer_config(**config_kwargs)
+    try:
+        transformer = LeMatRhoTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)

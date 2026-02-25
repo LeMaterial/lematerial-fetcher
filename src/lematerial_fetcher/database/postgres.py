@@ -494,6 +494,14 @@ class OptimadeDatabase(StructuresDatabase):
             "space_group_it_number": "INTEGER",
             "cross_compatibility": "BOOLEAN",
             "bawl_fingerprint": "TEXT",
+            "compressed_charge_density": "JSONB",
+            "compressed_aeccar0": "JSONB",
+            "compressed_aeccar1": "JSONB",
+            "compressed_aeccar2": "JSONB",
+            "charge_density_grid_shape": "INTEGER[]",
+            "bader_charges": "FLOAT[]",
+            "bader_atomic_volume": "FLOAT[]",
+            "ddec6_charges": "FLOAT[]",
         }
 
     def _prepare_species_data(self, species: list[dict[str, Any]]) -> list[Json]:
@@ -572,6 +580,14 @@ class OptimadeDatabase(StructuresDatabase):
                     structure.space_group_it_number,
                     structure.cross_compatibility,
                     structure.bawl_fingerprint,
+                    Json(structure.compressed_charge_density),
+                    Json(structure.compressed_aeccar0),
+                    Json(structure.compressed_aeccar1),
+                    Json(structure.compressed_aeccar2),
+                    structure.charge_density_grid_shape,
+                    structure.bader_charges,
+                    structure.bader_atomic_volume,
+                    structure.ddec6_charges,
                 )
                 cur.execute(query, input_data)
                 self.conn.commit()
@@ -639,6 +655,14 @@ class OptimadeDatabase(StructuresDatabase):
                             structure.space_group_it_number,
                             structure.cross_compatibility,
                             structure.bawl_fingerprint,
+                            Json(structure.compressed_charge_density),
+                            Json(structure.compressed_aeccar0),
+                            Json(structure.compressed_aeccar1),
+                            Json(structure.compressed_aeccar2),
+                            structure.charge_density_grid_shape,
+                            structure.bader_charges,
+                            structure.bader_atomic_volume,
+                            structure.ddec6_charges,
                         )
                     )
 
@@ -740,6 +764,14 @@ class TrajectoriesDatabase(OptimadeDatabase):
                     structure.space_group_it_number,
                     structure.cross_compatibility,
                     structure.bawl_fingerprint,
+                    Json(structure.compressed_charge_density),
+                    Json(structure.compressed_aeccar0),
+                    Json(structure.compressed_aeccar1),
+                    Json(structure.compressed_aeccar2),
+                    structure.charge_density_grid_shape,
+                    structure.bader_charges,
+                    structure.bader_atomic_volume,
+                    structure.ddec6_charges,
                     # trajectory-specific fields
                     structure.relaxation_step,
                     structure.relaxation_number,
@@ -810,6 +842,14 @@ class TrajectoriesDatabase(OptimadeDatabase):
                             structure.space_group_it_number,
                             structure.cross_compatibility,
                             structure.bawl_fingerprint,
+                            Json(structure.compressed_charge_density),
+                            Json(structure.compressed_aeccar0),
+                            Json(structure.compressed_aeccar1),
+                            Json(structure.compressed_aeccar2),
+                            structure.charge_density_grid_shape,
+                            structure.bader_charges,
+                            structure.bader_atomic_volume,
+                            structure.ddec6_charges,
                             # trajectory-specific fields
                             structure.relaxation_step,
                             structure.relaxation_number,

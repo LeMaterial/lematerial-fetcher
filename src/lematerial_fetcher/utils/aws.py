@@ -27,6 +27,32 @@ def get_aws_client(region_name: str = "us-east-1"):
     return s3_client
 
 
+def get_authenticated_aws_client(region_name: str = "us-east-1"):
+    """Returns a configured S3 client using the default AWS credential chain.
+
+    Uses AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN,
+    or IAM roles for authentication. Includes adaptive retry configuration.
+
+    Parameters
+    ----------
+    region_name: str, default='us-east-1'
+        The AWS region for the S3 client.
+
+    Returns
+    -------
+    s3_client: boto3.client
+        A configured S3 client with authenticated credentials
+    """
+    s3_client = boto3.client(
+        "s3",
+        config=Config(
+            retries={"max_attempts": 3, "mode": "adaptive"},
+            region_name=region_name,
+        ),
+    )
+    return s3_client
+
+
 def get_latest_collection_version_prefix(
     client, bucket_name: str, bucket_prefix: str, collections_prefix: str
 ) -> str:

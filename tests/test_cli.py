@@ -231,6 +231,148 @@ def test_cli_args_override_env_vars():
             assert call_kwargs["db_host"] == "cli.host"
 
 
+def test_lematrho_subcommands():
+    """Test that lematrho subcommands are correctly registered."""
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["lematrho", "--help"])
+    assert result.exit_code == 0
+    assert "Commands for fetching charge density data from LeMatRho" in result.output
+    assert "fetch" in result.output
+    assert "transform" in result.output
+
+
+def test_lematrho_fetch_help():
+    """Test that lematrho fetch --help returns 0 and shows expected options."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["lematrho", "fetch", "--help"])
+    assert result.exit_code == 0
+    assert "--lematrho-bucket-name" in result.output
+    assert "--grid-shape" in result.output
+
+
+def test_lematrho_transform_help():
+    """Test that lematrho transform --help returns 0 and shows expected options."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["lematrho", "transform", "--help"])
+    assert result.exit_code == 0
+    assert "--bader-path" in result.output
+    assert "--chargemol-path" in result.output
+    assert "--chgsum-script-path" in result.output
+    assert "--atomic-densities-path" in result.output
+    assert "--force" in result.output
+    assert "--lematrho-bucket-name" in result.output
+
+
+@patch("lematerial_fetcher.cli.LeMatRhoFetcher")
+@patch("lematerial_fetcher.cli.load_fetcher_config")
+def test_lematrho_fetch_passes_cli_args(mock_load_config, mock_fetcher):
+    """Test that lematrho fetch command passes CLI args to the config loader."""
+    mock_config = FetcherConfig(
+        log_dir="./logs",
+        max_retries=3,
+        num_workers=2,
+        retry_delay=2,
+        log_every=1000,
+        page_offset=0,
+        page_limit=10,
+        base_url="DUMMY_BASE_URL",
+        table_name="test_table",
+        db_conn_str="db_conn_string",
+        mp_bucket_name="",
+        mp_bucket_prefix="",
+        lematrho_bucket_name="lemat-rho",
+        lematrho_grid_shape=(15, 15, 15),
+    )
+    mock_load_config.return_value = mock_config
+    mock_fetcher_instance = mock_fetcher.return_value
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "lematrho",
+            "fetch",
+            "--db-user",
+            "test_user",
+            "--table-name",
+            "test_raw",
+            "--lematrho-bucket-name",
+            "my-bucket",
+            "--grid-shape",
+            "20",
+            "20",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_load_config.assert_called_once()
+    call_kwargs = mock_load_config.call_args[1]
+    assert call_kwargs["db_user"] == "test_user"
+    assert call_kwargs["table_name"] == "test_raw"
+    assert call_kwargs["lematrho_bucket_name"] == "my-bucket"
+    assert call_kwargs["lematrho_grid_shape"] == (20, 20, 20)
+
+    mock_fetcher.assert_called_once_with(config=mock_config, debug=False)
+    mock_fetcher_instance.fetch.assert_called_once()
+
+
+@patch("lematerial_fetcher.cli.LeMatRhoTransformer")
+@patch("lematerial_fetcher.cli.load_transformer_config")
+def test_lematrho_transform_passes_cli_args(mock_load_config, mock_transformer):
+    """Test that lematrho transform command passes CLI args to the config loader."""
+    mock_config = TransformerConfig(
+        log_dir="./logs",
+        max_retries=3,
+        num_workers=2,
+        retry_delay=2,
+        log_every=1000,
+        page_offset=0,
+        page_limit=10,
+        source_db_conn_str="source_conn_string",
+        dest_db_conn_str="dest_conn_string",
+        source_table_name="source_table",
+        dest_table_name="dest_table",
+        batch_size=500,
+        lematrho_bucket_name="lemat-rho",
+        bader_path="/usr/bin/bader",
+    )
+    mock_load_config.return_value = mock_config
+    mock_transformer_instance = mock_transformer.return_value
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "lematrho",
+            "transform",
+            "--db-user",
+            "src_user",
+            "--table-name",
+            "src_table",
+            "--dest-table-name",
+            "dest_table",
+            "--bader-path",
+            "/opt/bader",
+            "--lematrho-bucket-name",
+            "my-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_load_config.assert_called_once()
+    call_kwargs = mock_load_config.call_args[1]
+    assert call_kwargs["db_user"] == "src_user"
+    assert call_kwargs["table_name"] == "src_table"
+    assert call_kwargs["dest_table_name"] == "dest_table"
+    assert call_kwargs["bader_path"] == "/opt/bader"
+    assert call_kwargs["lematrho_bucket_name"] == "my-bucket"
+
+    mock_transformer.assert_called_once_with(config=mock_config, debug=False)
+    mock_transformer_instance.transform.assert_called_once()
+
+
 def test_env_vars_pass_to_config():
     """Test that environment variables are passed to the config loader"""
 

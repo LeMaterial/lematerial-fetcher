@@ -250,6 +250,76 @@ def add_mp_fetch_options(f):
     return f
 
 
+def add_lematrho_fetch_options(f):
+    """Add LeMatRho fetch options to a command."""
+    decorators = [
+        click.option(
+            "--lematrho-bucket-name",
+            type=str,
+            default="lemat-rho",
+            envvar="LEMATERIALFETCHER_LEMATRHO_BUCKET_NAME",
+            help="LeMatRho S3 bucket name.",
+        ),
+        click.option(
+            "--grid-shape",
+            type=(int, int, int),
+            default=(15, 15, 15),
+            envvar="LEMATERIALFETCHER_LEMATRHO_GRID_SHAPE",
+            help="Grid shape for pyrho charge density compression (nx ny nz).",
+        ),
+    ]
+    for decorator in reversed(decorators):
+        f = decorator(f)
+    return f
+
+
+def add_lematrho_transform_options(f):
+    """Add LeMatRho transform options to a command."""
+    decorators = [
+        click.option(
+            "--lematrho-bucket-name",
+            type=str,
+            default="lemat-rho",
+            envvar="LEMATERIALFETCHER_LEMATRHO_BUCKET_NAME",
+            help="LeMatRho S3 bucket name for re-downloading raw files during transform.",
+        ),
+        click.option(
+            "--bader-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_BADER_PATH",
+            help="Path to the bader executable. If not provided, will search PATH.",
+        ),
+        click.option(
+            "--chargemol-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_CHARGEMOL_PATH",
+            help="Path to the chargemol executable. If not provided, will search PATH.",
+        ),
+        click.option(
+            "--chgsum-script-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_CHGSUM_SCRIPT_PATH",
+            help="Path to the chgsum.pl perl script for Bader charge summation.",
+        ),
+        click.option(
+            "--atomic-densities-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_ATOMIC_DENSITIES_PATH",
+            help="Path to atomic densities directory for DDEC6/chargemol analysis.",
+        ),
+        click.option(
+            "--force",
+            is_flag=True,
+            default=False,
+            envvar="LEMATERIALFETCHER_LEMATRHO_FORCE",
+            help="Force recompute Bader/DDEC6 even if already populated.",
+        ),
+    ]
+    for decorator in reversed(decorators):
+        f = decorator(f)
+    return f
+
+
 def add_push_options(f):
     """Add push options to a command."""
     decorators = [
