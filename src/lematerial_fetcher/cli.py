@@ -395,7 +395,7 @@ def lematrho_fetch(ctx, **config_kwargs):
 @add_common_options
 @add_transformer_options
 @add_lematrho_transform_options
-def lematrho_transform(ctx, force, **config_kwargs):
+def lematrho_transform(ctx, **config_kwargs):
     """Transform raw LeMatRho structures into OPTIMADE format.
 
     Optionally runs Bader and DDEC6 charge analysis using external tools.

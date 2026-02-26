@@ -1,11 +1,17 @@
 # Copyright 2025 Entalpic
 from datetime import datetime
 from multiprocessing import Manager
-from typing import Any, Optional
+from typing import Optional
 
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
 from lematerial_fetcher.fetcher.lematrho.utils import (
+    DEFAULT_MAX_WORKERS,
+    GRID_KEY_MAP,
+    RELAX_CALC_TYPE,
+    STATIC_CALC_TYPE,
+    STATIC_FILES,
+    VALID_PREFIXES,
     build_raw_structure,
     compress_chgcar,
     download_gz_file_from_s3,
@@ -15,18 +21,6 @@ from lematerial_fetcher.utils.aws import get_authenticated_aws_client
 from lematerial_fetcher.utils.config import FetcherConfig, load_fetcher_config
 from lematerial_fetcher.utils.logging import logger
 
-# S3 folder structure constants
-STATIC_CALC_TYPE = "LeMatRhoStaticMaker"
-RELAX_CALC_TYPE = "LeMatRhoRelaxMaker_1"
-STATIC_FILES = ["CHGCAR.gz", "AECCAR0.gz", "AECCAR1.gz", "AECCAR2.gz"]
-RELAX_FILES = ["vasprun.xml.gz"]
-
-# Only process materials with these ID prefixes
-VALID_PREFIXES = ("oqmd-", "mp-", "agm")
-
-# Conservative default due to high memory usage per CHGCAR (~hundreds of MB)
-DEFAULT_MAX_WORKERS = 4
-
 
 class LeMatRhoFetcher(BaseFetcher):
     """Fetcher for LeMatRho charge density data from an authenticated S3 bucket.
@@ -34,12 +28,9 @@ class LeMatRhoFetcher(BaseFetcher):
     Downloads CHGCAR/AECCAR files, compresses charge densities via pyrho,
     and stores compressed grids in the raw_structures PostgreSQL table.
 
-    Parameters
-    ----------
-    config : FetcherConfig, optional
-        Configuration for the fetcher. If None, loads from default location.
-    debug : bool
-        If True, process sequentially for debugging.
+    Args:
+        config: Fetcher configuration. If ``None``, loads from defaults.
+        debug: If ``True``, process sequentially for debugging.
     """
 
     def __init__(self, config: FetcherConfig = None, debug: bool = False):
@@ -57,10 +48,14 @@ class LeMatRhoFetcher(BaseFetcher):
     def get_items_to_process(self) -> ItemsInfo:
         """List material folder prefixes from S3, filtered by valid ID prefixes.
 
-        Returns
-        -------
-        ItemsInfo
-            List of material folder prefixes to process
+        Only folders starting with ``VALID_PREFIXES`` (``oqmd-``, ``mp-``,
+        ``agm``) are included.
+
+        Returns:
+            ``ItemsInfo`` containing material folder names to process.
+
+        Raises:
+            ValueError: If ``lematrho_bucket_name`` is not set in config.
         """
         bucket = self.config.lematrho_bucket_name
         if not bucket:
@@ -92,28 +87,21 @@ class LeMatRhoFetcher(BaseFetcher):
 
     @staticmethod
     def _process_batch(
-        batch: Any, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
+        batch: str, config: FetcherConfig, manager_dict: dict, worker_id: int = 0
     ) -> bool:
         """Process a single material folder from S3.
 
         Downloads vasprun.xml.gz (for structure), then CHGCAR/AECCAR files,
         compresses charge densities, and inserts into PostgreSQL.
 
-        Parameters
-        ----------
-        batch : str
-            Material folder name (e.g. "agm000001")
-        config : FetcherConfig
-            Configuration object
-        manager_dict : dict
-            Shared dictionary for inter-process communication
-        worker_id : int
-            Worker process identifier
+        Args:
+            batch: Material folder name, e.g. ``"agm000001"``.
+            config: Fetcher configuration.
+            manager_dict: Shared dict for inter-process communication.
+            worker_id: Worker process identifier.
 
-        Returns
-        -------
-        bool
-            True if successful, False if failed
+        Returns:
+            ``True`` if successful, ``False`` if failed.
         """
         material_id = batch
         bucket = config.lematrho_bucket_name
@@ -145,16 +133,10 @@ class LeMatRhoFetcher(BaseFetcher):
                 "aeccar1": None,
                 "aeccar2": None,
             }
-            grid_key_map = {
-                "CHGCAR.gz": "charge_density",
-                "AECCAR0.gz": "aeccar0",
-                "AECCAR1.gz": "aeccar1",
-                "AECCAR2.gz": "aeccar2",
-            }
 
             for filename in STATIC_FILES:
                 s3_key = f"{material_id}/{STATIC_CALC_TYPE}/{filename}"
-                grid_name = grid_key_map[filename]
+                grid_name = GRID_KEY_MAP[filename]
                 try:
                     raw_bytes = download_gz_file_from_s3(aws_client, bucket, s3_key)
                     compressed = compress_chgcar(raw_bytes, grid_shape)
@@ -198,10 +180,8 @@ class LeMatRhoFetcher(BaseFetcher):
     def get_new_version(self) -> str:
         """Get version identifier for this fetch run.
 
-        Returns
-        -------
-        str
-            Current date in YYYY-MM-DD format
+        Returns:
+            Current date as ``YYYY-MM-DD`` string.
         """
         return datetime.now().strftime("%Y-%m-%d")
 

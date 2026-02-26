@@ -261,7 +261,6 @@ def test_lematrho_transform_help():
     assert "--chargemol-path" in result.output
     assert "--chgsum-script-path" in result.output
     assert "--atomic-densities-path" in result.output
-    assert "--force" in result.output
     assert "--lematrho-bucket-name" in result.output
 
 

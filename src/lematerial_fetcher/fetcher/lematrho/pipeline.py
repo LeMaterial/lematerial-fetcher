@@ -20,25 +20,25 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pymatgen.core import Structure
 
-from lematerial_fetcher.fetcher.lematrho.fetch import (
-    RELAX_CALC_TYPE,
-    STATIC_CALC_TYPE,
-    STATIC_FILES,
-    VALID_PREFIXES,
-)
 from lematerial_fetcher.fetcher.lematrho.transform import (
-    BADER_TIMEOUT,
-    CHARGEMOL_TIMEOUT,
-    CHGSUM_TIMEOUT,
     get_cross_compatibility,
     parse_acf_dat,
     parse_ddec6_charges,
     read_potcar_zval,
 )
 from lematerial_fetcher.fetcher.lematrho.utils import (
+    BADER_TIMEOUT,
+    CHARGEMOL_TIMEOUT,
+    CHGSUM_TIMEOUT,
+    GRID_KEY_MAP,
+    RELAX_CALC_TYPE,
+    STATIC_CALC_TYPE,
+    STATIC_FILES,
+    VALID_PREFIXES,
     compress_chgcar,
     download_gz_file_from_s3,
     parse_vasprun_structure,
+    write_potcar,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.utils.aws import get_authenticated_aws_client
@@ -131,13 +131,6 @@ _BADER_FILES = {"CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"}
 # Files needed for DDEC6 analysis
 _DDEC6_FILES = {"CHGCAR.gz"}
 
-# Map from S3 filename to compressed grid key
-_GRID_KEY_MAP = {
-    "CHGCAR.gz": "charge_density",
-    "AECCAR0.gz": "aeccar0",
-    "AECCAR1.gz": "aeccar1",
-    "AECCAR2.gz": "aeccar2",
-}
 
 
 def _run_bader_from_bytes(
@@ -148,21 +141,18 @@ def _run_bader_from_bytes(
 ) -> tuple[Optional[list[float]], Optional[list[float]]]:
     """Run Bader charge analysis from raw decompressed file bytes.
 
-    Parameters
-    ----------
-    structure : Structure
-        Pymatgen Structure for POTCAR generation
-    raw_files : dict
-        {"CHGCAR": bytes, "AECCAR0": bytes, "AECCAR2": bytes}
-    tool_paths : dict
-        Tool path configuration from _validate_tools()
-    material_id : str
-        For logging
+    Writes raw VASP files to a temp directory, generates POTCAR, runs
+    ``chgsum.pl`` and ``bader``, and parses the resulting ACF.dat.
 
-    Returns
-    -------
-    tuple[Optional[list[float]], Optional[list[float]]]
-        (net_charges, atomic_volumes) or (None, None) on failure
+    Args:
+        structure: Pymatgen Structure for POTCAR generation.
+        raw_files: Mapping of VASP filenames to their raw bytes,
+            e.g. ``{"CHGCAR": b"...", "AECCAR0": b"...", "AECCAR2": b"..."}``.
+        tool_paths: Tool path configuration dict from ``_validate_tools()``.
+        material_id: Material identifier, used for logging.
+
+    Returns:
+        Tuple of ``(net_charges, atomic_volumes)`` or ``(None, None)`` on failure.
     """
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -172,7 +162,7 @@ def _run_bader_from_bytes(
                     f.write(raw_files[name])
 
             # Generate POTCAR
-            _write_potcar(structure, tmpdir)
+            write_potcar(structure, tmpdir)
 
             # Sum AECCAR0 + AECCAR2 -> CHGCAR_sum
             subprocess.run(
@@ -233,28 +223,24 @@ def _run_ddec6_from_bytes(
 ) -> Optional[list[float]]:
     """Run DDEC6 charge analysis from raw decompressed file bytes.
 
-    Parameters
-    ----------
-    structure : Structure
-        Pymatgen Structure for POTCAR generation
-    raw_files : dict
-        {"CHGCAR": bytes}
-    tool_paths : dict
-        Tool path configuration from _validate_tools()
-    material_id : str
-        For logging
+    Writes CHGCAR and POTCAR to a temp directory, runs chargemol, and
+    parses the DDEC6 net atomic charges.
 
-    Returns
-    -------
-    Optional[list[float]]
-        DDEC6 net charges per site, or None on failure
+    Args:
+        structure: Pymatgen Structure for POTCAR generation.
+        raw_files: Mapping with at least ``{"CHGCAR": b"..."}``.
+        tool_paths: Tool path configuration dict from ``_validate_tools()``.
+        material_id: Material identifier, used for logging.
+
+    Returns:
+        DDEC6 net charges per site, or ``None`` on failure.
     """
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "CHGCAR"), "wb") as f:
                 f.write(raw_files["CHGCAR"])
 
-            _write_potcar(structure, tmpdir)
+            write_potcar(structure, tmpdir)
 
             # Write chargemol job control file
             config_content = (
@@ -307,20 +293,21 @@ def _run_ddec6_from_bytes(
         return None
 
 
-def _write_potcar(structure: Structure, tmpdir: str) -> None:
-    """Generate POTCAR for the given structure. Requires PMG_VASP_PSP_DIR."""
-    from pymatgen.io.vasp.sets import MPRelaxSet
-
-    input_set = MPRelaxSet(structure)
-    input_set.potcar.write_file(os.path.join(tmpdir, "POTCAR"))
-
-
 def _structure_to_row(
     optimade_structure: OptimadeStructure,
 ) -> dict:
     """Convert an OptimadeStructure to a flat dict matching the Parquet schema.
 
     JSON-serializes species and compressed charge density fields.
+    Converts ``Functional`` enums to their string value and ``datetime``
+    to ISO format.
+
+    Args:
+        optimade_structure: Validated ``OptimadeStructure`` instance.
+
+    Returns:
+        Flat dict with one key per ``PARQUET_COLUMNS`` entry, ready for
+        ``pyarrow.Table.from_pydict()``.
     """
     row = {}
     for col in PARQUET_COLUMNS:
@@ -357,12 +344,9 @@ class LeMatRhoDirectPipeline:
     Bader and DDEC6 charge analysis, and writes Parquet files directly.
     No PostgreSQL required.
 
-    Parameters
-    ----------
-    config : DirectPipelineConfig
-        Pipeline configuration
-    debug : bool
-        If True, process sequentially for debugging
+    Args:
+        config: Pipeline configuration.
+        debug: If ``True``, process sequentially in the main process.
     """
 
     def __init__(self, config: DirectPipelineConfig, debug: bool = False):
@@ -378,7 +362,13 @@ class LeMatRhoDirectPipeline:
         os.makedirs(config.output_dir, exist_ok=True)
 
     def _validate_tools(self) -> dict:
-        """Check availability of external tools. Returns dict of tool paths."""
+        """Check availability of external tools for Bader/DDEC6 analysis.
+
+        Returns:
+            Dict with keys ``bader_path``, ``chargemol_path``,
+            ``chgsum_script_path``, ``perl_path``, ``atomic_densities_path``,
+            ``can_generate_potcar``, ``can_run_bader``, ``can_run_ddec6``.
+        """
         tools = {}
 
         tools["bader_path"] = self.config.bader_path or shutil.which("bader")
@@ -444,8 +434,14 @@ class LeMatRhoDirectPipeline:
 
         return tools
 
-    def run(self):
-        """Main entry point: list materials, process, write Parquet, optionally push."""
+    def run(self) -> None:
+        """Run the full pipeline: list materials, process, write Parquet, optionally push.
+
+        In debug mode, materials are processed sequentially in the main process.
+        Otherwise, uses a ``ProcessPoolExecutor`` with a work-stealing pattern.
+        Writes Parquet chunks of ``config.parquet_chunk_size`` rows using atomic
+        rename. Appends each processed ID to a checkpoint file for crash recovery.
+        """
         # 1. List material folders from S3
         logger.info("Listing material folders from S3...")
         material_ids = self._list_materials()
@@ -570,7 +566,11 @@ class LeMatRhoDirectPipeline:
             self._push_to_huggingface()
 
     def _list_materials(self) -> list[str]:
-        """List material folder prefixes from S3, filtered by valid ID prefixes."""
+        """List material folder prefixes from S3, filtered by ``VALID_PREFIXES``.
+
+        Returns:
+            Sorted list of material IDs (e.g. ``["agm000001", "mp-123", ...]``).
+        """
         client = get_authenticated_aws_client()
         bucket = self.config.lematrho_bucket_name
         paginator = client.get_paginator("list_objects_v2")
@@ -592,8 +592,18 @@ class LeMatRhoDirectPipeline:
     ) -> Optional[dict]:
         """Process a single material: download, compress, analyze, return row dict.
 
-        Runs in a worker process. Returns a flat dict ready for Parquet,
-        or None on failure.
+        Designed to run in a worker process. Creates a fresh AWS client per
+        invocation (boto3 clients are not multiprocess-safe). Calls
+        ``gc.collect()`` after each material to free memory from large CHGCAR
+        arrays.
+
+        Args:
+            material_id: Material folder name, e.g. ``"agm000001"``.
+            config: Pipeline configuration.
+            tool_paths: Tool path dict from ``_validate_tools()``.
+
+        Returns:
+            Flat dict matching ``PARQUET_COLUMNS``, or ``None`` on failure.
         """
         bucket = config.lematrho_bucket_name
         grid_shape = config.lematrho_grid_shape
@@ -629,7 +639,7 @@ class LeMatRhoDirectPipeline:
 
             for filename in STATIC_FILES:
                 s3_key = f"{material_id}/{STATIC_CALC_TYPE}/{filename}"
-                grid_name = _GRID_KEY_MAP[filename]
+                grid_name = GRID_KEY_MAP[filename]
                 try:
                     raw_bytes = download_gz_file_from_s3(aws_client, bucket, s3_key)
 
@@ -707,21 +717,35 @@ class LeMatRhoDirectPipeline:
             return None
 
     def _load_checkpoint(self) -> set[str]:
-        """Load processed material IDs from checkpoint file."""
+        """Load processed material IDs from checkpoint file.
+
+        Returns:
+            Set of already-processed material IDs. Empty set if no checkpoint exists.
+        """
         if not os.path.exists(self._checkpoint_path):
             return set()
         with open(self._checkpoint_path, "r") as f:
             return {line.strip() for line in f if line.strip()}
 
-    def _append_checkpoint(self, material_id: str):
-        """Append a material ID to the checkpoint file and flush to disk."""
+    def _append_checkpoint(self, material_id: str) -> None:
+        """Append a material ID to the checkpoint file and flush to disk.
+
+        Args:
+            material_id: ID to record as processed.
+        """
         with open(self._checkpoint_path, "a") as f:
             f.write(material_id + "\n")
             f.flush()
             os.fsync(f.fileno())
 
     def _get_next_chunk_index(self) -> int:
-        """Determine next chunk index from existing Parquet files."""
+        """Determine next chunk index from existing ``chunk_*.parquet`` files.
+
+        Ignores ``.tmp`` files left by interrupted writes.
+
+        Returns:
+            Next available chunk index (0 if no existing chunks).
+        """
         existing = glob(os.path.join(self.config.output_dir, "chunk_*.parquet"))
         if not existing:
             return 0
@@ -735,8 +759,13 @@ class LeMatRhoDirectPipeline:
                 pass
         return max(indices) + 1 if indices else 0
 
-    def _write_parquet_chunk(self, rows: list[dict], chunk_index: int):
-        """Write rows to a Parquet file atomically (write .tmp, then rename)."""
+    def _write_parquet_chunk(self, rows: list[dict], chunk_index: int) -> None:
+        """Write rows to a Parquet file atomically (write ``.tmp``, then rename).
+
+        Args:
+            rows: List of flat dicts matching ``PARQUET_COLUMNS``.
+            chunk_index: Chunk sequence number (zero-padded in filename).
+        """
         final_path = os.path.join(
             self.config.output_dir, f"chunk_{chunk_index:06d}.parquet"
         )
@@ -753,8 +782,8 @@ class LeMatRhoDirectPipeline:
             f"Wrote chunk {chunk_index} ({len(rows)} rows) to {final_path}"
         )
 
-    def _push_to_huggingface(self):
-        """Load all Parquet files and push to HuggingFace."""
+    def _push_to_huggingface(self) -> None:
+        """Load all Parquet files and push to HuggingFace as a private dataset."""
         from datasets import load_dataset
 
         parquet_files = os.path.join(self.config.output_dir, "chunk_*.parquet")

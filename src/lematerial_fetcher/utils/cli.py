@@ -307,13 +307,6 @@ def add_lematrho_transform_options(f):
             envvar="LEMATERIALFETCHER_ATOMIC_DENSITIES_PATH",
             help="Path to atomic densities directory for DDEC6/chargemol analysis.",
         ),
-        click.option(
-            "--force",
-            is_flag=True,
-            default=False,
-            envvar="LEMATERIALFETCHER_LEMATRHO_FORCE",
-            help="Force recompute Bader/DDEC6 even if already populated.",
-        ),
     ]
     for decorator in reversed(decorators):
         f = decorator(f)

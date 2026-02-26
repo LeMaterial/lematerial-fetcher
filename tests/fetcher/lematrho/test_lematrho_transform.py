@@ -297,7 +297,7 @@ class TestRunBaderAnalysis:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.subprocess.run"
             ) as mock_run,
-            patch.object(transformer_with_tools, "_write_potcar"),
+            patch("lematerial_fetcher.fetcher.lematrho.transform.write_potcar"),
             patch.object(
                 type(transformer_with_tools),
                 "aws_client",
@@ -323,7 +323,7 @@ class TestRunBaderAnalysis:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.subprocess.run"
             ) as mock_run,
-            patch.object(transformer_with_tools, "_write_potcar"),
+            patch("lematerial_fetcher.fetcher.lematrho.transform.write_potcar"),
             patch.object(
                 type(transformer_with_tools),
                 "aws_client",
@@ -369,8 +369,9 @@ class TestRunBaderAnalysis:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.download_gz_file_from_s3"
             ) as mock_dl,
-            patch.object(
-                transformer_with_tools, "_write_potcar", side_effect=Exception("No PSP")
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.transform.write_potcar",
+                side_effect=Exception("No PSP"),
             ),
             patch.object(
                 type(transformer_with_tools),
@@ -403,7 +404,7 @@ class TestRunDdec6Analysis:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.subprocess.run"
             ) as mock_run,
-            patch.object(transformer_with_tools, "_write_potcar"),
+            patch("lematerial_fetcher.fetcher.lematrho.transform.write_potcar"),
             patch.object(transformer_with_tools, "_write_chargemol_config"),
             patch.object(
                 type(transformer_with_tools),
@@ -429,7 +430,7 @@ class TestRunDdec6Analysis:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.subprocess.run"
             ) as mock_run,
-            patch.object(transformer_with_tools, "_write_potcar"),
+            patch("lematerial_fetcher.fetcher.lematrho.transform.write_potcar"),
             patch.object(transformer_with_tools, "_write_chargemol_config"),
             patch.object(
                 type(transformer_with_tools),
@@ -479,7 +480,7 @@ class TestTempDirectoryCleanup:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.subprocess.run"
             ),
-            patch.object(transformer_with_tools, "_write_potcar"),
+            patch("lematerial_fetcher.fetcher.lematrho.transform.write_potcar"),
             patch(
                 "lematerial_fetcher.fetcher.lematrho.transform.parse_acf_dat"
             ) as mock_parse,

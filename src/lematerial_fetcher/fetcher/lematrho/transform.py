@@ -9,7 +9,14 @@ from typing import Optional
 from pymatgen.core import Structure
 
 from lematerial_fetcher.database.postgres import OptimadeDatabase, StructuresDatabase
-from lematerial_fetcher.fetcher.lematrho.utils import download_gz_file_from_s3
+from lematerial_fetcher.fetcher.lematrho.utils import (
+    BADER_TIMEOUT,
+    CHARGEMOL_TIMEOUT,
+    CHGSUM_TIMEOUT,
+    STATIC_CALC_TYPE,
+    download_gz_file_from_s3,
+    write_potcar,
+)
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.transform import BaseTransformer
@@ -17,18 +24,17 @@ from lematerial_fetcher.utils.aws import get_authenticated_aws_client
 from lematerial_fetcher.utils.logging import logger
 from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
-STATIC_CALC_TYPE = "LeMatRhoStaticMaker"
-
-BADER_TIMEOUT = 600  # seconds
-CHGSUM_TIMEOUT = 300  # seconds
-CHARGEMOL_TIMEOUT = 600  # seconds
-
 
 def get_cross_compatibility(elements: list[str]) -> bool:
     """Determine cross-compatibility for LeMatRho structures.
 
-    Currently, Yb-containing structures are not cross-compatible
-    (same policy as Alexandria).
+    Yb-containing structures are excluded (same policy as Alexandria).
+
+    Args:
+        elements: List of element symbols in the structure.
+
+    Returns:
+        ``True`` if the structure is cross-compatible, ``False`` otherwise.
     """
     return "Yb" not in elements
 
@@ -36,15 +42,11 @@ def get_cross_compatibility(elements: list[str]) -> bool:
 def parse_acf_dat(filepath: str) -> tuple[list[float], list[float]]:
     """Parse Bader ACF.dat file for electron counts and atomic volumes.
 
-    Parameters
-    ----------
-    filepath : str
-        Path to ACF.dat file
+    Args:
+        filepath: Path to the ACF.dat file produced by bader.
 
-    Returns
-    -------
-    tuple[list[float], list[float]]
-        (electron_counts, atomic_volumes) per atom
+    Returns:
+        Tuple of ``(electron_counts, atomic_volumes)`` lists, one entry per atom.
     """
     electron_counts = []
     atomic_volumes = []
@@ -67,17 +69,13 @@ def parse_acf_dat(filepath: str) -> tuple[list[float], list[float]]:
 def read_potcar_zval(filepath: str) -> dict[str, float]:
     """Read valence electron counts from a POTCAR file.
 
-    Parses TITEL and ZVAL lines to build an element -> valence electrons mapping.
+    Parses TITEL and ZVAL lines to build an element-to-valence-electrons mapping.
 
-    Parameters
-    ----------
-    filepath : str
-        Path to POTCAR file
+    Args:
+        filepath: Path to the POTCAR file.
 
-    Returns
-    -------
-    dict[str, float]
-        Element symbol -> number of valence electrons
+    Returns:
+        Dict mapping element symbols to their number of valence electrons.
     """
     zval = {}
     current_element = None
@@ -102,15 +100,13 @@ def read_potcar_zval(filepath: str) -> dict[str, float]:
 def parse_ddec6_charges(tmpdir: str) -> list[float]:
     """Parse DDEC6 net atomic charges from chargemol output.
 
-    Parameters
-    ----------
-    tmpdir : str
-        Directory containing chargemol output files
+    Reads ``DDEC6_even_tempered_net_atomic_charges.xyz`` from *tmpdir*.
 
-    Returns
-    -------
-    list[float]
-        Net DDEC6 charges per atom
+    Args:
+        tmpdir: Directory containing chargemol output files.
+
+    Returns:
+        List of net DDEC6 charges, one per atom.
     """
     filepath = os.path.join(tmpdir, "DDEC6_even_tempered_net_atomic_charges.xyz")
     charges = []
@@ -130,15 +126,21 @@ class LeMatRhoTransformer(BaseTransformer):
     """Transformer for LeMatRho charge density data.
 
     Transforms raw structures (with compressed charge densities from the fetch step)
-    into OptimadeStructure objects. Optionally runs Bader and DDEC6 charge analysis
-    using external tools.
+    into ``OptimadeStructure`` objects. Optionally runs Bader and DDEC6 charge
+    analysis using external tools.
 
     External tool requirements:
-    - bader: Bader charge analysis executable
-    - perl + chgsum.pl: For summing AECCAR0 + AECCAR2 reference charge density
-    - chargemol: DDEC6 charge partitioning executable
-    - PMG_VASP_PSP_DIR: Environment variable for POTCAR generation
-    - atomic_densities directory: For DDEC6/chargemol analysis
+        - ``bader``: Bader charge analysis executable
+        - ``perl`` + ``chgsum.pl``: For summing AECCAR0 + AECCAR2
+        - ``chargemol``: DDEC6 charge partitioning executable
+        - ``PMG_VASP_PSP_DIR``: Env var for POTCAR generation
+        - atomic densities directory: For DDEC6/chargemol analysis
+
+    Args:
+        config: Transformer configuration.
+        database_class: Database class for storing results.
+        structure_class: Pydantic model class for validated structures.
+        debug: If ``True``, process sequentially for debugging.
     """
 
     def __init__(
@@ -158,8 +160,13 @@ class LeMatRhoTransformer(BaseTransformer):
         self._can_generate_potcar = False
         self._validate_tools()
 
-    def _validate_tools(self):
-        """Check availability of external tools and log warnings for missing ones."""
+    def _validate_tools(self) -> None:
+        """Check availability of external tools and log warnings for missing ones.
+
+        Sets instance attributes ``_bader_path``, ``_chargemol_path``,
+        ``_chgsum_script_path``, ``_perl_path``, ``_atomic_densities_path``,
+        and ``_can_generate_potcar``.
+        """
         self._bader_path = getattr(self.config, "bader_path", None) or shutil.which(
             "bader"
         )
@@ -249,19 +256,14 @@ class LeMatRhoTransformer(BaseTransformer):
     ) -> list[OptimadeStructure]:
         """Transform a raw LeMatRho structure into an OptimadeStructure.
 
-        Parameters
-        ----------
-        raw_structure : RawStructure
-            Raw structure from the fetch step, with charge density data in attributes
-        source_db : Optional[StructuresDatabase]
-            Not used for LeMatRho
-        task_table_name : Optional[str]
-            Not used for LeMatRho
+        Args:
+            raw_structure: Raw structure from the fetch step, with charge
+                density data in its attributes dict.
+            source_db: Not used for LeMatRho.
+            task_table_name: Not used for LeMatRho.
 
-        Returns
-        -------
-        list[OptimadeStructure]
-            Single-element list with the transformed structure
+        Returns:
+            Single-element list containing the transformed ``OptimadeStructure``.
         """
         attrs = raw_structure.attributes
         material_id = raw_structure.id
@@ -325,13 +327,17 @@ class LeMatRhoTransformer(BaseTransformer):
     ) -> tuple[Optional[list[float]], Optional[list[float]]]:
         """Run Bader charge analysis.
 
-        Downloads CHGCAR, AECCAR0, AECCAR2 from S3, runs chgsum.pl to create
-        the reference charge density (CHGCAR_sum), then runs bader and parses results.
+        Downloads CHGCAR, AECCAR0, AECCAR2 from S3, runs ``chgsum.pl`` to
+        create the reference charge density, then runs bader and parses results.
 
-        Returns
-        -------
-        tuple[Optional[list[float]], Optional[list[float]]]
-            (net_charges, atomic_volumes) or (None, None) on failure
+        Args:
+            structure: Pymatgen Structure for POTCAR generation.
+            s3_prefix: S3 folder prefix for this material.
+            material_id: Material identifier, used for logging.
+
+        Returns:
+            Tuple of ``(net_charges, atomic_volumes)`` or ``(None, None)``
+            on failure.
         """
         try:
             bucket = self.config.lematrho_bucket_name
@@ -346,7 +352,7 @@ class LeMatRhoTransformer(BaseTransformer):
                     del data
 
                 # Generate POTCAR
-                self._write_potcar(structure, tmpdir)
+                write_potcar(structure, tmpdir)
 
                 # Sum AECCAR0 + AECCAR2 -> CHGCAR_sum
                 subprocess.run(
@@ -407,10 +413,13 @@ class LeMatRhoTransformer(BaseTransformer):
         Downloads CHGCAR from S3, generates POTCAR, writes chargemol config,
         runs chargemol, and parses DDEC6 net charges.
 
-        Returns
-        -------
-        Optional[list[float]]
-            DDEC6 net charges per site, or None on failure
+        Args:
+            structure: Pymatgen Structure for POTCAR generation.
+            s3_prefix: S3 folder prefix for this material.
+            material_id: Material identifier, used for logging.
+
+        Returns:
+            DDEC6 net charges per site, or ``None`` on failure.
         """
         try:
             bucket = self.config.lematrho_bucket_name
@@ -423,7 +432,7 @@ class LeMatRhoTransformer(BaseTransformer):
                 del data
 
                 # Generate POTCAR
-                self._write_potcar(structure, tmpdir)
+                write_potcar(structure, tmpdir)
 
                 # Write chargemol job control file
                 self._write_chargemol_config(tmpdir)
@@ -455,18 +464,12 @@ class LeMatRhoTransformer(BaseTransformer):
             logger.warning(f"DDEC6 analysis failed for {material_id}: {e}")
             return None
 
-    def _write_potcar(self, structure: Structure, tmpdir: str) -> None:
-        """Generate POTCAR for the given structure.
-
-        Requires PMG_VASP_PSP_DIR environment variable to be set.
-        """
-        from pymatgen.io.vasp.sets import MPRelaxSet
-
-        input_set = MPRelaxSet(structure)
-        input_set.potcar.write_file(os.path.join(tmpdir, "POTCAR"))
-
     def _write_chargemol_config(self, tmpdir: str) -> None:
-        """Write job_control.txt for chargemol DDEC6 analysis."""
+        """Write ``job_control.txt`` for chargemol DDEC6 analysis.
+
+        Args:
+            tmpdir: Directory where the config file will be written.
+        """
         config_content = (
             "<net charge>\n"
             "0.0\n"

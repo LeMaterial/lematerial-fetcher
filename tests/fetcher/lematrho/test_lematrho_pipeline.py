@@ -871,7 +871,7 @@ class TestRunIntegration:
 
 
 class TestBaderFromBytes:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline._write_potcar")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.read_potcar_zval")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_acf_dat")
@@ -919,7 +919,7 @@ class TestBaderFromBytes:
         }
 
         with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline._write_potcar"
+            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
         ):
             with patch(
                 "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
@@ -952,7 +952,7 @@ class TestDdec6FromBytes:
         }
 
         with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline._write_potcar"
+            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
         ):
             with patch(
                 "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
@@ -963,3 +963,444 @@ class TestDdec6FromBytes:
                 )
 
         assert result is None
+
+    def test_happy_path(self):
+        """DDEC6 returns charges when subprocess succeeds."""
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        raw_files = {"CHGCAR": b"chgcar_data"}
+        tools = {
+            "chargemol_path": "/usr/bin/chargemol",
+            "atomic_densities_path": "/opt/densities",
+        }
+
+        with patch(
+            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
+        ):
+            with patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run"
+            ):
+                with patch(
+                    "lematerial_fetcher.fetcher.lematrho.pipeline.parse_ddec6_charges",
+                    return_value=[0.5, -0.5],
+                ):
+                    result = _run_ddec6_from_bytes(
+                        structure, raw_files, tools, "mp-test"
+                    )
+
+        assert result == [0.5, -0.5]
+
+    def test_timeout(self):
+        """DDEC6 returns None on timeout."""
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
+        )
+        raw_files = {"CHGCAR": b"x"}
+        tools = {
+            "chargemol_path": "/usr/bin/chargemol",
+            "atomic_densities_path": "/opt/densities",
+        }
+
+        with patch(
+            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
+        ):
+            with patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("chargemol", 600),
+            ):
+                result = _run_ddec6_from_bytes(
+                    structure, raw_files, tools, "mp-test"
+                )
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestValidateTools
+# ---------------------------------------------------------------------------
+
+
+class TestValidateTools:
+    def test_all_tools_available(self, mock_config):
+        """All tools present -> can_run_bader and can_run_ddec6 are True."""
+        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+            with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": "/opt/psp"}):
+                config = DirectPipelineConfig(
+                    lematrho_bucket_name="test-bucket",
+                    output_dir=mock_config.output_dir,
+                    bader_path="/usr/bin/bader",
+                    chargemol_path="/usr/bin/chargemol",
+                    chgsum_script_path=__file__,  # use this test file as a file that exists
+                    atomic_densities_path=os.path.dirname(__file__),  # dir that exists
+                )
+                pipeline = LeMatRhoDirectPipeline(config=config)
+
+        assert pipeline._tool_paths["can_run_bader"] is True
+        assert pipeline._tool_paths["can_run_ddec6"] is True
+        assert pipeline._tool_paths["can_generate_potcar"] is True
+
+    def test_no_tools_available(self, mock_config):
+        """No tools on PATH -> can_run_bader and can_run_ddec6 are False."""
+        with patch("shutil.which", return_value=None):
+            with patch.dict(os.environ, {}, clear=True):
+                config = DirectPipelineConfig(
+                    lematrho_bucket_name="test-bucket",
+                    output_dir=mock_config.output_dir,
+                )
+                pipeline = LeMatRhoDirectPipeline(config=config)
+
+        assert pipeline._tool_paths["can_run_bader"] is False
+        assert pipeline._tool_paths["can_run_ddec6"] is False
+        assert pipeline._tool_paths["can_generate_potcar"] is False
+
+    def test_bader_but_no_chgsum(self, mock_config):
+        """Bader on PATH but chgsum not set -> can_run_bader False."""
+        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+            with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": "/opt/psp"}):
+                config = DirectPipelineConfig(
+                    lematrho_bucket_name="test-bucket",
+                    output_dir=mock_config.output_dir,
+                    bader_path="/usr/bin/bader",
+                    # no chgsum_script_path
+                )
+                pipeline = LeMatRhoDirectPipeline(config=config)
+
+        assert pipeline._tool_paths["can_run_bader"] is False
+        assert pipeline._tool_paths["bader_path"] == "/usr/bin/bader"
+
+    def test_missing_pmg_vasp_psp_dir(self, mock_config):
+        """No PMG_VASP_PSP_DIR -> can_generate_potcar False, both analyses disabled."""
+        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+            env = os.environ.copy()
+            env.pop("PMG_VASP_PSP_DIR", None)
+            with patch.dict(os.environ, env, clear=True):
+                config = DirectPipelineConfig(
+                    lematrho_bucket_name="test-bucket",
+                    output_dir=mock_config.output_dir,
+                    bader_path="/usr/bin/bader",
+                    chargemol_path="/usr/bin/chargemol",
+                    chgsum_script_path=__file__,
+                    atomic_densities_path=os.path.dirname(__file__),
+                )
+                pipeline = LeMatRhoDirectPipeline(config=config)
+
+        assert pipeline._tool_paths["can_generate_potcar"] is False
+        assert pipeline._tool_paths["can_run_bader"] is False
+        assert pipeline._tool_paths["can_run_ddec6"] is False
+
+
+# ---------------------------------------------------------------------------
+# TestStructureToRowNoneFields
+# ---------------------------------------------------------------------------
+
+
+class TestStructureToRowNoneFields:
+    def test_all_charge_fields_none(self):
+        """Structure with no charge density fields -> all charge columns None."""
+        optimade_dict = _make_mock_optimade_dict()
+        structure = OptimadeStructure(
+            id="mp-1",
+            source="lematrho",
+            immutable_id="mp-1",
+            last_modified=datetime.now(),
+            **optimade_dict,
+            functional=Functional.PBE,
+            cross_compatibility=True,
+            compute_space_group=True,
+            compute_bawl_hash=True,
+        )
+
+        row = _structure_to_row(structure)
+        assert row["compressed_charge_density"] is None
+        assert row["compressed_aeccar0"] is None
+        assert row["compressed_aeccar1"] is None
+        assert row["compressed_aeccar2"] is None
+        assert row["charge_density_grid_shape"] is None
+        assert row["bader_charges"] is None
+        assert row["bader_atomic_volume"] is None
+        assert row["ddec6_charges"] is None
+
+    def test_partial_charge_fields(self):
+        """Structure with only some charge fields -> only those are populated."""
+        optimade_dict = _make_mock_optimade_dict()
+        structure = OptimadeStructure(
+            id="mp-1",
+            source="lematrho",
+            immutable_id="mp-1",
+            last_modified=datetime.now(),
+            **optimade_dict,
+            functional=Functional.PBE,
+            cross_compatibility=True,
+            compressed_charge_density=[[[1.0]]],
+            charge_density_grid_shape=[1, 1, 1],
+            bader_charges=[0.1, -0.1],
+            compute_space_group=True,
+            compute_bawl_hash=True,
+        )
+
+        row = _structure_to_row(structure)
+        assert row["compressed_charge_density"] is not None
+        assert row["compressed_aeccar0"] is None
+        assert row["bader_charges"] == [0.1, -0.1]
+        assert row["ddec6_charges"] is None
+
+
+# ---------------------------------------------------------------------------
+# TestPushToHuggingface
+# ---------------------------------------------------------------------------
+
+
+class TestPushToHuggingface:
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    def test_push_called_when_configured(self, mock_get_client, mock_config, no_tools):
+        """Pipeline calls push_to_hub when hf_repo_id is configured."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_paginator = MagicMock()
+        mock_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {"CommonPrefixes": [{"Prefix": "mp-1/"}]}
+        ]
+
+        config = DirectPipelineConfig(
+            lematrho_bucket_name="test-bucket",
+            output_dir=mock_config.output_dir,
+            hf_repo_id="test-org/test-dataset",
+            hf_token="hf_test_token",
+        )
+
+        mock_row = {col: None for col in PARQUET_COLUMNS}
+        mock_row.update({
+            "elements": ["Si"],
+            "nsites": 1,
+            "chemical_formula_anonymous": "A",
+            "chemical_formula_reduced": "Si",
+            "chemical_formula_descriptive": "Si1",
+            "nelements": 1,
+            "dimension_types": [1, 1, 1],
+            "nperiodic_dimensions": 3,
+            "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+            "immutable_id": "mp-1",
+            "cartesian_site_positions": [[0, 0, 0]],
+            "species": json.dumps([{"name": "Si"}]),
+            "species_at_sites": ["Si"],
+            "last_modified": datetime.now().isoformat(),
+            "elements_ratios": [1.0],
+            "functional": "pbe",
+            "cross_compatibility": True,
+        })
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=config, debug=True)
+
+        mock_dataset = MagicMock()
+        with patch.object(
+            LeMatRhoDirectPipeline, "_process_material", return_value=mock_row
+        ):
+            with patch(
+                "datasets.load_dataset",
+                return_value={"train": mock_dataset},
+            ):
+                pipeline.run()
+
+        mock_dataset.push_to_hub.assert_called_once_with(
+            "test-org/test-dataset",
+            token="hf_test_token",
+            private=True,
+        )
+
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    def test_push_not_called_without_repo_id(
+        self, mock_get_client, mock_config, no_tools
+    ):
+        """Pipeline skips push when hf_repo_id is None."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_paginator = MagicMock()
+        mock_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {"CommonPrefixes": [{"Prefix": "mp-1/"}]}
+        ]
+
+        mock_row = {col: None for col in PARQUET_COLUMNS}
+        mock_row.update({
+            "elements": ["Si"],
+            "nsites": 1,
+            "chemical_formula_anonymous": "A",
+            "chemical_formula_reduced": "Si",
+            "chemical_formula_descriptive": "Si1",
+            "nelements": 1,
+            "dimension_types": [1, 1, 1],
+            "nperiodic_dimensions": 3,
+            "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+            "immutable_id": "mp-1",
+            "cartesian_site_positions": [[0, 0, 0]],
+            "species": json.dumps([{"name": "Si"}]),
+            "species_at_sites": ["Si"],
+            "last_modified": datetime.now().isoformat(),
+            "elements_ratios": [1.0],
+            "functional": "pbe",
+            "cross_compatibility": True,
+        })
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config, debug=True)
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_process_material", return_value=mock_row
+        ):
+            with patch.object(
+                LeMatRhoDirectPipeline, "_push_to_huggingface"
+            ) as mock_push:
+                pipeline.run()
+
+        mock_push.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestProcessMaterialWithDdec6
+# ---------------------------------------------------------------------------
+
+
+class TestProcessMaterialWithDdec6:
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline._run_ddec6_from_bytes")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    def test_ddec6_populates_charges(
+        self,
+        mock_get_client,
+        mock_download,
+        mock_parse_vasprun,
+        mock_compress,
+        mock_get_optimade,
+        mock_ddec6,
+        mock_config,
+    ):
+        """When DDEC6 tools available and succeed, ddec6_charges is populated."""
+        from pymatgen.core import Lattice, Structure
+
+        mock_get_client.return_value = MagicMock()
+        mock_download.return_value = b"mock_bytes"
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        mock_parse_vasprun.return_value = structure
+        mock_compress.return_value = [[[1.0] * 10] * 10] * 10
+        mock_get_optimade.return_value = _make_mock_optimade_dict()
+        mock_ddec6.return_value = [0.3, -0.3]
+
+        tools = {
+            "bader_path": None,
+            "chargemol_path": "/usr/bin/chargemol",
+            "chgsum_script_path": None,
+            "perl_path": None,
+            "atomic_densities_path": "/opt/densities",
+            "can_generate_potcar": True,
+            "can_run_bader": False,
+            "can_run_ddec6": True,
+        }
+
+        result = LeMatRhoDirectPipeline._process_material(
+            "mp-123", mock_config, tools
+        )
+
+        assert result is not None
+        assert result["ddec6_charges"] == [0.3, -0.3]
+        assert result["bader_charges"] is None
+        mock_ddec6.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestIntegrationS3 (requires credentials, skipped in normal runs)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestIntegrationS3:
+    """Integration tests that pull real data from the LeMatRho S3 bucket.
+
+    To run these tests:
+        1. Create a .env.integration file with AWS credentials:
+           AWS_ACCESS_KEY_ID=...
+           AWS_SECRET_ACCESS_KEY=...
+           AWS_DEFAULT_REGION=us-east-1
+        2. Run: pytest -m integration tests/fetcher/lematrho/test_lematrho_pipeline.py
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load_integration_env(self):
+        """Load .env.integration if available, skip otherwise."""
+        env_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", ".env.integration"
+        )
+        env_path = os.path.normpath(env_path)
+        if not os.path.exists(env_path):
+            pytest.skip(
+                ".env.integration not found — set AWS credentials to run integration tests"
+            )
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=True)
+
+    def test_list_materials_from_real_bucket(self):
+        """Verify we can list at least 1 material from the real S3 bucket."""
+        config = DirectPipelineConfig(
+            lematrho_bucket_name="lemat-rho",
+            output_dir=tempfile.mkdtemp(),
+        )
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
+            pipeline = LeMatRhoDirectPipeline(config=config)
+        materials = pipeline._list_materials()
+        assert len(materials) > 0
+        # All should start with valid prefixes
+        for m in materials[:10]:
+            assert m.startswith(("oqmd-", "mp-", "agm"))
+
+    def test_process_single_material(self):
+        """Fetch and process a single real material end-to-end (no Bader/DDEC6)."""
+        output_dir = tempfile.mkdtemp()
+        config = DirectPipelineConfig(
+            lematrho_bucket_name="lemat-rho",
+            lematrho_grid_shape=(10, 10, 10),
+            output_dir=output_dir,
+        )
+        no_tools = {
+            "bader_path": None,
+            "chargemol_path": None,
+            "chgsum_script_path": None,
+            "perl_path": None,
+            "atomic_densities_path": None,
+            "can_generate_potcar": False,
+            "can_run_bader": False,
+            "can_run_ddec6": False,
+        }
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=config)
+
+        materials = pipeline._list_materials()
+        assert len(materials) > 0
+        material_id = materials[0]
+
+        result = LeMatRhoDirectPipeline._process_material(
+            material_id, config, no_tools
+        )
+        assert result is not None
+        assert result["immutable_id"] == material_id
+        assert result["functional"] == "pbe"
+        for col in PARQUET_COLUMNS:
+            assert col in result
