@@ -65,6 +65,7 @@ class DirectPipelineConfig:
     # Processing
     num_workers: int = 4
     log_every: int = 100
+    limit: Optional[int] = None
     # HuggingFace (optional)
     hf_repo_id: Optional[str] = None
     hf_token: Optional[str] = None
@@ -453,6 +454,7 @@ def load_direct_pipeline_config(
     parquet_chunk_size: int = 1000,
     num_workers: int = 4,
     log_every: int = 100,
+    limit: Optional[int] = None,
     hf_repo_id: Optional[str] = None,
     hf_token: Optional[str] = None,
     bader_path: Optional[str] = None,
@@ -473,6 +475,7 @@ def load_direct_pipeline_config(
         parquet_chunk_size=parquet_chunk_size,
         num_workers=num_workers,
         log_every=log_every,
+        limit=limit,
         hf_repo_id=hf_repo_id,
         hf_token=hf_token,
         bader_path=bader_path,

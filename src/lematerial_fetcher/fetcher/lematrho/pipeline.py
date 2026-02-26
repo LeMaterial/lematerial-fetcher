@@ -450,6 +450,11 @@ class LeMatRhoDirectPipeline:
         # 2. Load checkpoint, filter already-processed
         self._processed_ids = self._load_checkpoint()
         remaining = [m for m in material_ids if m not in self._processed_ids]
+
+        # Apply limit if set
+        if self.config.limit is not None and len(remaining) > self.config.limit:
+            remaining = remaining[: self.config.limit]
+
         logger.info(
             f"Already processed: {len(self._processed_ids)}, "
             f"remaining: {len(remaining)}"

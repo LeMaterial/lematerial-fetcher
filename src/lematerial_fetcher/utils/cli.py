@@ -345,6 +345,13 @@ def add_lematrho_direct_options(f):
             help="Log progress every N materials.",
         ),
         click.option(
+            "--limit",
+            type=int,
+            default=None,
+            envvar="LEMATERIALFETCHER_LEMATRHO_LIMIT",
+            help="Max number of materials to process (for testing). Default: no limit.",
+        ),
+        click.option(
             "--lematrho-bucket-name",
             type=str,
             default="lemat-rho",

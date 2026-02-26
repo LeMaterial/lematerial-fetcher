@@ -2,6 +2,7 @@
 import gzip
 import io
 import os
+import tempfile
 from datetime import datetime
 from typing import Any, Optional
 
@@ -56,23 +57,32 @@ def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
 def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
     """Parse a vasprun.xml to extract the final relaxed structure.
 
+    Writes bytes to a temporary file because pymatgen's ``Vasprun`` requires
+    a filesystem path, not a file-like object.
+
     Args:
         vasprun_bytes: Raw vasprun.xml content.
 
     Returns:
         The final relaxed pymatgen Structure.
     """
-    vasprun = Vasprun(
-        io.BytesIO(vasprun_bytes),
-        parse_dos=False,
-        parse_eigen=False,
-        parse_potcar_file=False,
-    )
-    return vasprun.final_structure
+    with tempfile.NamedTemporaryFile(suffix=".xml", delete=True) as tmp:
+        tmp.write(vasprun_bytes)
+        tmp.flush()
+        vasprun = Vasprun(
+            tmp.name,
+            parse_dos=False,
+            parse_eigen=False,
+            parse_potcar_file=False,
+        )
+        return vasprun.final_structure
 
 
 def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> list:
     """Parse a CHGCAR file and compress its charge density using pyrho.
+
+    Writes bytes to a temporary file because pymatgen's ``Chgcar.from_file``
+    requires a filesystem path, not a file-like object.
 
     Args:
         chgcar_bytes: Raw CHGCAR file content (uncompressed VASP format).
@@ -83,7 +93,10 @@ def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> li
     """
     from pyrho.charge_density import ChargeDensity
 
-    chgcar = Chgcar.from_file(io.BytesIO(chgcar_bytes))
+    with tempfile.NamedTemporaryFile(suffix=".CHGCAR", delete=True) as tmp:
+        tmp.write(chgcar_bytes)
+        tmp.flush()
+        chgcar = Chgcar.from_file(tmp.name)
     charge_density = ChargeDensity.from_pmg(chgcar)
     compressed = charge_density.pgrids["total"].lossy_smooth_compression(grid_shape)
     result = compressed.tolist()
