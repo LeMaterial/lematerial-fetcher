@@ -487,6 +487,136 @@ class TestCheckpointing:
 
         assert ids == {"mp-1", "mp-2"}
 
+    def test_batch_checkpoint(self, mock_config):
+        """Batch checkpoint writes multiple IDs atomically."""
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config)
+            pipeline._batch_checkpoint(["mp-1", "mp-2", "mp-3"])
+
+        checkpoint_path = os.path.join(mock_config.output_dir, ".checkpoint.txt")
+        with open(checkpoint_path, "r") as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        assert lines == ["mp-1", "mp-2", "mp-3"]
+
+
+# ---------------------------------------------------------------------------
+# TestFailureTracking
+# ---------------------------------------------------------------------------
+
+
+class TestFailureTracking:
+    def test_load_empty_failures(self, mock_config):
+        """No failures file -> empty set."""
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config)
+            ids = pipeline._load_failures()
+
+        assert ids == set()
+
+    def test_load_existing_failures(self, mock_config):
+        """Failures file with IDs -> returns set."""
+        failures_path = os.path.join(mock_config.output_dir, ".failures.txt")
+        with open(failures_path, "w") as f:
+            f.write("mp-bad1\nmp-bad2\n")
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config)
+            ids = pipeline._load_failures()
+
+        assert ids == {"mp-bad1", "mp-bad2"}
+
+    def test_append_failure(self, mock_config):
+        """Appending failure records ID on disk."""
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config)
+            pipeline._append_failure("mp-fail1")
+            pipeline._append_failure("mp-fail2")
+
+        failures_path = os.path.join(mock_config.output_dir, ".failures.txt")
+        with open(failures_path, "r") as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        assert lines == ["mp-fail1", "mp-fail2"]
+
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    def test_resume_skips_failures(self, mock_get_client, mock_config, no_tools):
+        """Pipeline skips previously failed materials on resume."""
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        mock_paginator = MagicMock()
+        mock_client.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [
+            {
+                "CommonPrefixes": [
+                    {"Prefix": "mp-0/"},
+                    {"Prefix": "mp-1/"},
+                    {"Prefix": "mp-2/"},
+                ]
+            }
+        ]
+
+        # mp-0 already processed, mp-1 previously failed
+        checkpoint_path = os.path.join(mock_config.output_dir, ".checkpoint.txt")
+        with open(checkpoint_path, "w") as f:
+            f.write("mp-0\n")
+        failures_path = os.path.join(mock_config.output_dir, ".failures.txt")
+        with open(failures_path, "w") as f:
+            f.write("mp-1\n")
+
+        row = {col: None for col in PARQUET_COLUMNS}
+        row.update(
+            {
+                "elements": ["Si"],
+                "nsites": 1,
+                "chemical_formula_anonymous": "A",
+                "chemical_formula_reduced": "Si",
+                "chemical_formula_descriptive": "Si1",
+                "nelements": 1,
+                "dimension_types": [1, 1, 1],
+                "nperiodic_dimensions": 3,
+                "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+                "immutable_id": "mp-2",
+                "cartesian_site_positions": [[0, 0, 0]],
+                "species": json.dumps([{"name": "Si"}]),
+                "species_at_sites": ["Si"],
+                "last_modified": datetime.now().isoformat(),
+                "elements_ratios": [1.0],
+                "functional": "pbe",
+                "cross_compatibility": True,
+            }
+        )
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
+        ):
+            pipeline = LeMatRhoDirectPipeline(config=mock_config, debug=True)
+
+        processed_ids = []
+
+        def mock_process(material_id, config, tool_paths):
+            processed_ids.append(material_id)
+            r = dict(row)
+            r["immutable_id"] = material_id
+            return r
+
+        with patch.object(
+            LeMatRhoDirectPipeline, "_process_material", side_effect=mock_process
+        ):
+            pipeline.run()
+
+        # Only mp-2 should be processed (mp-0 checkpointed, mp-1 failed)
+        assert processed_ids == ["mp-2"]
+
 
 # ---------------------------------------------------------------------------
 # TestParquetWriting

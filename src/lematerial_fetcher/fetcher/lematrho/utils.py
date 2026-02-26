@@ -1,6 +1,5 @@
 # Copyright 2025 Entalpic
 import gzip
-import io
 import os
 import tempfile
 from datetime import datetime
@@ -50,8 +49,14 @@ def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
         Decompressed file contents as raw bytes.
     """
     response = client.get_object(Bucket=bucket, Key=key)
-    compressed = response["Body"].read()
-    return gzip.decompress(compressed)
+    body = response["Body"]
+    try:
+        compressed = body.read()
+        decompressed = gzip.decompress(compressed)
+        del compressed
+        return decompressed
+    finally:
+        body.close()
 
 
 def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
@@ -66,11 +71,12 @@ def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
     Returns:
         The final relaxed pymatgen Structure.
     """
-    with tempfile.NamedTemporaryFile(suffix=".xml", delete=True) as tmp:
-        tmp.write(vasprun_bytes)
-        tmp.flush()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "vasprun.xml")
+        with open(path, "wb") as f:
+            f.write(vasprun_bytes)
         vasprun = Vasprun(
-            tmp.name,
+            path,
             parse_dos=False,
             parse_eigen=False,
             parse_potcar_file=False,
@@ -93,10 +99,11 @@ def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> li
     """
     from pyrho.charge_density import ChargeDensity
 
-    with tempfile.NamedTemporaryFile(suffix=".CHGCAR", delete=True) as tmp:
-        tmp.write(chgcar_bytes)
-        tmp.flush()
-        chgcar = Chgcar.from_file(tmp.name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "CHGCAR")
+        with open(path, "wb") as f:
+            f.write(chgcar_bytes)
+        chgcar = Chgcar.from_file(path)
     charge_density = ChargeDensity.from_pmg(chgcar)
     compressed = charge_density.pgrids["total"].lossy_smooth_compression(grid_shape)
     result = compressed.tolist()

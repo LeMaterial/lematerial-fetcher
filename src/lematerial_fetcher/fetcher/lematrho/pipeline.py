@@ -353,7 +353,9 @@ class LeMatRhoDirectPipeline:
         self.config = config
         self.debug = debug
         self._checkpoint_path = os.path.join(config.output_dir, ".checkpoint.txt")
+        self._failures_path = os.path.join(config.output_dir, ".failures.txt")
         self._processed_ids: set[str] = set()
+        self._failed_ids: set[str] = set()
 
         # Validate external tools
         self._tool_paths = self._validate_tools()
@@ -447,9 +449,14 @@ class LeMatRhoDirectPipeline:
         material_ids = self._list_materials()
         logger.info(f"Found {len(material_ids)} materials in S3")
 
-        # 2. Load checkpoint, filter already-processed
+        # 2. Load checkpoint and failures, filter already-handled
         self._processed_ids = self._load_checkpoint()
-        remaining = [m for m in material_ids if m not in self._processed_ids]
+        self._failed_ids = self._load_failures()
+        remaining = [
+            m
+            for m in material_ids
+            if m not in self._processed_ids and m not in self._failed_ids
+        ]
 
         # Apply limit if set
         if self.config.limit is not None and len(remaining) > self.config.limit:
@@ -457,6 +464,7 @@ class LeMatRhoDirectPipeline:
 
         logger.info(
             f"Already processed: {len(self._processed_ids)}, "
+            f"previously failed: {len(self._failed_ids)}, "
             f"remaining: {len(remaining)}"
         )
 
@@ -468,6 +476,7 @@ class LeMatRhoDirectPipeline:
 
         # 3. Process materials
         buffer = []
+        buffer_ids = []
         chunk_index = self._get_next_chunk_index()
         processed_count = 0
         failed_count = 0
@@ -479,14 +488,17 @@ class LeMatRhoDirectPipeline:
                 )
                 if result is not None:
                     buffer.append(result)
-                    self._append_checkpoint(material_id)
+                    buffer_ids.append(material_id)
                     processed_count += 1
                 else:
+                    self._append_failure(material_id)
                     failed_count += 1
 
                 if len(buffer) >= self.config.parquet_chunk_size:
                     self._write_parquet_chunk(buffer, chunk_index)
+                    self._batch_checkpoint(buffer_ids)
                     buffer.clear()
+                    buffer_ids.clear()
                     chunk_index += 1
 
                 total = processed_count + failed_count
@@ -522,20 +534,24 @@ class LeMatRhoDirectPipeline:
                             result = future.result()
                             if result is not None:
                                 buffer.append(result)
-                                self._append_checkpoint(material_id)
+                                buffer_ids.append(material_id)
                                 processed_count += 1
                             else:
+                                self._append_failure(material_id)
                                 failed_count += 1
                         except Exception as e:
                             logger.warning(
                                 f"Worker exception for {material_id}: {e}"
                             )
+                            self._append_failure(material_id)
                             failed_count += 1
 
                         # Write chunk if buffer is full
                         if len(buffer) >= self.config.parquet_chunk_size:
                             self._write_parquet_chunk(buffer, chunk_index)
+                            self._batch_checkpoint(buffer_ids)
                             buffer.clear()
+                            buffer_ids.clear()
                             chunk_index += 1
 
                         # Submit replacement (work-stealing)
@@ -561,6 +577,7 @@ class LeMatRhoDirectPipeline:
         # Write remaining buffer
         if buffer:
             self._write_parquet_chunk(buffer, chunk_index)
+            self._batch_checkpoint(buffer_ids)
 
         logger.info(
             f"Done. {processed_count} processed, {failed_count} failed."
@@ -574,7 +591,8 @@ class LeMatRhoDirectPipeline:
         """List material folder prefixes from S3, filtered by ``VALID_PREFIXES``.
 
         Returns:
-            Sorted list of material IDs (e.g. ``["agm000001", "mp-123", ...]``).
+            List of material IDs (e.g. ``["agm000001", "mp-123", ...]``).
+            Order depends on S3 listing order (typically lexicographic).
         """
         client = get_authenticated_aws_client()
         bucket = self.config.lematrho_bucket_name
@@ -633,7 +651,10 @@ class LeMatRhoDirectPipeline:
 
             # Step 2: Download and compress charge density files
             compressed_grids = {}
-            raw_files = {}  # Keep raw bytes for Bader/DDEC6
+            # Memory trade-off: raw decompressed bytes are kept in memory for
+            # Bader/DDEC6 analysis to avoid a second S3 download. Each CHGCAR
+            # can be 100-500 MB, so peak RSS per worker ≈ sum of needed files.
+            raw_files = {}
 
             # Determine which raw files to keep
             need_raw = set()
@@ -739,6 +760,43 @@ class LeMatRhoDirectPipeline:
             material_id: ID to record as processed.
         """
         with open(self._checkpoint_path, "a") as f:
+            f.write(material_id + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _batch_checkpoint(self, material_ids: list[str]) -> None:
+        """Append multiple material IDs to the checkpoint file atomically.
+
+        Called after a Parquet chunk is successfully flushed so that
+        checkpoint and Parquet stay in sync.
+
+        Args:
+            material_ids: IDs to record as processed.
+        """
+        with open(self._checkpoint_path, "a") as f:
+            for mid in material_ids:
+                f.write(mid + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _load_failures(self) -> set[str]:
+        """Load failed material IDs from failures file.
+
+        Returns:
+            Set of material IDs that previously failed. Empty set if no file.
+        """
+        if not os.path.exists(self._failures_path):
+            return set()
+        with open(self._failures_path, "r") as f:
+            return {line.strip() for line in f if line.strip()}
+
+    def _append_failure(self, material_id: str) -> None:
+        """Record a failed material ID so it is skipped on resume.
+
+        Args:
+            material_id: ID that failed processing.
+        """
+        with open(self._failures_path, "a") as f:
             f.write(material_id + "\n")
             f.flush()
             os.fsync(f.fileno())
