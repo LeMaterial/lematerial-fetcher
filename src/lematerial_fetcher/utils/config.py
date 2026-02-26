@@ -53,6 +53,29 @@ class TransformerConfig(BaseConfig):
 
 
 @dataclass
+class DirectPipelineConfig:
+    """Config for the direct S3-to-Parquet pipeline (no PostgreSQL)."""
+
+    # S3 source
+    lematrho_bucket_name: str = "lemat-rho"
+    lematrho_grid_shape: tuple[int, int, int] = (15, 15, 15)
+    # Output
+    output_dir: str = "./lematrho_output"
+    parquet_chunk_size: int = 1000
+    # Processing
+    num_workers: int = 4
+    log_every: int = 100
+    # HuggingFace (optional)
+    hf_repo_id: Optional[str] = None
+    hf_token: Optional[str] = None
+    # External tools (all optional — missing tools result in None fields)
+    bader_path: Optional[str] = None
+    chargemol_path: Optional[str] = None
+    chgsum_script_path: Optional[str] = None
+    atomic_densities_path: Optional[str] = None
+
+
+@dataclass
 class PushConfig(BaseConfig):
     source_db_conn_str: str
     source_table_name: str | list[str]
@@ -420,4 +443,40 @@ def load_push_config(
     return PushConfig(
         **base_config,
         **config,
+    )
+
+
+def load_direct_pipeline_config(
+    lematrho_bucket_name: str = "lemat-rho",
+    grid_shape: tuple[int, int, int] = (15, 15, 15),
+    output_dir: str = "./lematrho_output",
+    parquet_chunk_size: int = 1000,
+    num_workers: int = 4,
+    log_every: int = 100,
+    hf_repo_id: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    bader_path: Optional[str] = None,
+    chargemol_path: Optional[str] = None,
+    chgsum_script_path: Optional[str] = None,
+    atomic_densities_path: Optional[str] = None,
+    **_kwargs: Any,
+) -> DirectPipelineConfig:
+    """Load config for the direct S3-to-Parquet pipeline.
+
+    The common workflow is that arguments are passed by Click.
+    No database credentials needed — this pipeline writes Parquet directly.
+    """
+    return DirectPipelineConfig(
+        lematrho_bucket_name=lematrho_bucket_name,
+        lematrho_grid_shape=grid_shape,
+        output_dir=output_dir,
+        parquet_chunk_size=parquet_chunk_size,
+        num_workers=num_workers,
+        log_every=log_every,
+        hf_repo_id=hf_repo_id,
+        hf_token=hf_token,
+        bader_path=bader_path,
+        chargemol_path=chargemol_path,
+        chgsum_script_path=chgsum_script_path,
+        atomic_densities_path=atomic_densities_path,
     )

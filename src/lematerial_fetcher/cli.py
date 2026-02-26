@@ -29,6 +29,7 @@ from lematerial_fetcher.fetcher.mp.transform import (
     MPTransformer,
 )
 from lematerial_fetcher.fetcher.lematrho.fetch import LeMatRhoFetcher
+from lematerial_fetcher.fetcher.lematrho.pipeline import LeMatRhoDirectPipeline
 from lematerial_fetcher.fetcher.lematrho.transform import LeMatRhoTransformer
 from lematerial_fetcher.fetcher.oqmd.fetch import OQMDFetcher
 from lematerial_fetcher.fetcher.oqmd.transform import (
@@ -39,6 +40,7 @@ from lematerial_fetcher.push import Push
 from lematerial_fetcher.utils.cli import (
     add_common_options,
     add_fetch_options,
+    add_lematrho_direct_options,
     add_lematrho_fetch_options,
     add_lematrho_transform_options,
     add_mp_fetch_options,
@@ -48,6 +50,7 @@ from lematerial_fetcher.utils.cli import (
     get_default_mp_bucket_name,
 )
 from lematerial_fetcher.utils.config import (
+    load_direct_pipeline_config,
     load_fetcher_config,
     load_push_config,
     load_transformer_config,
@@ -408,6 +411,26 @@ def lematrho_transform(ctx, force, **config_kwargs):
     try:
         transformer = LeMatRhoTransformer(config=config, debug=ctx.obj["debug"])
         transformer.transform()
+    except KeyboardInterrupt:
+        logger.fatal("\nAborted.", exit=1)
+
+
+@lematrho_cli.command(name="run")
+@click.pass_context
+@add_lematrho_direct_options
+def lematrho_run(ctx, **config_kwargs):
+    """Run complete LeMatRho pipeline: S3 -> Parquet -> HuggingFace.
+
+    Downloads charge density data, compresses via pyrho, optionally runs
+    Bader and DDEC6 analysis, and writes Parquet files directly.
+    No PostgreSQL required.
+
+    Requires AWS credentials (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY).
+    """
+    config = load_direct_pipeline_config(**config_kwargs)
+    try:
+        pipeline = LeMatRhoDirectPipeline(config=config, debug=ctx.obj["debug"])
+        pipeline.run()
     except KeyboardInterrupt:
         logger.fatal("\nAborted.", exit=1)
 

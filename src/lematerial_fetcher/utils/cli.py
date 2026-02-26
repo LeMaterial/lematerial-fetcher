@@ -320,6 +320,95 @@ def add_lematrho_transform_options(f):
     return f
 
 
+def add_lematrho_direct_options(f):
+    """Add options for the direct LeMatRho S3-to-Parquet pipeline."""
+    decorators = [
+        click.option(
+            "--output-dir",
+            type=str,
+            default="./lematrho_output",
+            envvar="LEMATERIALFETCHER_LEMATRHO_OUTPUT_DIR",
+            help="Directory to write Parquet output files.",
+        ),
+        click.option(
+            "--parquet-chunk-size",
+            type=int,
+            default=1000,
+            envvar="LEMATERIALFETCHER_LEMATRHO_PARQUET_CHUNK_SIZE",
+            help="Number of rows per Parquet chunk file.",
+        ),
+        click.option(
+            "--num-workers",
+            type=int,
+            default=4,
+            envvar="LEMATERIALFETCHER_NUM_WORKERS",
+            help="Number of parallel worker processes.",
+        ),
+        click.option(
+            "--log-every",
+            type=int,
+            default=100,
+            envvar="LEMATERIALFETCHER_LOG_EVERY",
+            help="Log progress every N materials.",
+        ),
+        click.option(
+            "--lematrho-bucket-name",
+            type=str,
+            default="lemat-rho",
+            envvar="LEMATERIALFETCHER_LEMATRHO_BUCKET_NAME",
+            help="LeMatRho S3 bucket name.",
+        ),
+        click.option(
+            "--grid-shape",
+            type=(int, int, int),
+            default=(15, 15, 15),
+            envvar="LEMATERIALFETCHER_LEMATRHO_GRID_SHAPE",
+            help="Grid shape for pyrho charge density compression (nx ny nz).",
+        ),
+        click.option(
+            "--hf-repo-id",
+            type=str,
+            default=None,
+            envvar="LEMATERIALFETCHER_HF_REPO_ID",
+            help="HuggingFace repository ID for pushing. If not set, skip push.",
+        ),
+        click.option(
+            "--hf-token",
+            type=str,
+            default=None,
+            envvar="LEMATERIALFETCHER_HF_TOKEN",
+            help="HuggingFace token for pushing.",
+        ),
+        click.option(
+            "--bader-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_BADER_PATH",
+            help="Path to the bader executable. If not provided, will search PATH.",
+        ),
+        click.option(
+            "--chargemol-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_CHARGEMOL_PATH",
+            help="Path to the chargemol executable. If not provided, will search PATH.",
+        ),
+        click.option(
+            "--chgsum-script-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_CHGSUM_SCRIPT_PATH",
+            help="Path to the chgsum.pl perl script for Bader charge summation.",
+        ),
+        click.option(
+            "--atomic-densities-path",
+            type=str,
+            envvar="LEMATERIALFETCHER_ATOMIC_DENSITIES_PATH",
+            help="Path to atomic densities directory for DDEC6/chargemol analysis.",
+        ),
+    ]
+    for decorator in reversed(decorators):
+        f = decorator(f)
+    return f
+
+
 def add_push_options(f):
     """Add push options to a command."""
     decorators = [
