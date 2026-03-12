@@ -747,7 +747,6 @@ class TestDirectPipelineConfig:
         assert config.hf_token is None
         assert config.bader_path is None
         assert config.chargemol_path is None
-        assert config.chgsum_script_path is None
         assert config.atomic_densities_path is None
 
     def test_custom_values(self):
@@ -763,7 +762,6 @@ class TestDirectPipelineConfig:
             hf_token="hf_abc123",
             bader_path="/usr/bin/bader",
             chargemol_path="/usr/bin/chargemol",
-            chgsum_script_path="/opt/chgsum.pl",
             atomic_densities_path="/opt/atomic_densities",
         )
         assert config.lematrho_bucket_name == "my-bucket"
@@ -774,7 +772,6 @@ class TestDirectPipelineConfig:
         assert config.hf_repo_id == "org/repo"
         assert config.bader_path == "/usr/bin/bader"
         assert config.chargemol_path == "/usr/bin/chargemol"
-        assert config.chgsum_script_path == "/opt/chgsum.pl"
         assert config.atomic_densities_path == "/opt/atomic_densities"
 
     def test_not_a_base_config(self):
@@ -807,7 +804,6 @@ class TestLoadDirectPipelineConfig:
             hf_token="token123",
             bader_path="/bin/bader",
             chargemol_path="/bin/chargemol",
-            chgsum_script_path="/scripts/chgsum.pl",
             atomic_densities_path="/data/densities",
         )
         assert config.lematrho_bucket_name == "custom-bucket"

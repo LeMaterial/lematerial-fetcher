@@ -1,8 +1,13 @@
 # Copyright 2025 Entalpic
+"""LeMatRho transformer: raw structures to OPTIMADE format.
+
+Converts raw LeMatRho structures (with compressed charge densities from the
+fetch step) into ``OptimadeStructure`` objects. Optionally downloads VASP
+files from S3 and runs Bader and DDEC6 charge analysis via shared helpers
+in ``utils``.
+"""
 import os
 import shutil
-import subprocess
-import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -10,12 +15,10 @@ from pymatgen.core import Structure
 
 from lematerial_fetcher.database.postgres import OptimadeDatabase, StructuresDatabase
 from lematerial_fetcher.fetcher.lematrho.utils import (
-    BADER_TIMEOUT,
-    CHARGEMOL_TIMEOUT,
-    CHGSUM_TIMEOUT,
     STATIC_CALC_TYPE,
     download_gz_file_from_s3,
-    write_potcar,
+    run_bader_from_bytes,
+    run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
@@ -39,99 +42,15 @@ def get_cross_compatibility(elements: list[str]) -> bool:
     return "Yb" not in elements
 
 
-def parse_acf_dat(filepath: str) -> tuple[list[float], list[float]]:
-    """Parse Bader ACF.dat file for electron counts and atomic volumes.
-
-    Args:
-        filepath: Path to the ACF.dat file produced by bader.
-
-    Returns:
-        Tuple of ``(electron_counts, atomic_volumes)`` lists, one entry per atom.
-    """
-    electron_counts = []
-    atomic_volumes = []
-    with open(filepath) as f:
-        lines = f.readlines()
-
-    # Skip header (first 2 lines), parse data rows until separator line
-    for line in lines[2:]:
-        stripped = line.strip()
-        if stripped.startswith("-") or not stripped:
-            break
-        parts = stripped.split()
-        if len(parts) >= 7:
-            electron_counts.append(float(parts[4]))  # CHARGE column
-            atomic_volumes.append(float(parts[6]))  # ATOMIC VOL column
-
-    return electron_counts, atomic_volumes
-
-
-def read_potcar_zval(filepath: str) -> dict[str, float]:
-    """Read valence electron counts from a POTCAR file.
-
-    Parses TITEL and ZVAL lines to build an element-to-valence-electrons mapping.
-
-    Args:
-        filepath: Path to the POTCAR file.
-
-    Returns:
-        Dict mapping element symbols to their number of valence electrons.
-    """
-    zval = {}
-    current_element = None
-    with open(filepath) as f:
-        for line in f:
-            if "TITEL" in line:
-                parts = line.split()
-                if len(parts) >= 4:
-                    # Handle element names like 'Si_d' -> 'Si'
-                    current_element = parts[3].split("_")[0]
-            elif "ZVAL" in line and current_element:
-                parts = line.split("=")
-                if len(parts) >= 2:
-                    try:
-                        zval[current_element] = float(parts[1].split()[0])
-                        current_element = None
-                    except (ValueError, IndexError):
-                        pass
-    return zval
-
-
-def parse_ddec6_charges(tmpdir: str) -> list[float]:
-    """Parse DDEC6 net atomic charges from chargemol output.
-
-    Reads ``DDEC6_even_tempered_net_atomic_charges.xyz`` from *tmpdir*.
-
-    Args:
-        tmpdir: Directory containing chargemol output files.
-
-    Returns:
-        List of net DDEC6 charges, one per atom.
-    """
-    filepath = os.path.join(tmpdir, "DDEC6_even_tempered_net_atomic_charges.xyz")
-    charges = []
-    with open(filepath) as f:
-        lines = f.readlines()
-
-    n_atoms = int(lines[0].strip())
-    for line in lines[2 : 2 + n_atoms]:
-        parts = line.split()
-        if len(parts) >= 5:
-            charges.append(float(parts[4]))
-
-    return charges
-
-
 class LeMatRhoTransformer(BaseTransformer):
     """Transformer for LeMatRho charge density data.
 
     Transforms raw structures (with compressed charge densities from the fetch step)
     into ``OptimadeStructure`` objects. Optionally runs Bader and DDEC6 charge
-    analysis using external tools.
+    analysis using pymatgen wrappers around external tools.
 
     External tool requirements:
         - ``bader``: Bader charge analysis executable
-        - ``perl`` + ``chgsum.pl``: For summing AECCAR0 + AECCAR2
         - ``chargemol``: DDEC6 charge partitioning executable
         - ``PMG_VASP_PSP_DIR``: Env var for POTCAR generation
         - atomic densities directory: For DDEC6/chargemol analysis
@@ -154,8 +73,6 @@ class LeMatRhoTransformer(BaseTransformer):
         self._aws_client = None
         self._bader_path = None
         self._chargemol_path = None
-        self._chgsum_script_path = None
-        self._perl_path = None
         self._atomic_densities_path = None
         self._can_generate_potcar = False
         self._validate_tools()
@@ -164,8 +81,7 @@ class LeMatRhoTransformer(BaseTransformer):
         """Check availability of external tools and log warnings for missing ones.
 
         Sets instance attributes ``_bader_path``, ``_chargemol_path``,
-        ``_chgsum_script_path``, ``_perl_path``, ``_atomic_densities_path``,
-        and ``_can_generate_potcar``.
+        ``_atomic_densities_path``, and ``_can_generate_potcar``.
         """
         self._bader_path = getattr(self.config, "bader_path", None) or shutil.which(
             "bader"
@@ -183,22 +99,6 @@ class LeMatRhoTransformer(BaseTransformer):
         if not self._chargemol_path:
             logger.warning(
                 "chargemol executable not found. DDEC6 charges will not be computed."
-            )
-
-        self._chgsum_script_path = getattr(
-            self.config, "chgsum_script_path", None
-        )
-        if self._chgsum_script_path and not os.path.isfile(self._chgsum_script_path):
-            logger.warning(
-                f"chgsum.pl not found at {self._chgsum_script_path}. "
-                "Bader analysis requires this script."
-            )
-            self._chgsum_script_path = None
-
-        self._perl_path = shutil.which("perl")
-        if not self._perl_path:
-            logger.warning(
-                "perl not found. Bader analysis requires perl for chgsum.pl."
             )
 
         self._atomic_densities_path = getattr(
@@ -232,12 +132,7 @@ class LeMatRhoTransformer(BaseTransformer):
     @property
     def can_run_bader(self) -> bool:
         """Check if all Bader analysis prerequisites are met."""
-        return bool(
-            self._bader_path
-            and self._chgsum_script_path
-            and self._perl_path
-            and self._can_generate_potcar
-        )
+        return bool(self._bader_path and self._can_generate_potcar)
 
     @property
     def can_run_ddec6(self) -> bool:
@@ -325,10 +220,7 @@ class LeMatRhoTransformer(BaseTransformer):
     def _run_bader_analysis(
         self, structure: Structure, s3_prefix: str, material_id: str
     ) -> tuple[Optional[list[float]], Optional[list[float]]]:
-        """Run Bader charge analysis.
-
-        Downloads CHGCAR, AECCAR0, AECCAR2 from S3, runs ``chgsum.pl`` to
-        create the reference charge density, then runs bader and parses results.
+        """Download CHGCAR/AECCAR files from S3 and run Bader charge analysis.
 
         Args:
             structure: Pymatgen Structure for POTCAR generation.
@@ -341,77 +233,24 @@ class LeMatRhoTransformer(BaseTransformer):
         """
         try:
             bucket = self.config.lematrho_bucket_name
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Download raw VASP charge density files
-                for filename in ["CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"]:
-                    key = f"{s3_prefix}/{STATIC_CALC_TYPE}/{filename}"
-                    data = download_gz_file_from_s3(self.aws_client, bucket, key)
-                    outname = filename.replace(".gz", "")
-                    with open(os.path.join(tmpdir, outname), "wb") as f:
-                        f.write(data)
-                    del data
+            raw_files = {}
+            for filename in ["CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"]:
+                key = f"{s3_prefix}/{STATIC_CALC_TYPE}/{filename}"
+                data = download_gz_file_from_s3(self.aws_client, bucket, key)
+                raw_files[filename.replace(".gz", "")] = data
+                del data
 
-                # Generate POTCAR
-                write_potcar(structure, tmpdir)
-
-                # Sum AECCAR0 + AECCAR2 -> CHGCAR_sum
-                subprocess.run(
-                    [
-                        self._perl_path,
-                        self._chgsum_script_path,
-                        "AECCAR0",
-                        "AECCAR2",
-                    ],
-                    cwd=tmpdir,
-                    timeout=CHGSUM_TIMEOUT,
-                    check=True,
-                    capture_output=True,
-                )
-
-                # Run Bader analysis with reference charge density
-                subprocess.run(
-                    [self._bader_path, "CHGCAR", "-ref", "CHGCAR_sum"],
-                    cwd=tmpdir,
-                    timeout=BADER_TIMEOUT,
-                    check=True,
-                    capture_output=True,
-                )
-
-                # Parse ACF.dat for electron counts and atomic volumes
-                electron_counts, atomic_volumes = parse_acf_dat(
-                    os.path.join(tmpdir, "ACF.dat")
-                )
-
-                # Compute net charges: valence_electrons - bader_electron_count
-                zval = read_potcar_zval(os.path.join(tmpdir, "POTCAR"))
-                net_charges = []
-                for site, electron_count in zip(structure.sites, electron_counts):
-                    element = str(site.specie)
-                    valence = zval.get(element, 0)
-                    net_charges.append(valence - electron_count)
-
-                return net_charges, atomic_volumes
-
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Bader analysis timed out for {material_id}")
-            return None, None
-        except subprocess.CalledProcessError as e:
-            logger.warning(
-                f"Bader subprocess failed for {material_id}: "
-                f"exit code {e.returncode}, stderr: {e.stderr}"
+            return run_bader_from_bytes(
+                structure, raw_files, self._bader_path, material_id
             )
-            return None, None
         except Exception as e:
-            logger.warning(f"Bader analysis failed for {material_id}: {e}")
+            logger.warning(f"Bader S3 download failed for {material_id}: {e}")
             return None, None
 
     def _run_ddec6_analysis(
         self, structure: Structure, s3_prefix: str, material_id: str
     ) -> Optional[list[float]]:
-        """Run DDEC6 charge analysis via chargemol.
-
-        Downloads CHGCAR from S3, generates POTCAR, writes chargemol config,
-        runs chargemol, and parses DDEC6 net charges.
+        """Download CHGCAR from S3 and run DDEC6 charge analysis.
 
         Args:
             structure: Pymatgen Structure for POTCAR generation.
@@ -423,71 +262,18 @@ class LeMatRhoTransformer(BaseTransformer):
         """
         try:
             bucket = self.config.lematrho_bucket_name
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Download CHGCAR
-                key = f"{s3_prefix}/{STATIC_CALC_TYPE}/CHGCAR.gz"
-                data = download_gz_file_from_s3(self.aws_client, bucket, key)
-                with open(os.path.join(tmpdir, "CHGCAR"), "wb") as f:
-                    f.write(data)
-                del data
+            key = f"{s3_prefix}/{STATIC_CALC_TYPE}/CHGCAR.gz"
+            data = download_gz_file_from_s3(self.aws_client, bucket, key)
+            raw_files = {"CHGCAR": data}
+            del data
 
-                # Generate POTCAR
-                write_potcar(structure, tmpdir)
-
-                # Write chargemol job control file
-                self._write_chargemol_config(tmpdir)
-
-                # Run chargemol
-                env = os.environ.copy()
-                env["DDEC6_ATOMIC_DENSITIES_DIR"] = self._atomic_densities_path
-                subprocess.run(
-                    [self._chargemol_path],
-                    cwd=tmpdir,
-                    timeout=CHARGEMOL_TIMEOUT,
-                    check=True,
-                    capture_output=True,
-                    env=env,
-                )
-
-                return parse_ddec6_charges(tmpdir)
-
-        except subprocess.TimeoutExpired:
-            logger.warning(f"DDEC6 analysis timed out for {material_id}")
-            return None
-        except subprocess.CalledProcessError as e:
-            logger.warning(
-                f"DDEC6 subprocess failed for {material_id}: "
-                f"exit code {e.returncode}, stderr: {e.stderr}"
+            return run_ddec6_from_bytes(
+                structure,
+                raw_files,
+                self._chargemol_path,
+                self._atomic_densities_path,
+                material_id,
             )
-            return None
         except Exception as e:
-            logger.warning(f"DDEC6 analysis failed for {material_id}: {e}")
+            logger.warning(f"DDEC6 S3 download failed for {material_id}: {e}")
             return None
-
-    def _write_chargemol_config(self, tmpdir: str) -> None:
-        """Write ``job_control.txt`` for chargemol DDEC6 analysis.
-
-        Args:
-            tmpdir: Directory where the config file will be written.
-        """
-        config_content = (
-            "<net charge>\n"
-            "0.0\n"
-            "</net charge>\n"
-            "<periodicity along A, B, and C vectors>\n"
-            ".true.\n"
-            ".true.\n"
-            ".true.\n"
-            "</periodicity along A, B, and C vectors>\n"
-            "<atomic densities directory complete path>\n"
-            f"{self._atomic_densities_path}\n"
-            "</atomic densities directory complete path>\n"
-            "<charge type>\n"
-            "DDEC6\n"
-            "</charge type>\n"
-            "<input filename>\n"
-            "CHGCAR\n"
-            "</input filename>\n"
-        )
-        with open(os.path.join(tmpdir, "job_control.txt"), "w") as f:
-            f.write(config_content)

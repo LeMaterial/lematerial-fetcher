@@ -259,7 +259,6 @@ def test_lematrho_transform_help():
     assert result.exit_code == 0
     assert "--bader-path" in result.output
     assert "--chargemol-path" in result.output
-    assert "--chgsum-script-path" in result.output
     assert "--atomic-densities-path" in result.output
     assert "--lematrho-bucket-name" in result.output
 
@@ -417,7 +416,6 @@ def test_lematrho_run_help():
     assert "--hf-token" in result.output
     assert "--bader-path" in result.output
     assert "--chargemol-path" in result.output
-    assert "--chgsum-script-path" in result.output
     assert "--atomic-densities-path" in result.output
     assert "--num-workers" in result.output
 

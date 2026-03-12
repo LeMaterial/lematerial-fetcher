@@ -48,7 +48,6 @@ class TransformerConfig(BaseConfig):
     lematrho_bucket_name: Optional[str] = None
     bader_path: Optional[str] = None
     chargemol_path: Optional[str] = None
-    chgsum_script_path: Optional[str] = None
     atomic_densities_path: Optional[str] = None
 
 
@@ -72,7 +71,6 @@ class DirectPipelineConfig:
     # External tools (all optional — missing tools result in None fields)
     bader_path: Optional[str] = None
     chargemol_path: Optional[str] = None
-    chgsum_script_path: Optional[str] = None
     atomic_densities_path: Optional[str] = None
 
 
@@ -284,7 +282,6 @@ def load_transformer_config(
     lematrho_bucket_name: Optional[str] = None,
     bader_path: Optional[str] = None,
     chargemol_path: Optional[str] = None,
-    chgsum_script_path: Optional[str] = None,
     atomic_densities_path: Optional[str] = None,
     **base_config_kwargs: Any,
 ) -> TransformerConfig:
@@ -381,7 +378,6 @@ def load_transformer_config(
         lematrho_bucket_name=lematrho_bucket_name,
         bader_path=bader_path,
         chargemol_path=chargemol_path,
-        chgsum_script_path=chgsum_script_path,
         atomic_densities_path=atomic_densities_path,
     )
 
@@ -459,7 +455,6 @@ def load_direct_pipeline_config(
     hf_token: Optional[str] = None,
     bader_path: Optional[str] = None,
     chargemol_path: Optional[str] = None,
-    chgsum_script_path: Optional[str] = None,
     atomic_densities_path: Optional[str] = None,
     **_kwargs: Any,
 ) -> DirectPipelineConfig:
@@ -480,6 +475,5 @@ def load_direct_pipeline_config(
         hf_token=hf_token,
         bader_path=bader_path,
         chargemol_path=chargemol_path,
-        chgsum_script_path=chgsum_script_path,
         atomic_densities_path=atomic_densities_path,
     )

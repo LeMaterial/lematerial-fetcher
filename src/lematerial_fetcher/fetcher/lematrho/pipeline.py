@@ -10,26 +10,17 @@ import gc
 import json
 import os
 import shutil
-import subprocess
-import tempfile
 from datetime import datetime
 from glob import glob
 from typing import Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pymatgen.core import Structure
 
 from lematerial_fetcher.fetcher.lematrho.transform import (
     get_cross_compatibility,
-    parse_acf_dat,
-    parse_ddec6_charges,
-    read_potcar_zval,
 )
 from lematerial_fetcher.fetcher.lematrho.utils import (
-    BADER_TIMEOUT,
-    CHARGEMOL_TIMEOUT,
-    CHGSUM_TIMEOUT,
     GRID_KEY_MAP,
     RELAX_CALC_TYPE,
     STATIC_CALC_TYPE,
@@ -38,7 +29,8 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     compress_chgcar,
     download_gz_file_from_s3,
     parse_vasprun_structure,
-    write_potcar,
+    run_bader_from_bytes,
+    run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.utils.aws import get_authenticated_aws_client
@@ -132,167 +124,6 @@ _BADER_FILES = {"CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"}
 _DDEC6_FILES = {"CHGCAR.gz"}
 
 
-
-def _run_bader_from_bytes(
-    structure: Structure,
-    raw_files: dict[str, bytes],
-    tool_paths: dict,
-    material_id: str,
-) -> tuple[Optional[list[float]], Optional[list[float]]]:
-    """Run Bader charge analysis from raw decompressed file bytes.
-
-    Writes raw VASP files to a temp directory, generates POTCAR, runs
-    ``chgsum.pl`` and ``bader``, and parses the resulting ACF.dat.
-
-    Args:
-        structure: Pymatgen Structure for POTCAR generation.
-        raw_files: Mapping of VASP filenames to their raw bytes,
-            e.g. ``{"CHGCAR": b"...", "AECCAR0": b"...", "AECCAR2": b"..."}``.
-        tool_paths: Tool path configuration dict from ``_validate_tools()``.
-        material_id: Material identifier, used for logging.
-
-    Returns:
-        Tuple of ``(net_charges, atomic_volumes)`` or ``(None, None)`` on failure.
-    """
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Write raw decompressed files (bader expects plain-text VASP format)
-            for name in ["CHGCAR", "AECCAR0", "AECCAR2"]:
-                with open(os.path.join(tmpdir, name), "wb") as f:
-                    f.write(raw_files[name])
-
-            # Generate POTCAR
-            write_potcar(structure, tmpdir)
-
-            # Sum AECCAR0 + AECCAR2 -> CHGCAR_sum
-            subprocess.run(
-                [
-                    tool_paths["perl_path"],
-                    tool_paths["chgsum_script_path"],
-                    "AECCAR0",
-                    "AECCAR2",
-                ],
-                cwd=tmpdir,
-                timeout=CHGSUM_TIMEOUT,
-                check=True,
-                capture_output=True,
-            )
-
-            # Run Bader
-            subprocess.run(
-                [tool_paths["bader_path"], "CHGCAR", "-ref", "CHGCAR_sum"],
-                cwd=tmpdir,
-                timeout=BADER_TIMEOUT,
-                check=True,
-                capture_output=True,
-            )
-
-            # Parse results
-            electron_counts, atomic_volumes = parse_acf_dat(
-                os.path.join(tmpdir, "ACF.dat")
-            )
-            zval = read_potcar_zval(os.path.join(tmpdir, "POTCAR"))
-
-            net_charges = []
-            for site, ec in zip(structure.sites, electron_counts):
-                element = str(site.specie)
-                valence = zval.get(element, 0)
-                net_charges.append(valence - ec)
-
-            return net_charges, atomic_volumes
-
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Bader analysis timed out for {material_id}")
-        return None, None
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            f"Bader subprocess failed for {material_id}: "
-            f"exit code {e.returncode}, stderr: {e.stderr}"
-        )
-        return None, None
-    except Exception as e:
-        logger.warning(f"Bader analysis failed for {material_id}: {e}")
-        return None, None
-
-
-def _run_ddec6_from_bytes(
-    structure: Structure,
-    raw_files: dict[str, bytes],
-    tool_paths: dict,
-    material_id: str,
-) -> Optional[list[float]]:
-    """Run DDEC6 charge analysis from raw decompressed file bytes.
-
-    Writes CHGCAR and POTCAR to a temp directory, runs chargemol, and
-    parses the DDEC6 net atomic charges.
-
-    Args:
-        structure: Pymatgen Structure for POTCAR generation.
-        raw_files: Mapping with at least ``{"CHGCAR": b"..."}``.
-        tool_paths: Tool path configuration dict from ``_validate_tools()``.
-        material_id: Material identifier, used for logging.
-
-    Returns:
-        DDEC6 net charges per site, or ``None`` on failure.
-    """
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with open(os.path.join(tmpdir, "CHGCAR"), "wb") as f:
-                f.write(raw_files["CHGCAR"])
-
-            write_potcar(structure, tmpdir)
-
-            # Write chargemol job control file
-            config_content = (
-                "<net charge>\n"
-                "0.0\n"
-                "</net charge>\n"
-                "<periodicity along A, B, and C vectors>\n"
-                ".true.\n"
-                ".true.\n"
-                ".true.\n"
-                "</periodicity along A, B, and C vectors>\n"
-                "<atomic densities directory complete path>\n"
-                f"{tool_paths['atomic_densities_path']}\n"
-                "</atomic densities directory complete path>\n"
-                "<charge type>\n"
-                "DDEC6\n"
-                "</charge type>\n"
-                "<input filename>\n"
-                "CHGCAR\n"
-                "</input filename>\n"
-            )
-            with open(os.path.join(tmpdir, "job_control.txt"), "w") as f:
-                f.write(config_content)
-
-            # Run chargemol
-            env = os.environ.copy()
-            env["DDEC6_ATOMIC_DENSITIES_DIR"] = tool_paths["atomic_densities_path"]
-            subprocess.run(
-                [tool_paths["chargemol_path"]],
-                cwd=tmpdir,
-                timeout=CHARGEMOL_TIMEOUT,
-                check=True,
-                capture_output=True,
-                env=env,
-            )
-
-            return parse_ddec6_charges(tmpdir)
-
-    except subprocess.TimeoutExpired:
-        logger.warning(f"DDEC6 analysis timed out for {material_id}")
-        return None
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            f"DDEC6 subprocess failed for {material_id}: "
-            f"exit code {e.returncode}, stderr: {e.stderr}"
-        )
-        return None
-    except Exception as e:
-        logger.warning(f"DDEC6 analysis failed for {material_id}: {e}")
-        return None
-
-
 def _structure_to_row(
     optimade_structure: OptimadeStructure,
 ) -> dict:
@@ -368,8 +199,8 @@ class LeMatRhoDirectPipeline:
 
         Returns:
             Dict with keys ``bader_path``, ``chargemol_path``,
-            ``chgsum_script_path``, ``perl_path``, ``atomic_densities_path``,
-            ``can_generate_potcar``, ``can_run_bader``, ``can_run_ddec6``.
+            ``atomic_densities_path``, ``can_generate_potcar``,
+            ``can_run_bader``, ``can_run_ddec6``.
         """
         tools = {}
 
@@ -387,22 +218,6 @@ class LeMatRhoDirectPipeline:
         if not tools["chargemol_path"]:
             logger.warning(
                 "chargemol executable not found. DDEC6 charges will not be computed."
-            )
-
-        tools["chgsum_script_path"] = self.config.chgsum_script_path
-        if tools["chgsum_script_path"] and not os.path.isfile(
-            tools["chgsum_script_path"]
-        ):
-            logger.warning(
-                f"chgsum.pl not found at {tools['chgsum_script_path']}. "
-                "Bader analysis requires this script."
-            )
-            tools["chgsum_script_path"] = None
-
-        tools["perl_path"] = shutil.which("perl")
-        if not tools["perl_path"]:
-            logger.warning(
-                "perl not found. Bader analysis requires perl for chgsum.pl."
             )
 
         tools["atomic_densities_path"] = self.config.atomic_densities_path
@@ -423,10 +238,7 @@ class LeMatRhoDirectPipeline:
             )
 
         tools["can_run_bader"] = bool(
-            tools["bader_path"]
-            and tools["chgsum_script_path"]
-            and tools["perl_path"]
-            and tools["can_generate_potcar"]
+            tools["bader_path"] and tools["can_generate_potcar"]
         )
         tools["can_run_ddec6"] = bool(
             tools["chargemol_path"]
@@ -690,15 +502,19 @@ class LeMatRhoDirectPipeline:
             if tool_paths["can_run_bader"] and all(
                 k in raw_files for k in ["CHGCAR", "AECCAR0", "AECCAR2"]
             ):
-                bader_charges, bader_atomic_volume = _run_bader_from_bytes(
-                    structure, raw_files, tool_paths, material_id
+                bader_charges, bader_atomic_volume = run_bader_from_bytes(
+                    structure, raw_files, tool_paths["bader_path"], material_id
                 )
 
             # Step 4: DDEC6 analysis (if tools available and CHGCAR downloaded)
             ddec6_charges = None
             if tool_paths["can_run_ddec6"] and "CHGCAR" in raw_files:
-                ddec6_charges = _run_ddec6_from_bytes(
-                    structure, raw_files, tool_paths, material_id
+                ddec6_charges = run_ddec6_from_bytes(
+                    structure,
+                    raw_files,
+                    tool_paths["chargemol_path"],
+                    tool_paths["atomic_densities_path"],
+                    material_id,
                 )
 
             # Free raw file bytes

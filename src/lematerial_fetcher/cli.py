@@ -402,7 +402,6 @@ def lematrho_transform(ctx, **config_kwargs):
 
     External tool requirements:
     - bader executable (--bader-path or on PATH)
-    - perl + chgsum.pl script (--chgsum-script-path)
     - chargemol executable (--chargemol-path or on PATH)
     - PMG_VASP_PSP_DIR environment variable for POTCAR generation
     - Atomic densities directory (--atomic-densities-path) for DDEC6

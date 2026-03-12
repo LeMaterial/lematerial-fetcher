@@ -296,12 +296,6 @@ def add_lematrho_transform_options(f):
             help="Path to the chargemol executable. If not provided, will search PATH.",
         ),
         click.option(
-            "--chgsum-script-path",
-            type=str,
-            envvar="LEMATERIALFETCHER_CHGSUM_SCRIPT_PATH",
-            help="Path to the chgsum.pl perl script for Bader charge summation.",
-        ),
-        click.option(
             "--atomic-densities-path",
             type=str,
             envvar="LEMATERIALFETCHER_ATOMIC_DENSITIES_PATH",
@@ -390,12 +384,6 @@ def add_lematrho_direct_options(f):
             type=str,
             envvar="LEMATERIALFETCHER_CHARGEMOL_PATH",
             help="Path to the chargemol executable. If not provided, will search PATH.",
-        ),
-        click.option(
-            "--chgsum-script-path",
-            type=str,
-            envvar="LEMATERIALFETCHER_CHGSUM_SCRIPT_PATH",
-            help="Path to the chgsum.pl perl script for Bader charge summation.",
         ),
         click.option(
             "--atomic-densities-path",

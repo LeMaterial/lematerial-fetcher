@@ -1,10 +1,19 @@
 # Copyright 2025 Entalpic
+"""Utilities for the LeMatRho fetcher and transformer.
+
+Provides S3 download helpers, VASP file parsing (vasprun.xml, CHGCAR),
+lossy charge-density compression via pyrho, and shared Bader/DDEC6
+charge-analysis wrappers built on pymatgen's ``BaderAnalysis`` and
+``ChargemolAnalysis``.
+"""
 import gzip
 import os
 import tempfile
 from datetime import datetime
 from typing import Any, Optional
 
+from pymatgen.command_line.bader_caller import BaderAnalysis
+from pymatgen.command_line.chargemol_caller import ChargemolAnalysis
 from pymatgen.core import Structure
 from pymatgen.io.vasp import Chgcar, Vasprun
 
@@ -30,11 +39,6 @@ GRID_KEY_MAP = {
     "AECCAR1.gz": "aeccar1",
     "AECCAR2.gz": "aeccar2",
 }
-
-# Subprocess timeout constants (seconds)
-BADER_TIMEOUT = 600
-CHGSUM_TIMEOUT = 300
-CHARGEMOL_TIMEOUT = 600
 
 
 def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
@@ -168,3 +172,112 @@ def write_potcar(structure: Structure, tmpdir: str) -> None:
 
     input_set = MatPESStaticSet(structure)
     input_set.potcar.write_file(os.path.join(tmpdir, "POTCAR"))
+
+
+def run_bader_from_bytes(
+    structure: Structure,
+    raw_files: dict[str, bytes],
+    bader_path: str,
+    material_id: str,
+) -> tuple[Optional[list[float]], Optional[list[float]]]:
+    """Run Bader charge analysis from raw decompressed VASP file bytes.
+
+    Writes CHGCAR, AECCAR0, AECCAR2, and POTCAR to a temp directory, sums
+    AECCAR0 + AECCAR2 using pymatgen ``Chgcar`` arithmetic, then delegates to
+    ``BaderAnalysis`` which runs the bader executable and parses results.
+
+    Args:
+        structure: Pymatgen Structure for POTCAR generation.
+        raw_files: Mapping of VASP filenames to their raw bytes,
+            e.g. ``{"CHGCAR": b"...", "AECCAR0": b"...", "AECCAR2": b"..."}``.
+        bader_path: Path to the bader executable.
+        material_id: Material identifier, used for logging.
+
+    Returns:
+        Tuple of ``(net_charges, atomic_volumes)`` or ``(None, None)`` on failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for name in ["CHGCAR", "AECCAR0", "AECCAR2"]:
+                with open(os.path.join(tmpdir, name), "wb") as f:
+                    f.write(raw_files[name])
+
+            write_potcar(structure, tmpdir)
+
+            # Sum AECCAR0 + AECCAR2 using pymatgen Chgcar arithmetic
+            aeccar0 = Chgcar.from_file(os.path.join(tmpdir, "AECCAR0"))
+            aeccar2 = Chgcar.from_file(os.path.join(tmpdir, "AECCAR2"))
+            chgcar_sum = aeccar0 + aeccar2
+            chgcar_sum.write_file(os.path.join(tmpdir, "CHGCAR_sum"))
+            del aeccar0, aeccar2, chgcar_sum
+
+            ba = BaderAnalysis(
+                chgcar_filename=os.path.join(tmpdir, "CHGCAR"),
+                potcar_filename=os.path.join(tmpdir, "POTCAR"),
+                chgref_filename=os.path.join(tmpdir, "CHGCAR_sum"),
+                bader_path=bader_path,
+            )
+
+            # charge_transfer = electron_count - valence (positive = gained electrons)
+            # Negate to get valence - electron_count (positive = cationic)
+            net_charges = [-ct for ct in ba.summary["charge_transfer"]]
+            atomic_volumes = list(ba.summary["atomic_volume"])
+
+            return net_charges, atomic_volumes
+
+    except Exception as e:
+        logger.warning(f"Bader analysis failed for {material_id}: {e}")
+        return None, None
+
+
+def run_ddec6_from_bytes(
+    structure: Structure,
+    raw_files: dict[str, bytes],
+    chargemol_path: str,
+    atomic_densities_path: str,
+    material_id: str,
+) -> Optional[list[float]]:
+    """Run DDEC6 charge analysis from raw decompressed VASP file bytes.
+
+    Writes CHGCAR and POTCAR to a temp directory, then delegates to
+    ``ChargemolAnalysis`` which runs chargemol and parses DDEC6 charges.
+
+    Note: Temporarily sets the ``CHARGEMOL_COMMAND`` env var for pymatgen.
+    This is process-safe (``ProcessPoolExecutor`` gives each worker its own
+    env) but NOT thread-safe — do not call from multiple threads.
+
+    Args:
+        structure: Pymatgen Structure for POTCAR generation.
+        raw_files: Mapping with at least ``{"CHGCAR": b"..."}``.
+        chargemol_path: Path to the chargemol executable.
+        atomic_densities_path: Path to atomic densities directory.
+        material_id: Material identifier, used for logging.
+
+    Returns:
+        DDEC6 net charges per site, or ``None`` on failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "CHGCAR"), "wb") as f:
+                f.write(raw_files["CHGCAR"])
+
+            write_potcar(structure, tmpdir)
+
+            orig_chargemol_cmd = os.environ.get("CHARGEMOL_COMMAND")
+            os.environ["CHARGEMOL_COMMAND"] = chargemol_path
+            try:
+                ca = ChargemolAnalysis(
+                    path=tmpdir,
+                    atomic_densities_path=atomic_densities_path,
+                    run_chargemol=True,
+                )
+                return list(ca.ddec_charges)
+            finally:
+                if orig_chargemol_cmd is None:
+                    os.environ.pop("CHARGEMOL_COMMAND", None)
+                else:
+                    os.environ["CHARGEMOL_COMMAND"] = orig_chargemol_cmd
+
+    except Exception as e:
+        logger.warning(f"DDEC6 analysis failed for {material_id}: {e}")
+        return None

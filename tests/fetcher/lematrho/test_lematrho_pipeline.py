@@ -1,7 +1,12 @@
 # Copyright 2025 Entalpic
+"""Tests for the LeMatRho direct pipeline.
+
+Covers ``LeMatRhoDirectPipeline``, Parquet schema validation, structure-to-row
+conversion, material processing, and the shared Bader/DDEC6 charge-analysis
+helpers in ``utils``.
+"""
 import json
 import os
-import subprocess
 import tempfile
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -13,9 +18,11 @@ from lematerial_fetcher.fetcher.lematrho.pipeline import (
     PARQUET_COLUMNS,
     PARQUET_SCHEMA,
     LeMatRhoDirectPipeline,
-    _run_bader_from_bytes,
-    _run_ddec6_from_bytes,
     _structure_to_row,
+)
+from lematerial_fetcher.fetcher.lematrho.utils import (
+    run_bader_from_bytes,
+    run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.utils.config import DirectPipelineConfig
@@ -111,8 +118,6 @@ def no_tools():
     return {
         "bader_path": None,
         "chargemol_path": None,
-        "chgsum_script_path": None,
-        "perl_path": None,
         "atomic_densities_path": None,
         "can_generate_potcar": False,
         "can_run_bader": False,
@@ -377,7 +382,7 @@ class TestProcessMaterial:
         assert result is not None
         assert result["cross_compatibility"] is False
 
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline._run_bader_from_bytes")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_bader_from_bytes")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
@@ -410,8 +415,6 @@ class TestProcessMaterial:
         tools = {
             "bader_path": "/usr/bin/bader",
             "chargemol_path": None,
-            "chgsum_script_path": "/opt/chgsum.pl",
-            "perl_path": "/usr/bin/perl",
             "atomic_densities_path": None,
             "can_generate_potcar": True,
             "can_run_bader": True,
@@ -1001,13 +1004,7 @@ class TestRunIntegration:
 
 
 class TestBaderFromBytes:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.read_potcar_zval")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_acf_dat")
-    def test_happy_path(
-        self, mock_parse_acf, mock_read_zval, mock_subprocess, mock_potcar
-    ):
+    def test_happy_path(self):
         from pymatgen.core import Lattice, Structure
 
         structure = Structure(
@@ -1018,46 +1015,60 @@ class TestBaderFromBytes:
             "AECCAR0": b"aeccar0_data",
             "AECCAR2": b"aeccar2_data",
         }
-        tools = {
-            "bader_path": "/usr/bin/bader",
-            "perl_path": "/usr/bin/perl",
-            "chgsum_script_path": "/opt/chgsum.pl",
+
+        mock_ba = MagicMock()
+        mock_ba.summary = {
+            "charge_transfer": [0.0, 0.0],  # electron_count - valence
+            "atomic_volume": [10.0, 12.0],
         }
 
-        mock_parse_acf.return_value = ([4.0, 6.0], [10.0, 12.0])
-        mock_read_zval.return_value = {"Si": 4.0, "O": 6.0}
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.Chgcar.from_file"
+            ) as mock_chgcar,
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.BaderAnalysis"
+            ) as mock_ba_cls,
+        ):
+            mock_chgcar_obj = MagicMock()
+            mock_chgcar_obj.__add__ = MagicMock(return_value=mock_chgcar_obj)
+            mock_chgcar.return_value = mock_chgcar_obj
+            mock_ba_cls.return_value = mock_ba
 
-        charges, volumes = _run_bader_from_bytes(
-            structure, raw_files, tools, "mp-test"
-        )
+            charges, volumes = run_bader_from_bytes(
+                structure, raw_files, "/usr/bin/bader", "mp-test"
+            )
 
-        assert charges == [0.0, 0.0]  # valence - electron_count
+        # charge_transfer is negated: valence - electron_count
+        assert charges == [0.0, 0.0]
         assert volumes == [10.0, 12.0]
-        assert mock_subprocess.call_count == 2  # chgsum + bader
 
-    def test_subprocess_timeout(self):
+    def test_bader_analysis_failure(self):
         from pymatgen.core import Lattice, Structure
 
         structure = Structure(
             Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
         )
         raw_files = {"CHGCAR": b"x", "AECCAR0": b"x", "AECCAR2": b"x"}
-        tools = {
-            "bader_path": "/usr/bin/bader",
-            "perl_path": "/usr/bin/perl",
-            "chgsum_script_path": "/opt/chgsum.pl",
-        }
 
-        with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.Chgcar.from_file"
+            ) as mock_chgcar,
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.BaderAnalysis",
+                side_effect=RuntimeError("bader failed"),
+            ),
         ):
-            with patch(
-                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
-                side_effect=subprocess.TimeoutExpired("bader", 600),
-            ):
-                charges, volumes = _run_bader_from_bytes(
-                    structure, raw_files, tools, "mp-test"
-                )
+            mock_chgcar_obj = MagicMock()
+            mock_chgcar_obj.__add__ = MagicMock(return_value=mock_chgcar_obj)
+            mock_chgcar.return_value = mock_chgcar_obj
+
+            charges, volumes = run_bader_from_bytes(
+                structure, raw_files, "/usr/bin/bader", "mp-test"
+            )
 
         assert charges is None
         assert volumes is None
@@ -1069,85 +1080,103 @@ class TestBaderFromBytes:
 
 
 class TestDdec6FromBytes:
-    def test_subprocess_failure(self):
+    def test_chargemol_failure(self):
         from pymatgen.core import Lattice, Structure
 
         structure = Structure(
             Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
         )
         raw_files = {"CHGCAR": b"x"}
-        tools = {
-            "chargemol_path": "/usr/bin/chargemol",
-            "atomic_densities_path": "/opt/densities",
-        }
 
-        with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.ChargemolAnalysis",
+                side_effect=RuntimeError("chargemol failed"),
+            ),
         ):
-            with patch(
-                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
-                side_effect=subprocess.CalledProcessError(1, "chargemol"),
-            ):
-                result = _run_ddec6_from_bytes(
-                    structure, raw_files, tools, "mp-test"
-                )
+            result = run_ddec6_from_bytes(
+                structure, raw_files, "/usr/bin/chargemol", "/opt/densities", "mp-test"
+            )
 
         assert result is None
 
     def test_happy_path(self):
-        """DDEC6 returns charges when subprocess succeeds."""
+        """DDEC6 returns charges when ChargemolAnalysis succeeds."""
         from pymatgen.core import Lattice, Structure
 
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
         raw_files = {"CHGCAR": b"chgcar_data"}
-        tools = {
-            "chargemol_path": "/usr/bin/chargemol",
-            "atomic_densities_path": "/opt/densities",
-        }
 
-        with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
+        mock_ca = MagicMock()
+        mock_ca.ddec_charges = [0.5, -0.5]
+
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.ChargemolAnalysis"
+            ) as mock_ca_cls,
         ):
-            with patch(
-                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run"
-            ):
-                with patch(
-                    "lematerial_fetcher.fetcher.lematrho.pipeline.parse_ddec6_charges",
-                    return_value=[0.5, -0.5],
-                ):
-                    result = _run_ddec6_from_bytes(
-                        structure, raw_files, tools, "mp-test"
-                    )
+            mock_ca_cls.return_value = mock_ca
+            result = run_ddec6_from_bytes(
+                structure, raw_files, "/usr/bin/chargemol", "/opt/densities", "mp-test"
+            )
 
         assert result == [0.5, -0.5]
 
-    def test_timeout(self):
-        """DDEC6 returns None on timeout."""
+    def test_env_var_restored_on_failure(self):
+        """CHARGEMOL_COMMAND env var should be restored after ChargemolAnalysis raises."""
         from pymatgen.core import Lattice, Structure
 
         structure = Structure(
             Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
         )
         raw_files = {"CHGCAR": b"x"}
-        tools = {
-            "chargemol_path": "/usr/bin/chargemol",
-            "atomic_densities_path": "/opt/densities",
-        }
 
-        with patch(
-            "lematerial_fetcher.fetcher.lematrho.pipeline.write_potcar"
-        ):
+        # Set a sentinel value to verify restoration
+        os.environ["CHARGEMOL_COMMAND"] = "original_value"
+        try:
+            with patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"):
+                with patch(
+                    "lematerial_fetcher.fetcher.lematrho.utils.ChargemolAnalysis",
+                    side_effect=RuntimeError("chargemol failed"),
+                ):
+                    result = run_ddec6_from_bytes(
+                        structure, raw_files, "/usr/bin/chargemol",
+                        "/opt/densities", "mp-test"
+                    )
+
+            assert result is None
+            assert os.environ.get("CHARGEMOL_COMMAND") == "original_value"
+        finally:
+            os.environ.pop("CHARGEMOL_COMMAND", None)
+
+    def test_env_var_cleaned_when_not_previously_set(self):
+        """CHARGEMOL_COMMAND should be removed if it wasn't set before the call."""
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
+        )
+        raw_files = {"CHGCAR": b"x"}
+
+        # Ensure env var is not set
+        os.environ.pop("CHARGEMOL_COMMAND", None)
+
+        with patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"):
             with patch(
-                "lematerial_fetcher.fetcher.lematrho.pipeline.subprocess.run",
-                side_effect=subprocess.TimeoutExpired("chargemol", 600),
+                "lematerial_fetcher.fetcher.lematrho.utils.ChargemolAnalysis",
+                side_effect=RuntimeError("chargemol failed"),
             ):
-                result = _run_ddec6_from_bytes(
-                    structure, raw_files, tools, "mp-test"
+                result = run_ddec6_from_bytes(
+                    structure, raw_files, "/usr/bin/chargemol",
+                    "/opt/densities", "mp-test"
                 )
 
         assert result is None
+        assert "CHARGEMOL_COMMAND" not in os.environ
 
 
 # ---------------------------------------------------------------------------
@@ -1165,7 +1194,6 @@ class TestValidateTools:
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
                     chargemol_path="/usr/bin/chargemol",
-                    chgsum_script_path=__file__,  # use this test file as a file that exists
                     atomic_densities_path=os.path.dirname(__file__),  # dir that exists
                 )
                 pipeline = LeMatRhoDirectPipeline(config=config)
@@ -1188,15 +1216,16 @@ class TestValidateTools:
         assert pipeline._tool_paths["can_run_ddec6"] is False
         assert pipeline._tool_paths["can_generate_potcar"] is False
 
-    def test_bader_but_no_chgsum(self, mock_config):
-        """Bader on PATH but chgsum not set -> can_run_bader False."""
+    def test_bader_without_potcar(self, mock_config):
+        """Bader on PATH but no PMG_VASP_PSP_DIR -> can_run_bader False."""
         with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-            with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": "/opt/psp"}):
+            env = os.environ.copy()
+            env.pop("PMG_VASP_PSP_DIR", None)
+            with patch.dict(os.environ, env, clear=True):
                 config = DirectPipelineConfig(
                     lematrho_bucket_name="test-bucket",
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
-                    # no chgsum_script_path
                 )
                 pipeline = LeMatRhoDirectPipeline(config=config)
 
@@ -1214,7 +1243,6 @@ class TestValidateTools:
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
                     chargemol_path="/usr/bin/chargemol",
-                    chgsum_script_path=__file__,
                     atomic_densities_path=os.path.dirname(__file__),
                 )
                 pipeline = LeMatRhoDirectPipeline(config=config)
@@ -1402,7 +1430,7 @@ class TestPushToHuggingface:
 
 
 class TestProcessMaterialWithDdec6:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline._run_ddec6_from_bytes")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_ddec6_from_bytes")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
@@ -1435,8 +1463,6 @@ class TestProcessMaterialWithDdec6:
         tools = {
             "bader_path": None,
             "chargemol_path": "/usr/bin/chargemol",
-            "chgsum_script_path": None,
-            "perl_path": None,
             "atomic_densities_path": "/opt/densities",
             "can_generate_potcar": True,
             "can_run_bader": False,
@@ -1510,8 +1536,6 @@ class TestIntegrationS3:
         no_tools = {
             "bader_path": None,
             "chargemol_path": None,
-            "chgsum_script_path": None,
-            "perl_path": None,
             "atomic_densities_path": None,
             "can_generate_potcar": False,
             "can_run_bader": False,
