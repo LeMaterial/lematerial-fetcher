@@ -379,7 +379,7 @@ class TestProcessMaterial:
         )
 
         assert result is not None
-        assert result["cross_compatibility"] is False
+        assert result["cross_compatibility"] is True
 
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_bader_from_bytes")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")

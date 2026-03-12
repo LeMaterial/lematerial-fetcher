@@ -17,9 +17,6 @@ from typing import Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lematerial_fetcher.fetcher.lematrho.transform import (
-    get_cross_compatibility,
-)
 from lematerial_fetcher.fetcher.lematrho.utils import (
     GRID_KEY_MAP,
     RELAX_CALC_TYPE,
@@ -28,6 +25,7 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     VALID_PREFIXES,
     compress_chgcar,
     download_gz_file_from_s3,
+    get_cross_compatibility,
     parse_vasprun_structure,
     run_bader_from_bytes,
     run_ddec6_from_bytes,

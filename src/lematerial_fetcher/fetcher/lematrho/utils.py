@@ -41,6 +41,20 @@ GRID_KEY_MAP = {
 }
 
 
+def get_cross_compatibility(elements: list[str]) -> bool:
+    """Determine cross-compatibility for LeMatRho structures.
+
+    All LeMatRho structures are cross-compatible (no element exclusions).
+
+    Args:
+        elements: List of element symbols in the structure.
+
+    Returns:
+        Always ``True``.
+    """
+    return True
+
+
 def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
     """Download and decompress a gzipped file from S3.
 
