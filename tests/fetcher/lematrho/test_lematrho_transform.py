@@ -20,7 +20,6 @@ from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.models.optimade import Functional
 from lematerial_fetcher.utils.config import TransformerConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -271,7 +270,7 @@ class TestTransformRow:
                 transformer_with_tools, "_run_ddec6_analysis"
             ) as mock_ddec6,
         ):
-            result = transformer_with_tools.transform_row(raw)
+            transformer_with_tools.transform_row(raw)
 
         mock_bader.assert_not_called()
         mock_ddec6.assert_not_called()

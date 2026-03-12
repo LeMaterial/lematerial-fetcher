@@ -16,7 +16,6 @@ import pytest
 
 from lematerial_fetcher.fetcher.lematrho.pipeline import (
     PARQUET_COLUMNS,
-    PARQUET_SCHEMA,
     LeMatRhoDirectPipeline,
     _structure_to_row,
 )

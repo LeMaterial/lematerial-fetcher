@@ -6,7 +6,6 @@ from typing import Optional
 from lematerial_fetcher.database.postgres import StructuresDatabase
 from lematerial_fetcher.fetch import BaseFetcher, ItemsInfo
 from lematerial_fetcher.fetcher.lematrho.utils import (
-    DEFAULT_MAX_WORKERS,
     GRID_KEY_MAP,
     RELAX_CALC_TYPE,
     STATIC_CALC_TYPE,

@@ -6,9 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from lematerial_fetcher.database.postgres import DatasetVersions, StructuresDatabase
-from lematerial_fetcher.fetch import ItemsInfo
 from lematerial_fetcher.fetcher.lematrho.fetch import (
-    DEFAULT_MAX_WORKERS,
     RELAX_CALC_TYPE,
     STATIC_CALC_TYPE,
     STATIC_FILES,
@@ -490,7 +488,6 @@ class TestProcessBatch:
 class TestDownloadGzFile:
     def test_decompresses_gzipped_content(self):
         """Verify gzip decompression works correctly."""
-        import io
 
         original = b"hello world test content"
         compressed = gzip.compress(original)
@@ -590,7 +587,7 @@ class TestLeMatRhoFetcher:
             patch(
                 "lematerial_fetcher.fetcher.lematrho.fetch.get_authenticated_aws_client"
             ) as mock_auth,
-            patch("lematerial_fetcher.fetch.StructuresDatabase") as mock_db_cls,
+            patch("lematerial_fetcher.fetch.StructuresDatabase"),
             patch("lematerial_fetcher.fetch.DatasetVersions") as mock_ver_cls,
         ):
             mock_auth.return_value = mock_aws_client
