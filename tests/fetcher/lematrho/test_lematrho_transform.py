@@ -578,11 +578,11 @@ class TestGetCrossCompatibility:
     def test_normal_elements(self):
         assert get_cross_compatibility(["Si", "O"]) is True
 
-    def test_yb_excluded(self):
-        assert get_cross_compatibility(["Yb", "O"]) is False
+    def test_yb_included(self):
+        assert get_cross_compatibility(["Yb", "O"]) is True
 
     def test_yb_in_larger_set(self):
-        assert get_cross_compatibility(["Fe", "Yb", "O"]) is False
+        assert get_cross_compatibility(["Fe", "Yb", "O"]) is True
 
     def test_empty_elements(self):
         assert get_cross_compatibility([]) is True

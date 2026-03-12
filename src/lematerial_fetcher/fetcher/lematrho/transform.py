@@ -31,15 +31,15 @@ from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 def get_cross_compatibility(elements: list[str]) -> bool:
     """Determine cross-compatibility for LeMatRho structures.
 
-    Yb-containing structures are excluded (same policy as Alexandria).
+    All LeMatRho structures are cross-compatible (no element exclusions).
 
     Args:
         elements: List of element symbols in the structure.
 
     Returns:
-        ``True`` if the structure is cross-compatible, ``False`` otherwise.
+        Always ``True``.
     """
-    return "Yb" not in elements
+    return True
 
 
 class LeMatRhoTransformer(BaseTransformer):
@@ -177,7 +177,7 @@ class LeMatRhoTransformer(BaseTransformer):
         grid_shape = attrs.get("grid_shape")
         s3_prefix = attrs.get("s3_prefix")
 
-        # Cross-compatibility (exclude Yb, same policy as Alexandria)
+        # Cross-compatibility (no element exclusions for LeMatRho)
         cross_compatibility = get_cross_compatibility(optimade_dict["elements"])
 
         # Bader analysis (independent from DDEC6)
