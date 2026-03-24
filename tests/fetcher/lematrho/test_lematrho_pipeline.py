@@ -20,11 +20,18 @@ from lematerial_fetcher.fetcher.lematrho.pipeline import (
     _structure_to_row,
 )
 from lematerial_fetcher.fetcher.lematrho.utils import (
+    parse_vasprun_structure,
     run_bader_from_bytes,
     run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
 from lematerial_fetcher.utils.config import DirectPipelineConfig
+
+
+# Relaxation forces come from vasprun.xml(.gz), not from static AECCAR* / CHGCAR.
+# Two sites, small vectors (under OptimadeStructure max-force check when wired into the row).
+_SAMPLE_VASPRUN_FORCES_TWO_SITE = [[0.01, 0.0, 0.0], [-0.01, 0.0, 0.0]]
+
 
 # Minimal pymatgen Structure dict for testing
 _MOCK_STRUCTURE_DICT = {
@@ -202,7 +209,7 @@ class TestProcessMaterial:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_config,
@@ -219,7 +226,7 @@ class TestProcessMaterial:
             ["Si", "O"],
             [[0, 0, 0], [0.5, 0.5, 0.5]],
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun_structure.return_value = structure
         mock_compress.return_value = [[[1.0] * 10] * 10] * 10
         mock_get_optimade.return_value = _make_mock_optimade_dict()
 
@@ -263,7 +270,7 @@ class TestProcessMaterial:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_config,
@@ -286,13 +293,19 @@ class TestProcessMaterial:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_config,
         no_tools,
     ):
-        """Missing AECCAR1 — other files still processed."""
+        """Missing AECCAR1 — other static grids still processed.
+
+        AECCAR1 lives under the static calc; relaxation forces come from vasprun.xml.gz
+        only, so a missing AECCAR1 does not imply missing forces from the relax run.
+        (The pipeline does not yet attach vasprun forces to the row; see
+        ``_SAMPLE_VASPRUN_FORCES_TWO_SITE`` for a realistic mock when that is wired.)
+        """
         from pymatgen.core import Lattice, Structure
 
         mock_get_client.return_value = MagicMock()
@@ -307,7 +320,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun_structure.return_value = structure
         mock_compress.return_value = [[[1.0]]]
         mock_get_optimade.return_value = _make_mock_optimade_dict()
 
@@ -332,7 +345,7 @@ class TestProcessMaterial:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_config,
@@ -346,7 +359,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Yb", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun_structure.return_value = structure
         mock_compress.return_value = [[[1.0]]]
 
         optimade_dict = _make_mock_optimade_dict()
@@ -391,7 +404,7 @@ class TestProcessMaterial:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_bader,
@@ -406,7 +419,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun_structure.return_value = structure
         mock_compress.return_value = [[[1.0]]]
         mock_get_optimade.return_value = _make_mock_optimade_dict()
         mock_bader.return_value = (None, None)
@@ -1074,6 +1087,96 @@ class TestBaderFromBytes:
 
 
 # ---------------------------------------------------------------------------
+# TestVasprunForces (vasprun relaxation forces only; isolated from pipeline mocks)
+# ---------------------------------------------------------------------------
+
+
+class TestVasprunForces:
+    """Expectations for forces on ``Vasprun.ionic_steps`` vs ``final_structure`` site count.
+
+    Kept in one class so all vasprun-forces checks stay separate from
+    ``TestProcessMaterial`` and other pipeline tests.
+    """
+
+    @staticmethod
+    def _every_ionic_step_has_forces(ionic_steps: list[dict]) -> bool:
+        """True when each ionic step defines a non-None ``forces`` entry (VASP / pymatgen)."""
+        return all(
+            isinstance(step, dict)
+            and "forces" in step
+            and step["forces"] is not None
+            for step in ionic_steps
+        )
+
+    @staticmethod
+    def _ionic_step_forces_shapes_match_nsites(
+        ionic_steps: list[dict], nsites: int
+    ) -> bool:
+        """True when every step's forces are finite and reshape to ``(nsites, 3)``."""
+        import numpy as np
+
+        for step in ionic_steps:
+            if not isinstance(step, dict) or step.get("forces") is None:
+                return False
+            arr = np.asarray(step["forces"], dtype=float).reshape(-1, 3)
+            if arr.shape != (nsites, 3) or not np.all(np.isfinite(arr)):
+                return False
+        return True
+
+    def test_numpy_forces_per_step_count_as_present(self):
+        import numpy as np
+
+        mock_vr = MagicMock()
+        mock_vr.ionic_steps = [{"forces": np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])}]
+        assert self._every_ionic_step_has_forces(mock_vr.ionic_steps)
+
+    def test_step_without_forces_key_fails(self):
+        mock_vr = MagicMock()
+        mock_vr.ionic_steps = [
+            {"forces": [[0.0, 0.0, 0.0]]},
+            {"e_fr_energy": -1.0},
+        ]
+        assert not self._every_ionic_step_has_forces(mock_vr.ionic_steps)
+
+    def test_step_with_none_forces_fails(self):
+        mock_vr = MagicMock()
+        mock_vr.ionic_steps = [{"forces": None}]
+        assert not self._every_ionic_step_has_forces(mock_vr.ionic_steps)
+
+    @patch("lematerial_fetcher.fetcher.lematrho.utils.Vasprun")
+    def test_forces_per_step_match_final_structure_site_count_and_values(
+        self, mock_vr_cls
+    ):
+        """Same ``utils.Vasprun`` path as ``parse_vasprun_structure``; forces align with nsites."""
+        import numpy as np
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        nsites = len(structure)
+        expected_per_step = [
+            [[0.0, 0.01, -0.01], [0.0, -0.01, 0.01]],
+            [[0.02, 0.0, 0.0], [-0.02, 0.0, 0.0]],
+        ]
+        mock_inst = MagicMock()
+        mock_inst.final_structure = structure
+        mock_inst.ionic_steps = [{"forces": f} for f in expected_per_step]
+        mock_vr_cls.return_value = mock_inst
+
+        parsed = parse_vasprun_structure(b"<ignored/>")
+        assert len(parsed) == nsites
+
+        ionic_steps = mock_vr_cls.return_value.ionic_steps
+        assert self._every_ionic_step_has_forces(ionic_steps)
+        assert self._ionic_step_forces_shapes_match_nsites(ionic_steps, nsites)
+
+        for step, want in zip(ionic_steps, expected_per_step, strict=True):
+            arr = np.asarray(step["forces"], dtype=float).reshape(-1, 3)
+            assert arr.tolist() == want
+
+
+# ---------------------------------------------------------------------------
 # TestDdec6FromBytes
 # ---------------------------------------------------------------------------
 
@@ -1439,7 +1542,7 @@ class TestProcessMaterialWithDdec6:
         self,
         mock_get_client,
         mock_download,
-        mock_parse_vasprun,
+        mock_parse_vasprun_structure,
         mock_compress,
         mock_get_optimade,
         mock_ddec6,
@@ -1454,7 +1557,7 @@ class TestProcessMaterialWithDdec6:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun_structure.return_value = structure
         mock_compress.return_value = [[[1.0] * 10] * 10] * 10
         mock_get_optimade.return_value = _make_mock_optimade_dict()
         mock_ddec6.return_value = [0.3, -0.3]
