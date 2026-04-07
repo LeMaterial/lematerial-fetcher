@@ -26,7 +26,7 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     compress_chgcar,
     download_gz_file_from_s3,
     get_cross_compatibility,
-    parse_vasprun_structure,
+    parse_vasprun_relax_output,
     run_bader_from_bytes,
     run_ddec6_from_bytes,
 )
@@ -451,7 +451,9 @@ class LeMatRhoDirectPipeline:
                 vasprun_bytes = download_gz_file_from_s3(
                     aws_client, bucket, vasprun_key
                 )
-                structure = parse_vasprun_structure(vasprun_bytes)
+                structure, relax_forces, relax_stress = parse_vasprun_relax_output(
+                    vasprun_bytes
+                )
                 del vasprun_bytes
             except Exception as e:
                 logger.warning(
@@ -527,8 +529,8 @@ class LeMatRhoDirectPipeline:
                 source="lematrho",
                 immutable_id=material_id,
                 last_modified=datetime.now(),
-                **optimade_dict,
-                functional=Functional.PBE,
+                **optimade_dict,    #maybe this is redundant?
+                functional=Functional.PBE,     #Are we sure about this?
                 cross_compatibility=cross_compatibility,
                 compressed_charge_density=compressed_grids.get("charge_density"),
                 compressed_aeccar0=compressed_grids.get("aeccar0"),
@@ -540,6 +542,11 @@ class LeMatRhoDirectPipeline:
                 ddec6_charges=ddec6_charges,
                 compute_space_group=True,
                 compute_bawl_hash=True,
+                **{
+                    **optimade_dict,
+                    "forces": relax_forces,
+                    "stress_tensor": relax_stress,
+                },
             )
 
             # Step 6: Convert to flat dict for Parquet
