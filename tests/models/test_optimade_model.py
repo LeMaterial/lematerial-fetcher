@@ -343,26 +343,25 @@ def test_charge_density_grid_shape_validation():
         OptimadeStructure(**data)
 
 
-def test_optimade_db_columns_include_charge_density_fields():
-    """Test that OptimadeDatabase.columns() includes the new charge density columns."""
+def test_optimade_db_columns_do_not_include_charge_density_fields():
+    """Charge density columns are not in the Postgres schema.
+
+    LeMatRho uses a direct S3 → Parquet pipeline and never writes to Postgres.
+    The charge density fields live only on OptimadeStructure (Parquet schema).
+    """
     cols = OptimadeDatabase.columns()
-    assert "compressed_charge_density" in cols
-    assert "compressed_aeccar0" in cols
-    assert "compressed_aeccar1" in cols
-    assert "compressed_aeccar2" in cols
-    assert "charge_density_grid_shape" in cols
-    assert "bader_charges" in cols
-    assert "bader_atomic_volume" in cols
-    assert "ddec6_charges" in cols
+    assert "compressed_charge_density" not in cols
+    assert "bader_charges" not in cols
+    assert "ddec6_charges" not in cols
 
 
-def test_trajectories_db_columns_inherit_charge_density_fields():
-    """Test that TrajectoriesDatabase.columns() inherits the charge density columns."""
+def test_trajectories_db_columns_do_not_include_charge_density_fields():
+    """Charge density columns are absent from TrajectoriesDatabase too."""
     cols = TrajectoriesDatabase.columns()
-    assert "compressed_charge_density" in cols
-    assert "bader_charges" in cols
-    assert "ddec6_charges" in cols
-    # Also still has trajectory-specific columns
+    assert "compressed_charge_density" not in cols
+    assert "bader_charges" not in cols
+    assert "ddec6_charges" not in cols
+    # Trajectory-specific columns are still present
     assert "relaxation_step" in cols
     assert "relaxation_number" in cols
 
