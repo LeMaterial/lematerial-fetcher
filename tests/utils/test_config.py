@@ -7,6 +7,8 @@ import pytest
 from dotenv import load_dotenv
 
 from lematerial_fetcher.utils.config import (
+    LeMatRhoDirectPipelineConfig,
+    load_direct_pipeline_config,
     load_fetcher_config,
     load_push_config,
     load_transformer_config,
@@ -724,3 +726,106 @@ def test_load_push_config_missing_required():
     assert "db credentials" in str(excinfo.value)
     assert "table_name" in str(excinfo.value)
     assert "hf_repo_id" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# LeMatRhoDirectPipelineConfig tests
+# ---------------------------------------------------------------------------
+
+
+class TestLeMatRhoDirectPipelineConfig:
+    def test_defaults(self):
+        """All defaults should produce a valid config."""
+        config = LeMatRhoDirectPipelineConfig()
+        assert config.lematrho_bucket_name == "lemat-rho"
+        assert config.lematrho_grid_shape == (15, 15, 15)
+        assert config.output_dir == "./lematrho_output"
+        assert config.parquet_chunk_size == 1000
+        assert config.num_workers == 4
+        assert config.log_every == 100
+        assert config.hf_repo_id is None
+        assert config.hf_token is None
+        assert config.bader_path is None
+        assert config.chargemol_path is None
+        assert config.atomic_densities_path is None
+
+    def test_custom_values(self):
+        """Config should accept custom values for all fields."""
+        config = LeMatRhoDirectPipelineConfig(
+            lematrho_bucket_name="my-bucket",
+            lematrho_grid_shape=(20, 20, 20),
+            output_dir="/tmp/output",
+            parquet_chunk_size=500,
+            num_workers=2,
+            log_every=50,
+            hf_repo_id="org/repo",
+            hf_token="hf_abc123",
+            bader_path="/usr/bin/bader",
+            chargemol_path="/usr/bin/chargemol",
+            atomic_densities_path="/opt/atomic_densities",
+        )
+        assert config.lematrho_bucket_name == "my-bucket"
+        assert config.lematrho_grid_shape == (20, 20, 20)
+        assert config.output_dir == "/tmp/output"
+        assert config.parquet_chunk_size == 500
+        assert config.num_workers == 2
+        assert config.hf_repo_id == "org/repo"
+        assert config.bader_path == "/usr/bin/bader"
+        assert config.chargemol_path == "/usr/bin/chargemol"
+        assert config.atomic_densities_path == "/opt/atomic_densities"
+
+    def test_not_a_base_config(self):
+        """LeMatRhoDirectPipelineConfig should NOT inherit from BaseConfig."""
+        from lematerial_fetcher.utils.config import BaseConfig
+
+        assert not issubclass(LeMatRhoDirectPipelineConfig, BaseConfig)
+
+
+class TestLoadLeMatRhoDirectPipelineConfig:
+    def test_defaults(self):
+        """Loader with no args should return config with all defaults."""
+        config = load_direct_pipeline_config()
+        assert config.lematrho_bucket_name == "lemat-rho"
+        assert config.lematrho_grid_shape == (15, 15, 15)
+        assert config.output_dir == "./lematrho_output"
+        assert config.parquet_chunk_size == 1000
+        assert config.num_workers == 4
+
+    def test_passes_arguments_through(self):
+        """Loader should pass all arguments to the config."""
+        config = load_direct_pipeline_config(
+            lematrho_bucket_name="custom-bucket",
+            grid_shape=(10, 10, 10),
+            output_dir="/data/output",
+            parquet_chunk_size=2000,
+            num_workers=8,
+            log_every=200,
+            hf_repo_id="org/dataset",
+            hf_token="token123",
+            bader_path="/bin/bader",
+            chargemol_path="/bin/chargemol",
+            atomic_densities_path="/data/densities",
+        )
+        assert config.lematrho_bucket_name == "custom-bucket"
+        assert config.lematrho_grid_shape == (10, 10, 10)
+        assert config.output_dir == "/data/output"
+        assert config.parquet_chunk_size == 2000
+        assert config.num_workers == 8
+        assert config.log_every == 200
+        assert config.hf_repo_id == "org/dataset"
+        assert config.hf_token == "token123"
+        assert config.bader_path == "/bin/bader"
+
+    def test_ignores_unknown_kwargs(self):
+        """Loader should silently ignore unknown kwargs (from Click spillover)."""
+        config = load_direct_pipeline_config(
+            debug=True,
+            cache_dir="/tmp/cache",
+            some_random_kwarg="value",
+        )
+        assert isinstance(config, LeMatRhoDirectPipelineConfig)
+
+    def test_grid_shape_kwarg_maps_to_config(self):
+        """Loader uses 'grid_shape' (Click name) mapped to 'lematrho_grid_shape'."""
+        config = load_direct_pipeline_config(grid_shape=(25, 25, 25))
+        assert config.lematrho_grid_shape == (25, 25, 25)

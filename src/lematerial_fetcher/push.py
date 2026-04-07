@@ -135,6 +135,14 @@ class Push:
                 "cross_compatibility": Value("bool"),
                 "bawl_fingerprint": Value("string"),
                 "space_group_it_number": Value("int32"),
+                "compressed_charge_density": Value("string"),
+                "compressed_aeccar0": Value("string"),
+                "compressed_aeccar1": Value("string"),
+                "compressed_aeccar2": Value("string"),
+                "charge_density_grid_shape": Sequence(Value("int32")),
+                "bader_charges": Sequence(Value("float64")),
+                "bader_atomic_volume": Sequence(Value("float64")),
+                "ddec6_charges": Sequence(Value("float64")),
             }
         )
 
@@ -171,6 +179,14 @@ class Push:
         del features["charges"]
         del features["total_magnetization"]
         del features["bawl_fingerprint"]
+        del features["compressed_charge_density"]
+        del features["compressed_aeccar0"]
+        del features["compressed_aeccar1"]
+        del features["compressed_aeccar2"]
+        del features["charge_density_grid_shape"]
+        del features["bader_charges"]
+        del features["bader_atomic_volume"]
+        del features["ddec6_charges"]
 
         convert_features_dict.update(
             {
@@ -465,6 +481,34 @@ class Push:
                 batched=True,
                 num_proc=self.config.num_workers,
                 desc="Converting species column to string",
+            )
+
+        # Convert compressed charge density fields from nested lists to JSON strings
+        json_serialized_columns = [
+            "compressed_charge_density",
+            "compressed_aeccar0",
+            "compressed_aeccar1",
+            "compressed_aeccar2",
+        ]
+        columns_to_convert = [
+            col
+            for col in json_serialized_columns
+            if col in dataset["train"].column_names
+        ]
+        if columns_to_convert:
+
+            def convert_charge_density(batch):
+                for col in columns_to_convert:
+                    batch[col] = [
+                        json.dumps(v) if v is not None else None for v in batch[col]
+                    ]
+                return batch
+
+            dataset = dataset.map(
+                convert_charge_density,
+                batched=True,
+                num_proc=self.config.num_workers,
+                desc="Converting charge density columns to string",
             )
 
         for split in dataset.keys():

@@ -184,6 +184,45 @@ class OptimadeStructure(BaseModel):
         description="BAWL fingerprint hash",
     )
 
+    # Charge density fields (LeMatRho)
+    compressed_charge_density: Optional[list] = Field(
+        None,
+        description="Compressed charge density grid from pyrho lossy compression",
+    )
+    compressed_aeccar0: Optional[list] = Field(
+        None,
+        description="Compressed AECCAR0 (all-electron core charge density) grid",
+    )
+    compressed_aeccar1: Optional[list] = Field(
+        None,
+        description="Compressed AECCAR1 (pseudo valence charge density) grid",
+    )
+    compressed_aeccar2: Optional[list] = Field(
+        None,
+        description="Compressed AECCAR2 (pseudo core charge density) grid",
+    )
+    charge_density_grid_shape: Optional[list[int]] = Field(
+        None,
+        min_length=3,
+        max_length=3,
+        description="Shape of the compressed charge density grid [nx, ny, nz]",
+    )
+    bader_charges: Optional[list[float]] = Field(
+        None,
+        min_length=1,
+        description="Bader charges per site",
+    )
+    bader_atomic_volume: Optional[list[float]] = Field(
+        None,
+        min_length=1,
+        description="Bader atomic volumes per site",
+    )
+    ddec6_charges: Optional[list[float]] = Field(
+        None,
+        min_length=1,
+        description="DDEC6 charges per site",
+    )
+
     def __init__(
         self,
         compute_space_group: bool = True,
@@ -512,6 +551,15 @@ class OptimadeStructure(BaseModel):
         )
         self.charges = self._validate_with_number_of_sites(
             self.charges, nsites, "charges"
+        )
+        self.bader_charges = self._validate_with_number_of_sites(
+            self.bader_charges, nsites, "bader_charges"
+        )
+        self.bader_atomic_volume = self._validate_with_number_of_sites(
+            self.bader_atomic_volume, nsites, "bader_atomic_volume"
+        )
+        self.ddec6_charges = self._validate_with_number_of_sites(
+            self.ddec6_charges, nsites, "ddec6_charges"
         )
 
         #  Validation using the Pymatgen structure

@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from lematerial_fetcher.cli import cli
 from lematerial_fetcher.utils.config import (
     FetcherConfig,
+    LeMatRhoDirectPipelineConfig,
     TransformerConfig,
 )
 
@@ -231,6 +232,16 @@ def test_cli_args_override_env_vars():
             assert call_kwargs["db_host"] == "cli.host"
 
 
+def test_lematrho_subcommands():
+    """Test that lematrho subcommands are correctly registered."""
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["lematrho", "--help"])
+    assert result.exit_code == 0
+    assert "Commands for fetching charge density data from LeMatRho" in result.output
+    assert "run" in result.output
+
+
 def test_env_vars_pass_to_config():
     """Test that environment variables are passed to the config loader"""
 
@@ -260,3 +271,96 @@ def test_env_vars_pass_to_config():
             assert call_kwargs["db_user"] == "src_user"
             assert call_kwargs["table_name"] == "src_table"
             assert call_kwargs["dest_table_name"] == "dest_table"
+
+
+def test_lematrho_run_help():
+    """Test that lematrho run --help returns 0 and shows expected options."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["lematrho", "run", "--help"])
+    assert result.exit_code == 0
+    assert "--output-dir" in result.output
+    assert "--parquet-chunk-size" in result.output
+    assert "--lematrho-bucket-name" in result.output
+    assert "--grid-shape" in result.output
+    assert "--hf-repo-id" in result.output
+    assert "--hf-token" in result.output
+    assert "--bader-path" in result.output
+    assert "--chargemol-path" in result.output
+    assert "--atomic-densities-path" in result.output
+    assert "--num-workers" in result.output
+
+
+def test_lematrho_run_in_subcommands():
+    """Test that 'run' appears in lematrho subcommands."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["lematrho", "--help"])
+    assert result.exit_code == 0
+    assert "run" in result.output
+
+
+@patch("lematerial_fetcher.cli.LeMatRhoDirectPipeline")
+@patch("lematerial_fetcher.cli.load_direct_pipeline_config")
+def test_lematrho_run_passes_cli_args(mock_load_config, mock_pipeline):
+    """Test that lematrho run command passes CLI args to the config loader."""
+    mock_config = LeMatRhoDirectPipelineConfig(
+        lematrho_bucket_name="my-bucket",
+        lematrho_grid_shape=(20, 20, 20),
+        output_dir="/tmp/test_output",
+        parquet_chunk_size=500,
+        num_workers=2,
+    )
+    mock_load_config.return_value = mock_config
+    mock_pipeline_instance = mock_pipeline.return_value
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "lematrho",
+            "run",
+            "--output-dir",
+            "/tmp/test_output",
+            "--parquet-chunk-size",
+            "500",
+            "--num-workers",
+            "2",
+            "--lematrho-bucket-name",
+            "my-bucket",
+            "--grid-shape",
+            "20",
+            "20",
+            "20",
+            "--bader-path",
+            "/opt/bader",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_load_config.assert_called_once()
+    call_kwargs = mock_load_config.call_args[1]
+    assert call_kwargs["output_dir"] == "/tmp/test_output"
+    assert call_kwargs["parquet_chunk_size"] == 500
+    assert call_kwargs["num_workers"] == 2
+    assert call_kwargs["lematrho_bucket_name"] == "my-bucket"
+    assert call_kwargs["grid_shape"] == (20, 20, 20)
+    assert call_kwargs["bader_path"] == "/opt/bader"
+
+    mock_pipeline.assert_called_once_with(config=mock_config, debug=False)
+    mock_pipeline_instance.run.assert_called_once()
+
+
+@patch("lematerial_fetcher.cli.LeMatRhoDirectPipeline")
+@patch("lematerial_fetcher.cli.load_direct_pipeline_config")
+def test_lematrho_run_debug_flag(mock_load_config, mock_pipeline):
+    """Test that --debug flag is passed through to the pipeline."""
+    mock_config = LeMatRhoDirectPipelineConfig()
+    mock_load_config.return_value = mock_config
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--debug", "lematrho", "run"],
+    )
+
+    assert result.exit_code == 0
+    mock_pipeline.assert_called_once_with(config=mock_config, debug=True)

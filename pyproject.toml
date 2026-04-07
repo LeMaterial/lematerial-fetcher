@@ -24,6 +24,7 @@ dependencies = [
     "moyopy>=0.4.2",
     "ase>=3.24.0",
     "material-hasher",
+    "mp-pyrho>=0.3.1",
 ]
 
 [project.scripts]
@@ -57,6 +58,11 @@ dev-dependencies = [
 [tool.uv.sources]
 material-hasher = { git = "https://github.com/LeMaterial/lematerial-hasher.git" }
 
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require real AWS credentials and S3 access (deselect with '-m \"not integration\"')",
+]
 
 [tool.ruff.lint]
 extend-select = ["I"]

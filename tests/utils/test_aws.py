@@ -22,6 +22,39 @@ def test_get_aws_client():
     assert client._client_config.region_name == "us-east-1"
 
 
+def test_get_aws_client_unchanged():
+    """Regression: anonymous client still uses UNSIGNED after adding authenticated client"""
+    client = get_aws_client()
+    assert client._client_config.signature_version == UNSIGNED
+
+
+def test_get_aws_client_authenticated_no_unsigned():
+    """Test that authenticated client does not use UNSIGNED signature"""
+    client = get_aws_client(authenticated=True)
+    assert client._client_config.signature_version != UNSIGNED
+
+
+def test_get_aws_client_authenticated_has_retry_config():
+    """Test that authenticated client has adaptive retry configuration"""
+    client = get_aws_client(authenticated=True)
+    retry_config = client._client_config.retries
+    # boto3 converts max_attempts=3 to total_max_attempts=4 (initial + retries)
+    assert retry_config["total_max_attempts"] == 4
+    assert retry_config["mode"] == "adaptive"
+
+
+def test_get_aws_client_authenticated_default_region():
+    """Test that authenticated client defaults to us-east-1"""
+    client = get_aws_client(authenticated=True)
+    assert client._client_config.region_name == "us-east-1"
+
+
+def test_get_aws_client_authenticated_custom_region():
+    """Test that authenticated client accepts a custom region"""
+    client = get_aws_client(authenticated=True, region_name="eu-west-1")
+    assert client._client_config.region_name == "eu-west-1"
+
+
 @pytest.fixture
 def mock_s3_client():
     """Fixture to create a stubbed S3 client"""

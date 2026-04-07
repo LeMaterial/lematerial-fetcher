@@ -67,7 +67,7 @@ class BaseFetcher(ABC):
 
         Returns
         -------
-        StructuresDatabase
+       StructuresDatabase
             Database connection
         """
         if self._db is None:
