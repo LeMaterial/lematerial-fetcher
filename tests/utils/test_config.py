@@ -7,7 +7,7 @@ import pytest
 from dotenv import load_dotenv
 
 from lematerial_fetcher.utils.config import (
-    DirectPipelineConfig,
+    LeMatRhoDirectPipelineConfig,
     load_direct_pipeline_config,
     load_fetcher_config,
     load_push_config,
@@ -729,14 +729,14 @@ def test_load_push_config_missing_required():
 
 
 # ---------------------------------------------------------------------------
-# DirectPipelineConfig tests
+# LeMatRhoDirectPipelineConfig tests
 # ---------------------------------------------------------------------------
 
 
-class TestDirectPipelineConfig:
+class TestLeMatRhoDirectPipelineConfig:
     def test_defaults(self):
         """All defaults should produce a valid config."""
-        config = DirectPipelineConfig()
+        config = LeMatRhoDirectPipelineConfig()
         assert config.lematrho_bucket_name == "lemat-rho"
         assert config.lematrho_grid_shape == (15, 15, 15)
         assert config.output_dir == "./lematrho_output"
@@ -751,7 +751,7 @@ class TestDirectPipelineConfig:
 
     def test_custom_values(self):
         """Config should accept custom values for all fields."""
-        config = DirectPipelineConfig(
+        config = LeMatRhoDirectPipelineConfig(
             lematrho_bucket_name="my-bucket",
             lematrho_grid_shape=(20, 20, 20),
             output_dir="/tmp/output",
@@ -775,13 +775,13 @@ class TestDirectPipelineConfig:
         assert config.atomic_densities_path == "/opt/atomic_densities"
 
     def test_not_a_base_config(self):
-        """DirectPipelineConfig should NOT inherit from BaseConfig."""
+        """LeMatRhoDirectPipelineConfig should NOT inherit from BaseConfig."""
         from lematerial_fetcher.utils.config import BaseConfig
 
-        assert not issubclass(DirectPipelineConfig, BaseConfig)
+        assert not issubclass(LeMatRhoDirectPipelineConfig, BaseConfig)
 
 
-class TestLoadDirectPipelineConfig:
+class TestLoadLeMatRhoDirectPipelineConfig:
     def test_defaults(self):
         """Loader with no args should return config with all defaults."""
         config = load_direct_pipeline_config()
@@ -823,7 +823,7 @@ class TestLoadDirectPipelineConfig:
             cache_dir="/tmp/cache",
             some_random_kwarg="value",
         )
-        assert isinstance(config, DirectPipelineConfig)
+        assert isinstance(config, LeMatRhoDirectPipelineConfig)
 
     def test_grid_shape_kwarg_maps_to_config(self):
         """Loader uses 'grid_shape' (Click name) mapped to 'lematrho_grid_shape'."""

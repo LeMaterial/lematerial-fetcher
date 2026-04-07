@@ -5,6 +5,7 @@ Covers ``LeMatRhoDirectPipeline``, Parquet schema validation, structure-to-row
 conversion, material processing, and the shared Bader/DDEC6 charge-analysis
 helpers in ``utils``.
 """
+
 import json
 import os
 import tempfile
@@ -24,7 +25,7 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
-from lematerial_fetcher.utils.config import DirectPipelineConfig
+from lematerial_fetcher.utils.config import LeMatRhoDirectPipelineConfig
 
 # Minimal pymatgen Structure dict for testing
 _MOCK_STRUCTURE_DICT = {
@@ -101,7 +102,7 @@ def tmp_output_dir():
 
 @pytest.fixture
 def mock_config(tmp_output_dir):
-    return DirectPipelineConfig(
+    return LeMatRhoDirectPipelineConfig(
         lematrho_bucket_name="test-bucket",
         lematrho_grid_shape=(10, 10, 10),
         output_dir=tmp_output_dir,
@@ -130,7 +131,7 @@ def no_tools():
 
 
 class TestListMaterials:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_filters_by_valid_prefix(self, mock_get_client, mock_config):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -155,7 +156,7 @@ class TestListMaterials:
 
         assert result == ["mp-123", "agm000001", "oqmd-456"]
 
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_excludes_processed_ids(self, mock_get_client, mock_config):
         """Checkpoint filtering removes already-processed materials."""
         mock_client = MagicMock()
@@ -197,7 +198,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_happy_path_no_tools(
         self,
         mock_get_client,
@@ -258,7 +259,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_missing_vasprun_returns_none(
         self,
         mock_get_client,
@@ -281,7 +282,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_partial_charge_files(
         self,
         mock_get_client,
@@ -327,7 +328,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_cross_compatibility_excludes_yb(
         self,
         mock_get_client,
@@ -386,7 +387,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_bader_failure_still_returns_result(
         self,
         mock_get_client,
@@ -420,9 +421,7 @@ class TestProcessMaterial:
             "can_run_ddec6": False,
         }
 
-        result = LeMatRhoDirectPipeline._process_material(
-            "mp-123", mock_config, tools
-        )
+        result = LeMatRhoDirectPipeline._process_material("mp-123", mock_config, tools)
 
         assert result is not None
         assert result["bader_charges"] is None
@@ -438,9 +437,7 @@ class TestProcessMaterial:
 class TestCheckpointing:
     def test_load_empty_checkpoint(self, mock_config):
         """No checkpoint file -> empty set."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             ids = pipeline._load_checkpoint()
 
@@ -452,9 +449,7 @@ class TestCheckpointing:
         with open(checkpoint_path, "w") as f:
             f.write("mp-1\nmp-2\nagm000001\n")
 
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             ids = pipeline._load_checkpoint()
 
@@ -462,9 +457,7 @@ class TestCheckpointing:
 
     def test_append_checkpoint(self, mock_config):
         """Appending to checkpoint writes ID and persists."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             pipeline._append_checkpoint("mp-100")
             pipeline._append_checkpoint("mp-200")
@@ -481,9 +474,7 @@ class TestCheckpointing:
         with open(checkpoint_path, "w") as f:
             f.write("mp-1\n\n\nmp-2\n\n")
 
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             ids = pipeline._load_checkpoint()
 
@@ -491,9 +482,7 @@ class TestCheckpointing:
 
     def test_batch_checkpoint(self, mock_config):
         """Batch checkpoint writes multiple IDs atomically."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             pipeline._batch_checkpoint(["mp-1", "mp-2", "mp-3"])
 
@@ -512,9 +501,7 @@ class TestCheckpointing:
 class TestFailureTracking:
     def test_load_empty_failures(self, mock_config):
         """No failures file -> empty set."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             ids = pipeline._load_failures()
 
@@ -526,9 +513,7 @@ class TestFailureTracking:
         with open(failures_path, "w") as f:
             f.write("mp-bad1\nmp-bad2\n")
 
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             ids = pipeline._load_failures()
 
@@ -536,9 +521,7 @@ class TestFailureTracking:
 
     def test_append_failure(self, mock_config):
         """Appending failure records ID on disk."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             pipeline._append_failure("mp-fail1")
             pipeline._append_failure("mp-fail2")
@@ -549,7 +532,7 @@ class TestFailureTracking:
 
         assert lines == ["mp-fail1", "mp-fail2"]
 
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_resume_skips_failures(self, mock_get_client, mock_config, no_tools):
         """Pipeline skips previously failed materials on resume."""
         mock_client = MagicMock()
@@ -656,9 +639,7 @@ class TestParquetWriting:
 
     def test_write_chunk(self, mock_config):
         """Verify Parquet file is created with correct schema."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             rows = [self._make_row(f"mp-{i}") for i in range(3)]
             pipeline._write_parquet_chunk(rows, 0)
@@ -672,25 +653,19 @@ class TestParquetWriting:
 
     def test_atomic_write_no_tmp_file_remains(self, mock_config):
         """After writing, no .tmp file should remain."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             rows = [self._make_row()]
             pipeline._write_parquet_chunk(rows, 0)
 
         tmp_files = [
-            f
-            for f in os.listdir(mock_config.output_dir)
-            if f.endswith(".tmp")
+            f for f in os.listdir(mock_config.output_dir) if f.endswith(".tmp")
         ]
         assert len(tmp_files) == 0
 
     def test_chunk_index_resume(self, mock_config):
         """Next chunk index should be max existing + 1."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
 
             # Write chunks 0, 1, 2
@@ -702,9 +677,7 @@ class TestParquetWriting:
 
     def test_tmp_files_ignored_on_resume(self, mock_config):
         """Stale .tmp files don't affect chunk indexing."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
 
             # Write one real chunk
@@ -712,9 +685,7 @@ class TestParquetWriting:
             pipeline._write_parquet_chunk(rows, 0)
 
             # Create a stale .tmp file
-            tmp_path = os.path.join(
-                mock_config.output_dir, "chunk_000001.parquet.tmp"
-            )
+            tmp_path = os.path.join(mock_config.output_dir, "chunk_000001.parquet.tmp")
             with open(tmp_path, "w") as f:
                 f.write("stale")
 
@@ -722,9 +693,7 @@ class TestParquetWriting:
 
     def test_chunk_index_empty_dir(self, mock_config):
         """Empty output dir -> chunk index 0."""
-        with patch.object(
-            LeMatRhoDirectPipeline, "_validate_tools", return_value={}
-        ):
+        with patch.object(LeMatRhoDirectPipeline, "_validate_tools", return_value={}):
             pipeline = LeMatRhoDirectPipeline(config=mock_config)
             assert pipeline._get_next_chunk_index() == 0
 
@@ -840,10 +809,8 @@ class TestStructureToRow:
 
 
 class TestRunIntegration:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
-    def test_full_pipeline_debug_mode(
-        self, mock_get_client, mock_config, no_tools
-    ):
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
+    def test_full_pipeline_debug_mode(self, mock_get_client, mock_config, no_tools):
         """Integration test: process 5 materials in debug mode, verify chunks + checkpoint."""
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -852,12 +819,7 @@ class TestRunIntegration:
         mock_paginator = MagicMock()
         mock_client.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [
-            {
-                "CommonPrefixes": [
-                    {"Prefix": f"mp-{i}/"}
-                    for i in range(5)
-                ]
-            }
+            {"CommonPrefixes": [{"Prefix": f"mp-{i}/"} for i in range(5)]}
         ]
 
         # Create mock results
@@ -908,9 +870,7 @@ class TestRunIntegration:
 
         # With chunk_size=3 and 5 materials: should write 2 chunks (3 + 2)
         parquet_files = sorted(
-            f
-            for f in os.listdir(mock_config.output_dir)
-            if f.endswith(".parquet")
+            f for f in os.listdir(mock_config.output_dir) if f.endswith(".parquet")
         )
         assert len(parquet_files) == 2
 
@@ -927,7 +887,7 @@ class TestRunIntegration:
             checkpoint_ids = {line.strip() for line in f if line.strip()}
         assert checkpoint_ids == {f"mp-{i}" for i in range(5)}
 
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_resume_skips_processed(self, mock_get_client, mock_config, no_tools):
         """Pipeline resumes from checkpoint, skipping already-processed materials."""
         mock_client = MagicMock()
@@ -1046,9 +1006,7 @@ class TestBaderFromBytes:
     def test_bader_analysis_failure(self):
         from pymatgen.core import Lattice, Structure
 
-        structure = Structure(
-            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
-        )
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
         raw_files = {"CHGCAR": b"x", "AECCAR0": b"x", "AECCAR2": b"x"}
 
         with (
@@ -1082,9 +1040,7 @@ class TestDdec6FromBytes:
     def test_chargemol_failure(self):
         from pymatgen.core import Lattice, Structure
 
-        structure = Structure(
-            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
-        )
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
         raw_files = {"CHGCAR": b"x"}
 
         with (
@@ -1129,9 +1085,7 @@ class TestDdec6FromBytes:
         """CHARGEMOL_COMMAND env var should be restored after ChargemolAnalysis raises."""
         from pymatgen.core import Lattice, Structure
 
-        structure = Structure(
-            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
-        )
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
         raw_files = {"CHGCAR": b"x"}
 
         # Set a sentinel value to verify restoration
@@ -1143,8 +1097,11 @@ class TestDdec6FromBytes:
                     side_effect=RuntimeError("chargemol failed"),
                 ):
                     result = run_ddec6_from_bytes(
-                        structure, raw_files, "/usr/bin/chargemol",
-                        "/opt/densities", "mp-test"
+                        structure,
+                        raw_files,
+                        "/usr/bin/chargemol",
+                        "/opt/densities",
+                        "mp-test",
                     )
 
             assert result is None
@@ -1156,9 +1113,7 @@ class TestDdec6FromBytes:
         """CHARGEMOL_COMMAND should be removed if it wasn't set before the call."""
         from pymatgen.core import Lattice, Structure
 
-        structure = Structure(
-            Lattice.cubic(3.0), ["Si"], [[0, 0, 0]]
-        )
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
         raw_files = {"CHGCAR": b"x"}
 
         # Ensure env var is not set
@@ -1170,8 +1125,11 @@ class TestDdec6FromBytes:
                 side_effect=RuntimeError("chargemol failed"),
             ):
                 result = run_ddec6_from_bytes(
-                    structure, raw_files, "/usr/bin/chargemol",
-                    "/opt/densities", "mp-test"
+                    structure,
+                    raw_files,
+                    "/usr/bin/chargemol",
+                    "/opt/densities",
+                    "mp-test",
                 )
 
         assert result is None
@@ -1188,7 +1146,7 @@ class TestValidateTools:
         """All tools present -> can_run_bader and can_run_ddec6 are True."""
         with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
             with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": "/opt/psp"}):
-                config = DirectPipelineConfig(
+                config = LeMatRhoDirectPipelineConfig(
                     lematrho_bucket_name="test-bucket",
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
@@ -1205,7 +1163,7 @@ class TestValidateTools:
         """No tools on PATH -> can_run_bader and can_run_ddec6 are False."""
         with patch("shutil.which", return_value=None):
             with patch.dict(os.environ, {}, clear=True):
-                config = DirectPipelineConfig(
+                config = LeMatRhoDirectPipelineConfig(
                     lematrho_bucket_name="test-bucket",
                     output_dir=mock_config.output_dir,
                 )
@@ -1221,7 +1179,7 @@ class TestValidateTools:
             env = os.environ.copy()
             env.pop("PMG_VASP_PSP_DIR", None)
             with patch.dict(os.environ, env, clear=True):
-                config = DirectPipelineConfig(
+                config = LeMatRhoDirectPipelineConfig(
                     lematrho_bucket_name="test-bucket",
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
@@ -1237,7 +1195,7 @@ class TestValidateTools:
             env = os.environ.copy()
             env.pop("PMG_VASP_PSP_DIR", None)
             with patch.dict(os.environ, env, clear=True):
-                config = DirectPipelineConfig(
+                config = LeMatRhoDirectPipelineConfig(
                     lematrho_bucket_name="test-bucket",
                     output_dir=mock_config.output_dir,
                     bader_path="/usr/bin/bader",
@@ -1313,7 +1271,7 @@ class TestStructureToRowNoneFields:
 
 
 class TestPushToHuggingface:
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_push_called_when_configured(self, mock_get_client, mock_config, no_tools):
         """Pipeline calls push_to_hub when hf_repo_id is configured."""
         mock_client = MagicMock()
@@ -1324,7 +1282,7 @@ class TestPushToHuggingface:
             {"CommonPrefixes": [{"Prefix": "mp-1/"}]}
         ]
 
-        config = DirectPipelineConfig(
+        config = LeMatRhoDirectPipelineConfig(
             lematrho_bucket_name="test-bucket",
             output_dir=mock_config.output_dir,
             hf_repo_id="test-org/test-dataset",
@@ -1332,25 +1290,27 @@ class TestPushToHuggingface:
         )
 
         mock_row = {col: None for col in PARQUET_COLUMNS}
-        mock_row.update({
-            "elements": ["Si"],
-            "nsites": 1,
-            "chemical_formula_anonymous": "A",
-            "chemical_formula_reduced": "Si",
-            "chemical_formula_descriptive": "Si1",
-            "nelements": 1,
-            "dimension_types": [1, 1, 1],
-            "nperiodic_dimensions": 3,
-            "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
-            "immutable_id": "mp-1",
-            "cartesian_site_positions": [[0, 0, 0]],
-            "species": json.dumps([{"name": "Si"}]),
-            "species_at_sites": ["Si"],
-            "last_modified": datetime.now().isoformat(),
-            "elements_ratios": [1.0],
-            "functional": "pbe",
-            "cross_compatibility": True,
-        })
+        mock_row.update(
+            {
+                "elements": ["Si"],
+                "nsites": 1,
+                "chemical_formula_anonymous": "A",
+                "chemical_formula_reduced": "Si",
+                "chemical_formula_descriptive": "Si1",
+                "nelements": 1,
+                "dimension_types": [1, 1, 1],
+                "nperiodic_dimensions": 3,
+                "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+                "immutable_id": "mp-1",
+                "cartesian_site_positions": [[0, 0, 0]],
+                "species": json.dumps([{"name": "Si"}]),
+                "species_at_sites": ["Si"],
+                "last_modified": datetime.now().isoformat(),
+                "elements_ratios": [1.0],
+                "functional": "pbe",
+                "cross_compatibility": True,
+            }
+        )
 
         with patch.object(
             LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
@@ -1373,7 +1333,7 @@ class TestPushToHuggingface:
             private=True,
         )
 
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_push_not_called_without_repo_id(
         self, mock_get_client, mock_config, no_tools
     ):
@@ -1387,25 +1347,27 @@ class TestPushToHuggingface:
         ]
 
         mock_row = {col: None for col in PARQUET_COLUMNS}
-        mock_row.update({
-            "elements": ["Si"],
-            "nsites": 1,
-            "chemical_formula_anonymous": "A",
-            "chemical_formula_reduced": "Si",
-            "chemical_formula_descriptive": "Si1",
-            "nelements": 1,
-            "dimension_types": [1, 1, 1],
-            "nperiodic_dimensions": 3,
-            "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
-            "immutable_id": "mp-1",
-            "cartesian_site_positions": [[0, 0, 0]],
-            "species": json.dumps([{"name": "Si"}]),
-            "species_at_sites": ["Si"],
-            "last_modified": datetime.now().isoformat(),
-            "elements_ratios": [1.0],
-            "functional": "pbe",
-            "cross_compatibility": True,
-        })
+        mock_row.update(
+            {
+                "elements": ["Si"],
+                "nsites": 1,
+                "chemical_formula_anonymous": "A",
+                "chemical_formula_reduced": "Si",
+                "chemical_formula_descriptive": "Si1",
+                "nelements": 1,
+                "dimension_types": [1, 1, 1],
+                "nperiodic_dimensions": 3,
+                "lattice_vectors": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+                "immutable_id": "mp-1",
+                "cartesian_site_positions": [[0, 0, 0]],
+                "species": json.dumps([{"name": "Si"}]),
+                "species_at_sites": ["Si"],
+                "last_modified": datetime.now().isoformat(),
+                "elements_ratios": [1.0],
+                "functional": "pbe",
+                "cross_compatibility": True,
+            }
+        )
 
         with patch.object(
             LeMatRhoDirectPipeline, "_validate_tools", return_value=no_tools
@@ -1434,7 +1396,7 @@ class TestProcessMaterialWithDdec6:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_authenticated_aws_client")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_ddec6_populates_charges(
         self,
         mock_get_client,
@@ -1468,9 +1430,7 @@ class TestProcessMaterialWithDdec6:
             "can_run_ddec6": True,
         }
 
-        result = LeMatRhoDirectPipeline._process_material(
-            "mp-123", mock_config, tools
-        )
+        result = LeMatRhoDirectPipeline._process_material("mp-123", mock_config, tools)
 
         assert result is not None
         assert result["ddec6_charges"] == [0.3, -0.3]
@@ -1512,7 +1472,7 @@ class TestIntegrationS3:
 
     def test_list_materials_from_real_bucket(self):
         """Verify we can list at least 1 material from the real S3 bucket."""
-        config = DirectPipelineConfig(
+        config = LeMatRhoDirectPipelineConfig(
             lematrho_bucket_name="lemat-rho",
             output_dir=tempfile.mkdtemp(),
         )
@@ -1527,7 +1487,7 @@ class TestIntegrationS3:
     def test_process_single_material(self):
         """Fetch and process a single real material end-to-end (no Bader/DDEC6)."""
         output_dir = tempfile.mkdtemp()
-        config = DirectPipelineConfig(
+        config = LeMatRhoDirectPipelineConfig(
             lematrho_bucket_name="lemat-rho",
             lematrho_grid_shape=(10, 10, 10),
             output_dir=output_dir,
@@ -1549,9 +1509,7 @@ class TestIntegrationS3:
         assert len(materials) > 0
         material_id = materials[0]
 
-        result = LeMatRhoDirectPipeline._process_material(
-            material_id, config, no_tools
-        )
+        result = LeMatRhoDirectPipeline._process_material(material_id, config, no_tools)
         assert result is not None
         assert result["immutable_id"] == material_id
         assert result["functional"] == "pbe"

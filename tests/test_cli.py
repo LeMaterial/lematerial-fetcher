@@ -7,8 +7,8 @@ from click.testing import CliRunner
 
 from lematerial_fetcher.cli import cli
 from lematerial_fetcher.utils.config import (
-    DirectPipelineConfig,
     FetcherConfig,
+    LeMatRhoDirectPipelineConfig,
     TransformerConfig,
 )
 
@@ -302,7 +302,7 @@ def test_lematrho_run_in_subcommands():
 @patch("lematerial_fetcher.cli.load_direct_pipeline_config")
 def test_lematrho_run_passes_cli_args(mock_load_config, mock_pipeline):
     """Test that lematrho run command passes CLI args to the config loader."""
-    mock_config = DirectPipelineConfig(
+    mock_config = LeMatRhoDirectPipelineConfig(
         lematrho_bucket_name="my-bucket",
         lematrho_grid_shape=(20, 20, 20),
         output_dir="/tmp/test_output",
@@ -353,7 +353,7 @@ def test_lematrho_run_passes_cli_args(mock_load_config, mock_pipeline):
 @patch("lematerial_fetcher.cli.load_direct_pipeline_config")
 def test_lematrho_run_debug_flag(mock_load_config, mock_pipeline):
     """Test that --debug flag is passed through to the pipeline."""
-    mock_config = DirectPipelineConfig()
+    mock_config = LeMatRhoDirectPipelineConfig()
     mock_load_config.return_value = mock_config
 
     runner = CliRunner()

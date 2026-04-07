@@ -46,8 +46,8 @@ class TransformerConfig(BaseConfig):
 
 
 @dataclass
-class DirectPipelineConfig:
-    """Config for the direct S3-to-Parquet pipeline (no PostgreSQL)."""
+class LeMatRhoDirectPipelineConfig:
+    """Config for the LeMatRho direct S3-to-Parquet pipeline (no PostgreSQL)."""
 
     # S3 source
     lematrho_bucket_name: str = "lemat-rho"
@@ -438,13 +438,13 @@ def load_direct_pipeline_config(
     chargemol_path: Optional[str] = None,
     atomic_densities_path: Optional[str] = None,
     **_kwargs: Any,
-) -> DirectPipelineConfig:
-    """Load config for the direct S3-to-Parquet pipeline.
+) -> LeMatRhoDirectPipelineConfig:
+    """Load config for the LeMatRho direct S3-to-Parquet pipeline.
 
     The common workflow is that arguments are passed by Click.
     No database credentials needed — this pipeline writes Parquet directly.
     """
-    return DirectPipelineConfig(
+    return LeMatRhoDirectPipelineConfig(
         lematrho_bucket_name=lematrho_bucket_name,
         lematrho_grid_shape=grid_shape,
         output_dir=output_dir,

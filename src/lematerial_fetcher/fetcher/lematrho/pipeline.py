@@ -10,6 +10,7 @@ import gc
 import json
 import os
 import shutil
+import time
 from datetime import datetime
 from glob import glob
 from typing import Optional
@@ -31,8 +32,8 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     run_ddec6_from_bytes,
 )
 from lematerial_fetcher.models.optimade import Functional, OptimadeStructure
-from lematerial_fetcher.utils.aws import get_authenticated_aws_client
-from lematerial_fetcher.utils.config import DirectPipelineConfig
+from lematerial_fetcher.utils.aws import get_aws_client
+from lematerial_fetcher.utils.config import LeMatRhoDirectPipelineConfig
 from lematerial_fetcher.utils.logging import logger
 from lematerial_fetcher.utils.structure import get_optimade_from_pymatgen
 
@@ -178,7 +179,7 @@ class LeMatRhoDirectPipeline:
         debug: If ``True``, process sequentially in the main process.
     """
 
-    def __init__(self, config: DirectPipelineConfig, debug: bool = False):
+    def __init__(self, config: LeMatRhoDirectPipelineConfig, debug: bool = False):
         self.config = config
         self.debug = debug
         self._checkpoint_path = os.path.join(config.output_dir, ".checkpoint.txt")
@@ -317,6 +318,11 @@ class LeMatRhoDirectPipeline:
                         f"Progress: {processed_count} processed, {failed_count} failed"
                     )
         else:
+            # Worker count is intentionally low (default 4). The bottleneck is
+            # memory, not CPU: each worker holds multiple decompressed CHGCAR
+            # files (~100-500 MB each) in RAM simultaneously. Bader and DDEC6
+            # are also CPU-intensive, but with 4 workers the limiting factor
+            # is keeping total RSS within machine memory.
             with concurrent.futures.ProcessPoolExecutor(
                 max_workers=self.config.num_workers
             ) as executor:
@@ -350,9 +356,7 @@ class LeMatRhoDirectPipeline:
                                 self._append_failure(material_id)
                                 failed_count += 1
                         except Exception as e:
-                            logger.warning(
-                                f"Worker exception for {material_id}: {e}"
-                            )
+                            logger.warning(f"Worker exception for {material_id}: {e}")
                             self._append_failure(material_id)
                             failed_count += 1
 
@@ -389,9 +393,7 @@ class LeMatRhoDirectPipeline:
             self._write_parquet_chunk(buffer, chunk_index)
             self._batch_checkpoint(buffer_ids)
 
-        logger.info(
-            f"Done. {processed_count} processed, {failed_count} failed."
-        )
+        logger.info(f"Done. {processed_count} processed, {failed_count} failed.")
 
         # 4. Push if configured
         if self.config.hf_repo_id:
@@ -404,7 +406,7 @@ class LeMatRhoDirectPipeline:
             List of material IDs (e.g. ``["agm000001", "mp-123", ...]``).
             Order depends on S3 listing order (typically lexicographic).
         """
-        client = get_authenticated_aws_client()
+        client = get_aws_client(authenticated=True)
         bucket = self.config.lematrho_bucket_name
         paginator = client.get_paginator("list_objects_v2")
 
@@ -418,9 +420,46 @@ class LeMatRhoDirectPipeline:
         return material_folders
 
     @staticmethod
+    def _download_with_retry(
+        aws_client,
+        bucket: str,
+        key: str,
+        max_retries: int = 3,
+        base_delay: float = 2.0,
+    ) -> bytes:
+        """Download a gzipped S3 file with exponential-backoff retry.
+
+        Large charge density files (100 MB - 1 GB) can fail transiently due to
+        network interruptions or S3 throttling.  Retrying with backoff avoids
+        losing all processing progress for a material.
+
+        Args:
+            aws_client: Boto3 S3 client.
+            bucket: S3 bucket name.
+            key: S3 object key.
+            max_retries: Maximum number of retry attempts.
+            base_delay: Initial delay in seconds (doubled on each retry).
+
+        Returns:
+            Decompressed file bytes.
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                return download_gz_file_from_s3(aws_client, bucket, key)
+            except Exception:
+                if attempt == max_retries:
+                    raise
+                delay = base_delay * (2**attempt)
+                logger.warning(
+                    f"S3 download failed for {key} (attempt {attempt + 1}/{max_retries + 1}), "
+                    f"retrying in {delay:.0f}s..."
+                )
+                time.sleep(delay)
+
+    @staticmethod
     def _process_material(
         material_id: str,
-        config: DirectPipelineConfig,
+        config: LeMatRhoDirectPipelineConfig,
         tool_paths: dict,
     ) -> Optional[dict]:
         """Process a single material: download, compress, analyze, return row dict.
@@ -442,21 +481,22 @@ class LeMatRhoDirectPipeline:
         grid_shape = config.lematrho_grid_shape
 
         try:
-            # Fresh client per worker (boto3 clients are NOT multiprocess-safe)
-            aws_client = get_authenticated_aws_client()
+            # Fresh client per worker invocation — boto3 clients are NOT
+            # multiprocess-safe, so we cannot share one across processes.
+            # Creating a client is cheap (~ms) relative to the download and
+            # analysis work per material, so this is not a bottleneck.
+            aws_client = get_aws_client(authenticated=True)
 
             # Step 1: Download and parse vasprun.xml.gz for structure
             vasprun_key = f"{material_id}/{RELAX_CALC_TYPE}/vasprun.xml.gz"
             try:
-                vasprun_bytes = download_gz_file_from_s3(
+                vasprun_bytes = LeMatRhoDirectPipeline._download_with_retry(
                     aws_client, bucket, vasprun_key
                 )
                 structure = parse_vasprun_structure(vasprun_bytes)
                 del vasprun_bytes
             except Exception as e:
-                logger.warning(
-                    f"Failed to parse vasprun.xml.gz for {material_id}: {e}"
-                )
+                logger.warning(f"Failed to parse vasprun.xml.gz for {material_id}: {e}")
                 return None
 
             # Step 2: Download and compress charge density files
@@ -477,7 +517,9 @@ class LeMatRhoDirectPipeline:
                 s3_key = f"{material_id}/{STATIC_CALC_TYPE}/{filename}"
                 grid_name = GRID_KEY_MAP[filename]
                 try:
-                    raw_bytes = download_gz_file_from_s3(aws_client, bucket, s3_key)
+                    raw_bytes = LeMatRhoDirectPipeline._download_with_retry(
+                        aws_client, bucket, s3_key
+                    )
 
                     # Compress via pyrho
                     compressed = compress_chgcar(raw_bytes, grid_shape)
@@ -546,7 +588,12 @@ class LeMatRhoDirectPipeline:
             row = _structure_to_row(optimade_structure)
             del optimade_structure, compressed_grids
 
-            # Step 7: Force garbage collection in worker
+            # Step 7: Force garbage collection in worker.
+            # Explicit gc.collect() is needed here because CPython's refcount-based
+            # collector does not promptly reclaim cyclic references (e.g. pymatgen
+            # Structure -> Site -> Structure). With ~500 MB of decompressed CHGCAR
+            # data per material, waiting for the GC threshold can push worker RSS
+            # well past available RAM.
             gc.collect()
 
             return row
@@ -655,9 +702,7 @@ class LeMatRhoDirectPipeline:
 
         # Atomic rename
         os.rename(tmp_path, final_path)
-        logger.info(
-            f"Wrote chunk {chunk_index} ({len(rows)} rows) to {final_path}"
-        )
+        logger.info(f"Wrote chunk {chunk_index} ({len(rows)} rows) to {final_path}")
 
     def _push_to_huggingface(self) -> None:
         """Load all Parquet files and push to HuggingFace as a private dataset."""

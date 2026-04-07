@@ -494,6 +494,14 @@ class OptimadeDatabase(StructuresDatabase):
             "space_group_it_number": "INTEGER",
             "cross_compatibility": "BOOLEAN",
             "bawl_fingerprint": "TEXT",
+            # LeMatRho charge density fields (added in PR #49).
+            # NOTE: Adding these columns to an existing database requires an
+            # ALTER TABLE migration:
+            #   ALTER TABLE optimade ADD COLUMN compressed_charge_density JSONB;
+            #   ALTER TABLE optimade ADD COLUMN compressed_aeccar0 JSONB;
+            #   ... (same for all 8 fields below)
+            # All fields default to NULL so existing rows are unaffected.
+            # A proper migration system is a future improvement.
             "compressed_charge_density": "JSONB",
             "compressed_aeccar0": "JSONB",
             "compressed_aeccar1": "JSONB",

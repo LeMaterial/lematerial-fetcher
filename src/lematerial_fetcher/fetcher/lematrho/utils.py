@@ -6,10 +6,10 @@ lossy charge-density compression via pyrho, and shared Bader/DDEC6
 charge-analysis wrappers built on pymatgen's ``BaderAnalysis`` and
 ``ChargemolAnalysis``.
 """
+
 import gzip
 import os
 import tempfile
-from datetime import datetime
 from typing import Any, Optional
 
 from pymatgen.command_line.bader_caller import BaderAnalysis
@@ -17,7 +17,6 @@ from pymatgen.command_line.chargemol_caller import ChargemolAnalysis
 from pymatgen.core import Structure
 from pymatgen.io.vasp import Chgcar, Vasprun
 
-from lematerial_fetcher.models.models import RawStructure
 from lematerial_fetcher.utils.logging import logger
 
 # ── S3 folder structure constants ──────────────────────────────────────────────
@@ -129,45 +128,6 @@ def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> li
     return result
 
 
-def build_raw_structure(
-    material_id: str,
-    structure: Structure,
-    compressed_grids: dict[str, Optional[list]],
-    grid_shape: tuple[int, int, int],
-    s3_prefix: str,
-) -> RawStructure:
-    """Build a RawStructure from parsed charge density data.
-
-    Args:
-        material_id: Material identifier, e.g. ``"agm000001"``.
-        structure: Pymatgen Structure parsed from vasprun.xml.
-        compressed_grids: Dict mapping grid names (``"charge_density"``,
-            ``"aeccar0"``, ``"aeccar1"``, ``"aeccar2"``) to compressed
-            grid lists or ``None``.
-        grid_shape: Grid shape used for compression.
-        s3_prefix: S3 prefix path for the material folder.
-
-    Returns:
-        A ``RawStructure`` ready for database insertion.
-    """
-    attributes = {
-        "structure": structure.as_dict(),
-        "compressed_charge_density": compressed_grids.get("charge_density"),
-        "compressed_aeccar0": compressed_grids.get("aeccar0"),
-        "compressed_aeccar1": compressed_grids.get("aeccar1"),
-        "compressed_aeccar2": compressed_grids.get("aeccar2"),
-        "grid_shape": list(grid_shape),
-        "s3_prefix": s3_prefix,
-    }
-
-    return RawStructure(
-        id=material_id,
-        type="lematrho",
-        attributes=attributes,
-        last_modified=datetime.now(),
-    )
-
-
 def write_potcar(structure: Structure, tmpdir: str) -> None:
     """Generate a POTCAR file for the given structure.
 
@@ -277,6 +237,10 @@ def run_ddec6_from_bytes(
 
             write_potcar(structure, tmpdir)
 
+            # pymatgen's ChargemolAnalysis reads the chargemol binary path
+            # exclusively from the CHARGEMOL_COMMAND env var — there is no
+            # constructor parameter to pass it directly. We save/restore the
+            # original value so this function doesn't leak side effects.
             orig_chargemol_cmd = os.environ.get("CHARGEMOL_COMMAND")
             os.environ["CHARGEMOL_COMMAND"] = chargemol_path
             try:

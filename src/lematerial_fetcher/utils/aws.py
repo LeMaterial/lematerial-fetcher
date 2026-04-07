@@ -7,49 +7,37 @@ from botocore import UNSIGNED
 from botocore.config import Config
 
 
-def get_aws_client(region_name: str = "us-east-1"):
-    """Returns a configured S3 client for accessing Materials Project data
-
-    Parameters
-    ----------
-    region_name: str, default='us-east-1'
-        The region of the S3 bucket. By default, the Materials Project bucket is in us-east-1.
-
-    Returns
-    -------
-    s3_client: boto3.client
-        A configured S3 client with anonymous credentials
-    """
-    # configure the client with anonymous credentials
-    s3_client = boto3.client(
-        "s3", config=Config(signature_version=UNSIGNED, region_name=region_name)
-    )
-    return s3_client
-
-
-def get_authenticated_aws_client(region_name: str = "us-east-1"):
-    """Returns a configured S3 client using the default AWS credential chain.
-
-    Uses AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN,
-    or IAM roles for authentication. Includes adaptive retry configuration.
+def get_aws_client(region_name: str = "us-east-1", authenticated: bool = False):
+    """Returns a configured S3 client.
 
     Parameters
     ----------
     region_name: str, default='us-east-1'
         The AWS region for the S3 client.
+    authenticated: bool, default=False
+        If False, returns an anonymous client (e.g. for public Materials
+        Project buckets).  If True, uses the default AWS credential chain
+        (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / IAM role) with
+        adaptive retry configuration.
 
     Returns
     -------
     s3_client: boto3.client
-        A configured S3 client with authenticated credentials
+        A configured S3 client
     """
-    s3_client = boto3.client(
-        "s3",
-        config=Config(
-            retries={"max_attempts": 3, "mode": "adaptive"},
-            region_name=region_name,
-        ),
-    )
+    if authenticated:
+        s3_client = boto3.client(
+            "s3",
+            config=Config(
+                retries={"max_attempts": 3, "mode": "adaptive"},
+                region_name=region_name,
+            ),
+        )
+    else:
+        s3_client = boto3.client(
+            "s3",
+            config=Config(signature_version=UNSIGNED, region_name=region_name),
+        )
     return s3_client
 
 
