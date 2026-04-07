@@ -12,6 +12,7 @@ import tempfile
 from datetime import datetime
 from typing import Any, Optional
 
+import numpy as np
 from pymatgen.command_line.bader_caller import BaderAnalysis
 from pymatgen.command_line.chargemol_caller import ChargemolAnalysis
 from pymatgen.core import Structure
@@ -77,17 +78,21 @@ def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
         body.close()
 
 
-def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
-    """Parse a vasprun.xml to extract the final relaxed structure.
+def parse_vasprun_relax_output(
+    vasprun_bytes: bytes,
+) -> tuple[Structure, Optional[list[list[float]]], Optional[list[list[float]]]]:
+    """Parse a vasprun.xml: final structure and last ionic-step forces/stress.
 
-    Writes bytes to a temporary file because pymatgen's ``Vasprun`` requires
-    a filesystem path, not a file-like object.
+    Uses ``Vasprun.ionic_steps[-1]`` for forces and stress of the last ionic step (same pattern as
+    reading ``final_structure``). Writes bytes to a temporary file because
+    pymatgen's ``Vasprun`` requires a filesystem path, not a file-like object.
 
     Args:
         vasprun_bytes: Raw vasprun.xml content.
 
     Returns:
-        The final relaxed pymatgen Structure.
+        The final relaxed pymatgen Structure and the final forces and stress tensor.
+        (final_structure, final_forces in nsites × 3 (eV/Å), final_stress_tensor in 3 × 3 (kBar))
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "vasprun.xml")
@@ -99,8 +104,29 @@ def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
             parse_eigen=False,
             parse_potcar_file=False,
         )
-        return vasprun.final_structure
 
+        structure = vasprun.final_structure
+        forces_out: Optional[list[list[float]]] = None
+        stress_out: Optional[list[list[float]]] = None
+
+        if vasprun.ionic_steps:    # Get the final ionic step entry
+            final = vasprun.ionic_steps[-1]
+            frc = final.get("forces")  # Forces in nsites × 3 (eV/Å)
+            if frc is not None:
+                forces_out = np.asarray(frc, dtype=float).reshape(-1, 3).tolist()
+
+            strs = final.get("stress")  # Stress tensor in 3 × 3 (kBar)
+            if strs is not None:     # 
+                s = np.asarray(strs, dtype=float)
+                if s.shape == (3, 3):   # Convert to 3 × 3 (kBar) for failure cases but maybe overkill....
+                    stress_out = s.tolist()
+                elif s.size == 9:
+                    stress_out = s.reshape(3, 3).tolist()
+                elif s.size == 6:
+                    xx, yy, zz, xy, yz, xz = (float(x) for x in s.flat[:6])
+                    stress_out = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]
+
+        return structure, forces_out, stress_out
 
 def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> list:
     """Parse a CHGCAR file and compress its charge density using pyrho.
@@ -295,3 +321,4 @@ def run_ddec6_from_bytes(
     except Exception as e:
         logger.warning(f"DDEC6 analysis failed for {material_id}: {e}")
         return None
+        
