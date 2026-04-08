@@ -1174,7 +1174,7 @@ class TestVasprunForces:
     def test_forces_per_step_match_final_structure_site_count_and_values(
         self, mock_vr_cls
     ):
-        """Same ``utils.Vasprun`` path as ``parse_vasprun_structure``; forces align with nsites."""
+        """Same ``utils.Vasprun`` path as ``parse_vasprun_relax_output``; forces align with nsites."""
         import numpy as np
         from pymatgen.core import Lattice, Structure
 
@@ -1191,7 +1191,7 @@ class TestVasprunForces:
         mock_inst.ionic_steps = [{"forces": f} for f in expected_per_step]
         mock_vr_cls.return_value = mock_inst
 
-        parsed = parse_vasprun_structure(b"<ignored/>")
+        parsed, _, _ = parse_vasprun_relax_output(b"<ignored/>")
         assert len(parsed) == nsites
 
         ionic_steps = mock_vr_cls.return_value.ionic_steps
