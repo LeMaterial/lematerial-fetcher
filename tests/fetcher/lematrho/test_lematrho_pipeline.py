@@ -21,6 +21,7 @@ from lematerial_fetcher.fetcher.lematrho.pipeline import (
     _structure_to_row,
 )
 from lematerial_fetcher.fetcher.lematrho.utils import (
+    parse_vasprun_output,
     run_bader_from_bytes,
     run_ddec6_from_bytes,
 )
@@ -196,7 +197,7 @@ class TestListMaterials:
 class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_happy_path_no_tools(
@@ -220,7 +221,7 @@ class TestProcessMaterial:
             ["Si", "O"],
             [[0, 0, 0], [0.5, 0.5, 0.5]],
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun.return_value = (structure, None, None, None)
         mock_compress.return_value = [[[1.0] * 10] * 10] * 10
         mock_get_optimade.return_value = _make_mock_optimade_dict()
 
@@ -233,7 +234,7 @@ class TestProcessMaterial:
 
         # Check key fields
         assert result["immutable_id"] == "mp-123"
-        assert result["functional"] == "pbe"
+        assert result["functional"] == "r2scan"
         assert result["cross_compatibility"] is True
         assert result["nsites"] == 2
         assert result["charge_density_grid_shape"] == [10, 10, 10]
@@ -257,7 +258,7 @@ class TestProcessMaterial:
 
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_missing_vasprun_returns_none(
@@ -280,7 +281,7 @@ class TestProcessMaterial:
 
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_partial_charge_files(
@@ -308,7 +309,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun.return_value = (structure, None, None, None)
         mock_compress.return_value = [[[1.0]]]
         mock_get_optimade.return_value = _make_mock_optimade_dict()
 
@@ -326,7 +327,7 @@ class TestProcessMaterial:
 
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_cross_compatibility_excludes_yb(
@@ -347,7 +348,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Yb", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun.return_value = (structure, None, None, None)
         mock_compress.return_value = [[[1.0]]]
 
         optimade_dict = _make_mock_optimade_dict()
@@ -385,7 +386,7 @@ class TestProcessMaterial:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_bader_from_bytes")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_bader_failure_still_returns_result(
@@ -407,7 +408,7 @@ class TestProcessMaterial:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun.return_value = (structure, None, None, None)
         mock_compress.return_value = [[[1.0]]]
         mock_get_optimade.return_value = _make_mock_optimade_dict()
         mock_bader.return_value = (None, None)
@@ -1266,6 +1267,100 @@ class TestStructureToRowNoneFields:
 
 
 # ---------------------------------------------------------------------------
+# TestVasprunForces
+# ---------------------------------------------------------------------------
+
+
+class TestVasprunForces:
+    def test_parse_vasprun_output_uses_last_ionic_step_and_returns_energy(self):
+        """parse_vasprun_output returns forces, stress, and energy from the static vasprun."""
+        import gzip
+        import xml.etree.ElementTree as ET
+
+        from pymatgen.core import Lattice, Structure
+
+        # Build a minimal valid vasprun.xml matching pymatgen's Vasprun parser
+        # We mock at the Vasprun level to avoid needing a real file
+        mock_vasprun = MagicMock()
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        mock_vasprun.final_structure = structure
+        mock_vasprun.ionic_steps = [
+            {
+                "forces": [[0.1, 0.2, 0.3], [-0.1, -0.2, -0.3]],
+                "stress": [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]],
+            }
+        ]
+        mock_vasprun.final_energy = -12.345
+
+        with patch("lematerial_fetcher.fetcher.lematrho.utils.Vasprun", return_value=mock_vasprun):
+            result_structure, forces, stress, energy = parse_vasprun_output(b"dummy")
+
+        assert result_structure is structure
+        assert forces == [[0.1, 0.2, 0.3], [-0.1, -0.2, -0.3]]
+        assert stress == [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]
+        assert energy == pytest.approx(-12.345)
+
+    def test_parse_vasprun_output_energy_none_when_missing(self):
+        """parse_vasprun_output returns None energy when final_energy is not parseable."""
+        from pymatgen.core import Lattice, Structure
+
+        mock_vasprun = MagicMock()
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
+        mock_vasprun.final_structure = structure
+        mock_vasprun.ionic_steps = []
+        mock_vasprun.final_energy = "not_a_number"
+
+        with patch("lematerial_fetcher.fetcher.lematrho.utils.Vasprun", return_value=mock_vasprun):
+            _, forces, stress, energy = parse_vasprun_output(b"dummy")
+
+        assert forces is None
+        assert stress is None
+        assert energy is None
+
+    def test_vasprun_forces_and_stress_in_row(self, mock_config, no_tools):
+        """Forces, stress_tensor, energy, energy_corrected, and functional reach the Parquet row."""
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        mock_forces = [[0.05, 0.0, 0.0], [-0.05, 0.0, 0.0]]
+        mock_stress = [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]
+        mock_energy = -12.345
+
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client") as mock_client,
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3",
+                return_value=b"mock",
+            ),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output",
+                return_value=(structure, mock_forces, mock_stress, mock_energy),
+            ),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar",
+                return_value=[[[1.0]]],
+            ),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen",
+                return_value=_make_mock_optimade_dict(),
+            ),
+        ):
+            mock_client.return_value = MagicMock()
+            result = LeMatRhoDirectPipeline._process_material("mp-123", mock_config, no_tools)
+
+        assert result is not None
+        assert result["forces"] == mock_forces
+        assert result["stress_tensor"] == mock_stress
+        assert result["energy"] == pytest.approx(mock_energy)
+        assert result["energy_corrected"] == pytest.approx(mock_energy)  # R2SCAN: no correction
+        assert result["functional"] == "r2scan"
+
+
+# ---------------------------------------------------------------------------
 # TestPushToHuggingface
 # ---------------------------------------------------------------------------
 
@@ -1394,7 +1489,7 @@ class TestProcessMaterialWithDdec6:
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_ddec6_from_bytes")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
-    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_structure")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
     @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
     def test_ddec6_populates_charges(
@@ -1416,7 +1511,7 @@ class TestProcessMaterialWithDdec6:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        mock_parse_vasprun.return_value = structure
+        mock_parse_vasprun.return_value = (structure, None, None, None)
         mock_compress.return_value = [[[1.0] * 10] * 10] * 10
         mock_get_optimade.return_value = _make_mock_optimade_dict()
         mock_ddec6.return_value = [0.3, -0.3]
@@ -1512,6 +1607,6 @@ class TestIntegrationS3:
         result = LeMatRhoDirectPipeline._process_material(material_id, config, no_tools)
         assert result is not None
         assert result["immutable_id"] == material_id
-        assert result["functional"] == "pbe"
+        assert result["functional"] == "r2scan"
         for col in PARQUET_COLUMNS:
             assert col in result

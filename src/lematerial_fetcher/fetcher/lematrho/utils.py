@@ -12,6 +12,7 @@ import os
 import tempfile
 from typing import Any, Optional
 
+import numpy as np
 from pymatgen.command_line.bader_caller import BaderAnalysis
 from pymatgen.command_line.chargemol_caller import ChargemolAnalysis
 from pymatgen.core import Structure
@@ -21,9 +22,7 @@ from lematerial_fetcher.utils.logging import logger
 
 # ── S3 folder structure constants ──────────────────────────────────────────────
 STATIC_CALC_TYPE = "LeMatRhoStaticMaker"
-RELAX_CALC_TYPE = "LeMatRhoRelaxMaker_1"
-STATIC_FILES = ["CHGCAR.gz", "AECCAR0.gz", "AECCAR1.gz", "AECCAR2.gz"]
-RELAX_FILES = ["vasprun.xml.gz"]
+STATIC_FILES = ["vasprun.xml.gz", "CHGCAR.gz", "AECCAR0.gz", "AECCAR1.gz", "AECCAR2.gz"]
 
 # Only process materials with these ID prefixes
 VALID_PREFIXES = ("oqmd-", "mp-", "agm")
@@ -76,17 +75,25 @@ def download_gz_file_from_s3(client: Any, bucket: str, key: str) -> bytes:
         body.close()
 
 
-def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
-    """Parse a vasprun.xml to extract the final relaxed structure.
+def parse_vasprun_output(
+    vasprun_bytes: bytes,
+) -> tuple[Structure, Optional[list[list[float]]], Optional[list[list[float]]], Optional[float]]:
+    """Parse a vasprun.xml: final structure, last ionic-step forces/stress, and total energy.
 
-    Writes bytes to a temporary file because pymatgen's ``Vasprun`` requires
-    a filesystem path, not a file-like object.
+    Intended for the ``LeMatRhoStaticMaker`` vasprun (``NSW=0``), where the structure
+    is already fully relaxed and ``ionic_steps[-1]`` holds the residual forces and
+    stress at the relaxed geometry.  Writes bytes to a temporary file because
+    pymatgen's ``Vasprun`` requires a filesystem path, not a file-like object.
 
     Args:
         vasprun_bytes: Raw vasprun.xml content.
 
     Returns:
-        The final relaxed pymatgen Structure.
+        Tuple of (final_structure, forces, stress_tensor, energy) where:
+        - final_structure: pymatgen Structure
+        - forces: nsites × 3 (eV/Å), or None if absent
+        - stress_tensor: 3 × 3 (kBar), or None if absent
+        - energy: total energy in eV from ``Vasprun.final_energy``, or None if absent
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "vasprun.xml")
@@ -98,7 +105,35 @@ def parse_vasprun_structure(vasprun_bytes: bytes) -> Structure:
             parse_eigen=False,
             parse_potcar_file=False,
         )
-        return vasprun.final_structure
+
+        structure = vasprun.final_structure
+        forces_out: Optional[list[list[float]]] = None
+        stress_out: Optional[list[list[float]]] = None
+        energy_out: Optional[float] = None
+
+        if vasprun.ionic_steps:
+            final = vasprun.ionic_steps[-1]
+            frc = final.get("forces")  # Forces in nsites × 3 (eV/Å)
+            if frc is not None:
+                forces_out = np.asarray(frc, dtype=float).reshape(-1, 3).tolist()
+
+            strs = final.get("stress")  # Stress tensor in 3 × 3 (kBar)
+            if strs is not None:
+                s = np.asarray(strs, dtype=float)
+                if s.shape == (3, 3):
+                    stress_out = s.tolist()
+                elif s.size == 9:
+                    stress_out = s.reshape(3, 3).tolist()
+                elif s.size == 6:
+                    xx, yy, zz, xy, yz, xz = (float(x) for x in s.flat[:6])
+                    stress_out = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]
+
+        try:
+            energy_out = float(vasprun.final_energy)
+        except Exception:
+            pass
+
+        return structure, forces_out, stress_out, energy_out
 
 
 def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> list:
