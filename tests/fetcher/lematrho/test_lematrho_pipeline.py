@@ -1274,8 +1274,6 @@ class TestStructureToRowNoneFields:
 class TestVasprunForces:
     def test_parse_vasprun_output_uses_last_ionic_step_and_returns_energy(self):
         """parse_vasprun_output returns forces, stress, and energy from the static vasprun."""
-        import gzip
-        import xml.etree.ElementTree as ET
 
         from pymatgen.core import Lattice, Structure
 
