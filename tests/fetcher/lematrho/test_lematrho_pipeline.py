@@ -1064,7 +1064,7 @@ class TestDdec6FromBytes:
         structure = Structure(
             Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
         )
-        raw_files = {"CHGCAR": b"chgcar_data"}
+        raw_files = {"CHGCAR": b"chgcar_data", "AECCAR0": b"aeccar0_data", "AECCAR2": b"aeccar2_data"}
 
         mock_ca = MagicMock()
         mock_ca.ddec_charges = [0.5, -0.5]
@@ -1081,6 +1081,40 @@ class TestDdec6FromBytes:
             )
 
         assert result == [0.5, -0.5]
+
+    def test_aeccar_files_written_to_tmpdir(self):
+        """run_ddec6_from_bytes must write AECCAR0 and AECCAR2 to tmpdir before calling ChargemolAnalysis."""
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(Lattice.cubic(3.0), ["Si"], [[0, 0, 0]])
+        raw_files = {
+            "CHGCAR": b"chgcar",
+            "AECCAR0": b"aeccar0",
+            "AECCAR2": b"aeccar2",
+        }
+
+        observed_files = []
+
+        def capture_files(path, **kwargs):
+            observed_files.extend(os.listdir(path))
+            mock_ca = MagicMock()
+            mock_ca.ddec_charges = [0.1]
+            return mock_ca
+
+        with (
+            patch("lematerial_fetcher.fetcher.lematrho.utils.write_potcar"),
+            patch(
+                "lematerial_fetcher.fetcher.lematrho.utils.ChargemolAnalysis",
+                side_effect=capture_files,
+            ),
+        ):
+            result = run_ddec6_from_bytes(
+                structure, raw_files, "/usr/bin/chargemol", "/opt/densities", "mp-test"
+            )
+
+        assert result == [0.1]
+        assert "AECCAR0" in observed_files, "AECCAR0 must be written to tmpdir"
+        assert "AECCAR2" in observed_files, "AECCAR2 must be written to tmpdir"
 
     def test_env_var_restored_on_failure(self):
         """CHARGEMOL_COMMAND env var should be restored after ChargemolAnalysis raises."""
@@ -1529,6 +1563,60 @@ class TestProcessMaterialWithDdec6:
         assert result["ddec6_charges"] == [0.3, -0.3]
         assert result["bader_charges"] is None
         mock_ddec6.assert_called_once()
+        # AECCAR0 and AECCAR2 must be in the raw_files passed to run_ddec6_from_bytes
+        raw_files_arg = mock_ddec6.call_args[0][1]
+        assert "AECCAR0" in raw_files_arg, "AECCAR0 must be passed to run_ddec6_from_bytes"
+        assert "AECCAR2" in raw_files_arg, "AECCAR2 must be passed to run_ddec6_from_bytes"
+
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.run_ddec6_from_bytes")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
+    def test_ddec6_skips_when_aeccar_missing(
+        self,
+        mock_get_client,
+        mock_download,
+        mock_parse_vasprun,
+        mock_compress,
+        mock_get_optimade,
+        mock_ddec6,
+        mock_config,
+    ):
+        """When AECCAR files are absent from S3, DDEC6 is skipped entirely."""
+        from pymatgen.core import Lattice, Structure
+
+        mock_get_client.return_value = MagicMock()
+
+        def download_side_effect(client, bucket, key):
+            if "AECCAR" in key:
+                raise Exception("NoSuchKey")
+            return b"mock_bytes"
+
+        mock_download.side_effect = download_side_effect
+
+        structure = Structure(
+            Lattice.cubic(3.0), ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        mock_parse_vasprun.return_value = (structure, None, None, None)
+        mock_compress.return_value = [[[1.0]]]
+        mock_get_optimade.return_value = _make_mock_optimade_dict()
+
+        tools = {
+            "bader_path": None,
+            "chargemol_path": "/usr/bin/chargemol",
+            "atomic_densities_path": "/opt/densities",
+            "can_generate_potcar": True,
+            "can_run_bader": False,
+            "can_run_ddec6": True,
+        }
+
+        result = LeMatRhoDirectPipeline._process_material("mp-123", mock_config, tools)
+
+        assert result is not None
+        assert result["ddec6_charges"] is None
+        mock_ddec6.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

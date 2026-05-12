@@ -248,8 +248,10 @@ def run_ddec6_from_bytes(
 ) -> Optional[list[float]]:
     """Run DDEC6 charge analysis from raw decompressed VASP file bytes.
 
-    Writes CHGCAR and POTCAR to a temp directory, then delegates to
-    ``ChargemolAnalysis`` which runs chargemol and parses DDEC6 charges.
+    Writes CHGCAR, AECCAR0, AECCAR2, and POTCAR to a temp directory, then
+    delegates to ``ChargemolAnalysis`` which runs chargemol and parses DDEC6
+    charges.  All four files are required by chargemol: AECCAR0 and AECCAR2
+    provide the all-electron density used for core-charge correction in DDEC6.
 
     Note: Temporarily sets the ``CHARGEMOL_COMMAND`` env var for pymatgen.
     This is process-safe (``ProcessPoolExecutor`` gives each worker its own
@@ -257,7 +259,7 @@ def run_ddec6_from_bytes(
 
     Args:
         structure: Pymatgen Structure for POTCAR generation.
-        raw_files: Mapping with at least ``{"CHGCAR": b"..."}``.
+        raw_files: Mapping with ``{"CHGCAR": b"...", "AECCAR0": b"...", "AECCAR2": b"..."}``.
         chargemol_path: Path to the chargemol executable.
         atomic_densities_path: Path to atomic densities directory.
         material_id: Material identifier, used for logging.
@@ -267,8 +269,9 @@ def run_ddec6_from_bytes(
     """
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with open(os.path.join(tmpdir, "CHGCAR"), "wb") as f:
-                f.write(raw_files["CHGCAR"])
+            for name in ["CHGCAR", "AECCAR0", "AECCAR2"]:
+                with open(os.path.join(tmpdir, name), "wb") as f:
+                    f.write(raw_files[name])
 
             write_potcar(structure, tmpdir)
 
