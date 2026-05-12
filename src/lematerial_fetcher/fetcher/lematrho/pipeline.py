@@ -118,8 +118,8 @@ PARQUET_SCHEMA = pa.schema(
 
 # Files needed for Bader analysis (must keep raw bytes)
 _BADER_FILES = {"CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"}
-# Files needed for DDEC6 analysis
-_DDEC6_FILES = {"CHGCAR.gz"}
+# Files needed for DDEC6/chargemol analysis (AECCAR0+AECCAR2 needed for core-charge correction)
+_DDEC6_FILES = {"CHGCAR.gz", "AECCAR0.gz", "AECCAR2.gz"}
 
 
 def _structure_to_row(
@@ -546,9 +546,11 @@ class LeMatRhoDirectPipeline:
                     structure, raw_files, tool_paths["bader_path"], material_id
                 )
 
-            # Step 4: DDEC6 analysis (if tools available and CHGCAR downloaded)
+            # Step 4: DDEC6 analysis (if tools available and all required files downloaded)
             ddec6_charges = None
-            if tool_paths["can_run_ddec6"] and "CHGCAR" in raw_files:
+            if tool_paths["can_run_ddec6"] and all(
+                k in raw_files for k in ["CHGCAR", "AECCAR0", "AECCAR2"]
+            ):
                 ddec6_charges = run_ddec6_from_bytes(
                     structure,
                     raw_files,
