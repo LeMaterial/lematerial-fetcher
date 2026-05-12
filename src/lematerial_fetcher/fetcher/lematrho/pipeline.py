@@ -20,14 +20,13 @@ import pyarrow.parquet as pq
 
 from lematerial_fetcher.fetcher.lematrho.utils import (
     GRID_KEY_MAP,
-    RELAX_CALC_TYPE,
     STATIC_CALC_TYPE,
     STATIC_FILES,
     VALID_PREFIXES,
     compress_chgcar,
     download_gz_file_from_s3,
     get_cross_compatibility,
-    parse_vasprun_structure,
+    parse_vasprun_output,
     run_bader_from_bytes,
     run_ddec6_from_bytes,
 )
@@ -487,27 +486,16 @@ class LeMatRhoDirectPipeline:
             # analysis work per material, so this is not a bottleneck.
             aws_client = get_aws_client(authenticated=True)
 
-            # Step 1: Download and parse vasprun.xml.gz for structure
-            vasprun_key = f"{material_id}/{RELAX_CALC_TYPE}/vasprun.xml.gz"
-            try:
-                vasprun_bytes = LeMatRhoDirectPipeline._download_with_retry(
-                    aws_client, bucket, vasprun_key
-                )
-                structure = parse_vasprun_structure(vasprun_bytes)
-                del vasprun_bytes
-            except Exception as e:
-                logger.warning(f"Failed to parse vasprun.xml.gz for {material_id}: {e}")
-                return None
-
-            # Step 2: Download and compress charge density files
-            compressed_grids = {}
+            # Step 1: Download all static files (vasprun.xml.gz + charge density files).
             # Memory trade-off: raw decompressed bytes are kept in memory for
             # Bader/DDEC6 analysis to avoid a second S3 download. Each CHGCAR
             # can be 100-500 MB, so peak RSS per worker ≈ sum of needed files.
+            compressed_grids = {}
             raw_files = {}
 
-            # Determine which raw files to keep
-            need_raw = set()
+            # Determine which raw files to keep (use .gz names, matching STATIC_FILES).
+            # vasprun.xml.gz is always needed for structure, forces, stress, and energy.
+            need_raw = {"vasprun.xml.gz"}
             if tool_paths["can_run_bader"]:
                 need_raw |= _BADER_FILES
             if tool_paths["can_run_ddec6"]:
@@ -515,26 +503,38 @@ class LeMatRhoDirectPipeline:
 
             for filename in STATIC_FILES:
                 s3_key = f"{material_id}/{STATIC_CALC_TYPE}/{filename}"
-                grid_name = GRID_KEY_MAP[filename]
+                vasp_name = filename.replace(".gz", "")
                 try:
                     raw_bytes = LeMatRhoDirectPipeline._download_with_retry(
                         aws_client, bucket, s3_key
                     )
 
-                    # Compress via pyrho
-                    compressed = compress_chgcar(raw_bytes, grid_shape)
-                    compressed_grids[grid_name] = compressed
-                    del compressed
+                    # Compress charge density files via pyrho (skip vasprun.xml)
+                    if filename in GRID_KEY_MAP:
+                        compressed = compress_chgcar(raw_bytes, grid_shape)
+                        compressed_grids[GRID_KEY_MAP[filename]] = compressed
+                        del compressed
 
-                    # Keep raw bytes if needed for analysis
+                    # Keep raw bytes if needed downstream (stored without .gz suffix)
                     if filename in need_raw:
-                        vasp_name = filename.replace(".gz", "")
                         raw_files[vasp_name] = raw_bytes
                     del raw_bytes
                 except Exception as e:
                     logger.warning(
                         f"Failed to process {filename} for {material_id}: {e}"
                     )
+
+            # Step 2: Parse structure, forces, stress, and energy from static vasprun
+            if "vasprun.xml" not in raw_files:
+                logger.warning(f"Missing vasprun.xml.gz for {material_id}, skipping.")
+                return None
+            try:
+                structure, static_forces, static_stress, static_energy = (
+                    parse_vasprun_output(raw_files.pop("vasprun.xml"))
+                )
+            except Exception as e:
+                logger.warning(f"Failed to parse vasprun.xml.gz for {material_id}: {e}")
+                return None
 
             # Step 3: Bader analysis (if tools available and files downloaded)
             bader_charges = None
@@ -570,8 +570,11 @@ class LeMatRhoDirectPipeline:
                 immutable_id=material_id,
                 last_modified=datetime.now(),
                 **optimade_dict,
-                functional=Functional.PBE,
+                functional=Functional.r2SCAN,
                 cross_compatibility=cross_compatibility,
+                forces=static_forces,
+                stress_tensor=static_stress,
+                energy=static_energy,
                 compressed_charge_density=compressed_grids.get("charge_density"),
                 compressed_aeccar0=compressed_grids.get("aeccar0"),
                 compressed_aeccar1=compressed_grids.get("aeccar1"),
