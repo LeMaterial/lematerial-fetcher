@@ -52,6 +52,9 @@ class LeMatRhoDirectPipelineConfig:
     # S3 source
     lematrho_bucket_name: str = "lemat-rho"
     lematrho_grid_shape: tuple[int, int, int] = (15, 15, 15)
+    # When set, overrides lematrho_grid_shape with a per-material adaptive grid
+    # computed as max(5, ceil(lattice_length / resolution)) per axis.
+    lematrho_grid_resolution: Optional[float] = None
     # Output
     output_dir: str = "./lematrho_output"
     parquet_chunk_size: int = 1000
@@ -62,6 +65,8 @@ class LeMatRhoDirectPipelineConfig:
     # HuggingFace (optional)
     hf_repo_id: Optional[str] = None
     hf_token: Optional[str] = None
+    # Named HF dataset config/subset (e.g. "adaptive-grid"). None → default config.
+    hf_config_name: Optional[str] = None
     # External tools (all optional — missing tools result in None fields)
     bader_path: Optional[str] = None
     chargemol_path: Optional[str] = None
@@ -427,6 +432,7 @@ def load_push_config(
 def load_direct_pipeline_config(
     lematrho_bucket_name: str = "lemat-rho",
     grid_shape: tuple[int, int, int] = (15, 15, 15),
+    grid_resolution: Optional[float] = None,
     output_dir: str = "./lematrho_output",
     parquet_chunk_size: int = 1000,
     num_workers: int = 4,
@@ -434,6 +440,7 @@ def load_direct_pipeline_config(
     limit: Optional[int] = None,
     hf_repo_id: Optional[str] = None,
     hf_token: Optional[str] = None,
+    hf_config_name: Optional[str] = None,
     bader_path: Optional[str] = None,
     chargemol_path: Optional[str] = None,
     atomic_densities_path: Optional[str] = None,
@@ -447,6 +454,7 @@ def load_direct_pipeline_config(
     return LeMatRhoDirectPipelineConfig(
         lematrho_bucket_name=lematrho_bucket_name,
         lematrho_grid_shape=grid_shape,
+        lematrho_grid_resolution=grid_resolution,
         output_dir=output_dir,
         parquet_chunk_size=parquet_chunk_size,
         num_workers=num_workers,
@@ -454,6 +462,7 @@ def load_direct_pipeline_config(
         limit=limit,
         hf_repo_id=hf_repo_id,
         hf_token=hf_token,
+        hf_config_name=hf_config_name,
         bader_path=bader_path,
         chargemol_path=chargemol_path,
         atomic_densities_path=atomic_densities_path,

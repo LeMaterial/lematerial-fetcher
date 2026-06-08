@@ -303,6 +303,28 @@ def add_lematrho_direct_options(f):
             help="Grid shape for pyrho charge density compression (nx ny nz).",
         ),
         click.option(
+            "--grid-resolution",
+            type=float,
+            default=None,
+            envvar="LEMATERIALFETCHER_LEMATRHO_GRID_RESOLUTION",
+            help=(
+                "Adaptive grid resolution in Å/point (e.g. 0.2). "
+                "When set, overrides --grid-shape with a per-material grid computed "
+                "as max(5, ceil(lattice_length / resolution)) per axis."
+            ),
+        ),
+        click.option(
+            "--hf-config-name",
+            type=str,
+            default=None,
+            envvar="LEMATERIALFETCHER_HF_CONFIG_NAME",
+            help=(
+                "Named HuggingFace dataset config/subset (e.g. 'adaptive-grid'). "
+                "When set, data is pushed under this config name in the HF repo. "
+                "If not set, uses the default config."
+            ),
+        ),
+        click.option(
             "--hf-repo-id",
             type=str,
             default=None,

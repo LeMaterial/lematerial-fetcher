@@ -1696,3 +1696,141 @@ class TestIntegrationS3:
         assert result["functional"] == "r2scan"
         for col in PARQUET_COLUMNS:
             assert col in result
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGridShape
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGridShape:
+    def test_symmetric_cell(self):
+        """Cubic 5 Å cell at 0.2 Å/pt → ceil(5/0.2)=25 per axis."""
+        from lematerial_fetcher.fetcher.lematrho.utils import compute_grid_shape
+
+        assert compute_grid_shape((5.0, 5.0, 5.0), 0.2) == (25, 25, 25)
+
+    def test_asymmetric_cell(self):
+        """Non-cubic cell gives different grid dims per axis."""
+        from lematerial_fetcher.fetcher.lematrho.utils import compute_grid_shape
+
+        # ceil(4/0.2)=20, ceil(6/0.2)=30, ceil(3/0.2)=15
+        assert compute_grid_shape((4.0, 6.0, 3.0), 0.2) == (20, 30, 15)
+
+    def test_ceil_rounds_up(self):
+        """Non-exact division always rounds up (ceiling)."""
+        from lematerial_fetcher.fetcher.lematrho.utils import compute_grid_shape
+
+        # ceil(5.1/0.2) = ceil(25.5) = 26
+        assert compute_grid_shape((5.1, 5.1, 5.1), 0.2) == (26, 26, 26)
+
+    def test_min_floor_applied(self):
+        """Sub-1 Å dimension clamps to minimum of 5."""
+        from lematerial_fetcher.fetcher.lematrho.utils import compute_grid_shape
+
+        # ceil(0.5/0.2) = ceil(2.5) = 3 → max(5, 3) = 5
+        assert compute_grid_shape((0.5, 5.0, 5.0), 0.2) == (5, 25, 25)
+
+    def test_coarser_resolution(self):
+        """Coarser resolution (0.5 Å/pt) yields smaller grid."""
+        from lematerial_fetcher.fetcher.lematrho.utils import compute_grid_shape
+
+        # ceil(10/0.5)=20, ceil(5/0.5)=10, ceil(3/0.5)=6
+        assert compute_grid_shape((10.0, 5.0, 3.0), 0.5) == (20, 10, 6)
+
+
+# ---------------------------------------------------------------------------
+# TestAdaptiveGridShape
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveGridShape:
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
+    def test_uses_lattice_when_resolution_set(
+        self,
+        mock_get_client,
+        mock_download,
+        mock_parse,
+        mock_compress,
+        mock_get_optimade,
+        tmp_output_dir,
+        no_tools,
+    ):
+        """When lematrho_grid_resolution is set, grid_shape derives from structure lattice."""
+        from pymatgen.core import Lattice, Structure
+
+        mock_get_client.return_value = MagicMock()
+        mock_download.return_value = b"mock_bytes"
+
+        # 10×5×3 Å cell → at 0.2 Å/pt: ceil(10/0.2)=50, ceil(5/0.2)=25, ceil(3/0.2)=15
+        structure = Structure(
+            Lattice([[10.0, 0, 0], [0, 5.0, 0], [0, 0, 3.0]]),
+            ["Si", "O"],
+            [[0, 0, 0], [0.5, 0.5, 0.5]],
+        )
+        mock_parse.return_value = (structure, None, None, None)
+        mock_compress.return_value = [[[1.0]]]
+        mock_get_optimade.return_value = _make_mock_optimade_dict()
+
+        config = LeMatRhoDirectPipelineConfig(
+            lematrho_bucket_name="test-bucket",
+            lematrho_grid_shape=(15, 15, 15),  # must NOT be used
+            lematrho_grid_resolution=0.2,
+            output_dir=tmp_output_dir,
+        )
+
+        result = LeMatRhoDirectPipeline._process_material("mp-123", config, no_tools)
+
+        assert result is not None
+        assert result["charge_density_grid_shape"] == [50, 25, 15]
+        # Every compress_chgcar call must use the adaptive shape, not the fixed one
+        for call in mock_compress.call_args_list:
+            assert call[0][1] == (50, 25, 15)
+
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_optimade_from_pymatgen")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.compress_chgcar")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.parse_vasprun_output")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.download_gz_file_from_s3")
+    @patch("lematerial_fetcher.fetcher.lematrho.pipeline.get_aws_client")
+    def test_uses_fixed_shape_when_no_resolution(
+        self,
+        mock_get_client,
+        mock_download,
+        mock_parse,
+        mock_compress,
+        mock_get_optimade,
+        tmp_output_dir,
+        no_tools,
+    ):
+        """When lematrho_grid_resolution is None, fixed grid_shape is used unchanged."""
+        from pymatgen.core import Lattice, Structure
+
+        mock_get_client.return_value = MagicMock()
+        mock_download.return_value = b"mock_bytes"
+
+        structure = Structure(
+            Lattice([[10.0, 0, 0], [0, 5.0, 0], [0, 0, 3.0]]),
+            ["Si", "O"],
+            [[0, 0, 0], [0.5, 0.5, 0.5]],
+        )
+        mock_parse.return_value = (structure, None, None, None)
+        mock_compress.return_value = [[[1.0]]]
+        mock_get_optimade.return_value = _make_mock_optimade_dict()
+
+        config = LeMatRhoDirectPipelineConfig(
+            lematrho_bucket_name="test-bucket",
+            lematrho_grid_shape=(7, 8, 9),
+            lematrho_grid_resolution=None,  # adaptive OFF
+            output_dir=tmp_output_dir,
+        )
+
+        result = LeMatRhoDirectPipeline._process_material("mp-123", config, no_tools)
+
+        assert result is not None
+        assert result["charge_density_grid_shape"] == [7, 8, 9]
+        for call in mock_compress.call_args_list:
+            assert call[0][1] == (7, 8, 9)

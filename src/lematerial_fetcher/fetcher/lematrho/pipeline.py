@@ -24,6 +24,7 @@ from lematerial_fetcher.fetcher.lematrho.utils import (
     STATIC_FILES,
     VALID_PREFIXES,
     compress_chgcar,
+    compute_grid_shape,
     download_gz_file_from_s3,
     get_cross_compatibility,
     parse_vasprun_output,
@@ -291,6 +292,19 @@ class LeMatRhoDirectPipeline:
         processed_count = 0
         failed_count = 0
 
+        from tqdm import tqdm
+
+        pbar = tqdm(
+            total=len(remaining),
+            unit="material",
+            desc="Processing",
+            dynamic_ncols=True,
+        )
+
+        def _update_pbar():
+            pbar.update(1)
+            pbar.set_postfix(ok=processed_count, fail=failed_count, refresh=False)
+
         if self.debug:
             for material_id in remaining:
                 result = self._process_material(
@@ -311,11 +325,7 @@ class LeMatRhoDirectPipeline:
                     buffer_ids.clear()
                     chunk_index += 1
 
-                total = processed_count + failed_count
-                if total % self.config.log_every == 0 and total > 0:
-                    logger.info(
-                        f"Progress: {processed_count} processed, {failed_count} failed"
-                    )
+                _update_pbar()
         else:
             # Worker count is intentionally low (default 4). The bottleneck is
             # memory, not CPU: each worker holds multiple decompressed CHGCAR
@@ -367,6 +377,8 @@ class LeMatRhoDirectPipeline:
                             buffer_ids.clear()
                             chunk_index += 1
 
+                        _update_pbar()
+
                         # Submit replacement (work-stealing)
                         try:
                             next_id = next(remaining_iter)
@@ -380,12 +392,7 @@ class LeMatRhoDirectPipeline:
                         except StopIteration:
                             pass
 
-                    total = processed_count + failed_count
-                    if total % self.config.log_every == 0 and total > 0:
-                        logger.info(
-                            f"Progress: {processed_count} processed, "
-                            f"{failed_count} failed"
-                        )
+        pbar.close()
 
         # Write remaining buffer
         if buffer:
@@ -477,6 +484,8 @@ class LeMatRhoDirectPipeline:
             Flat dict matching ``PARQUET_COLUMNS``, or ``None`` on failure.
         """
         bucket = config.lematrho_bucket_name
+        # Start with the fixed grid shape; may be overridden below if adaptive
+        # resolution is configured (requires vasprun lattice, parsed on first file).
         grid_shape = config.lematrho_grid_shape
 
         try:
@@ -508,6 +517,26 @@ class LeMatRhoDirectPipeline:
                     raw_bytes = LeMatRhoDirectPipeline._download_with_retry(
                         aws_client, bucket, s3_key
                     )
+
+                    # After downloading vasprun.xml (always first in STATIC_FILES),
+                    # compute adaptive grid shape from the structure's lattice if
+                    # lematrho_grid_resolution is configured.  This runs before any
+                    # charge-density file compression so grid_shape is correct for
+                    # the subsequent CHGCAR / AECCAR downloads.
+                    if (
+                        filename == "vasprun.xml.gz"
+                        and config.lematrho_grid_resolution is not None
+                    ):
+                        try:
+                            _s, _, _, _ = parse_vasprun_output(raw_bytes)
+                            grid_shape = compute_grid_shape(
+                                _s.lattice.abc, config.lematrho_grid_resolution
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Adaptive grid compute failed for {material_id}, "
+                                f"falling back to fixed {grid_shape}: {e}"
+                            )
 
                     # Compress charge density files via pyrho (skip vasprun.xml)
                     if filename in GRID_KEY_MAP:
@@ -719,9 +748,11 @@ class LeMatRhoDirectPipeline:
         dataset = load_dataset("parquet", data_files=parquet_files)
 
         logger.info(f"Pushing to HuggingFace repo: {self.config.hf_repo_id}")
-        dataset["train"].push_to_hub(
-            self.config.hf_repo_id,
-            token=self.config.hf_token,
-            private=True,
-        )
+        push_kwargs = {
+            "token": self.config.hf_token,
+            "private": True,
+        }
+        if self.config.hf_config_name:
+            push_kwargs["config_name"] = self.config.hf_config_name
+        dataset["train"].push_to_hub(self.config.hf_repo_id, **push_kwargs)
         logger.info("Push complete.")
