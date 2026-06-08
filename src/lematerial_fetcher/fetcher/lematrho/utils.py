@@ -8,6 +8,7 @@ charge-analysis wrappers built on pymatgen's ``BaderAnalysis`` and
 """
 
 import gzip
+import math
 import os
 import tempfile
 from typing import Any, Optional
@@ -134,6 +135,25 @@ def parse_vasprun_output(
             pass
 
         return structure, forces_out, stress_out, energy_out
+
+
+def compute_grid_shape(
+    lattice_abc: tuple[float, float, float],
+    resolution: float,
+) -> tuple[int, int, int]:
+    """Compute a per-material charge-density grid shape from lattice lengths.
+
+    Each dimension is ``max(5, ceil(length / resolution))``, giving a fixed
+    spatial resolution in Å/point while clamping degenerate sub-1 Å dimensions.
+
+    Args:
+        lattice_abc: Lattice vector lengths (a, b, c) in Å.
+        resolution: Target spatial resolution in Å per grid point (e.g. 0.2).
+
+    Returns:
+        3-tuple of grid dimensions (nx, ny, nz).
+    """
+    return tuple(max(5, math.ceil(l / resolution)) for l in lattice_abc)
 
 
 def compress_chgcar(chgcar_bytes: bytes, grid_shape: tuple[int, int, int]) -> list:
