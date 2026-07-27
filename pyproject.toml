@@ -62,6 +62,7 @@ material-hasher = { git = "https://github.com/LeMaterial/lematerial-hasher.git" 
 [tool.pytest.ini_options]
 markers = [
     "integration: tests that require real AWS credentials and S3 access (deselect with '-m \"not integration\"')",
+    "postgres: tests that require a running PostgreSQL server, skipped automatically if none is reachable (deselect with '-m \"not postgres\"')",
 ]
 
 [tool.ruff.lint]
