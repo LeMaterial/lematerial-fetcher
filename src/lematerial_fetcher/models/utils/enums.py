@@ -14,3 +14,4 @@ class Source(str, Enum):
     MP = "mp"
     OQMD = "oqmd"
     LEMATRHO = "lematrho"
+    AFLOW = "aflow"

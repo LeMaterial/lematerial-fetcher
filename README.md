@@ -22,6 +22,7 @@ This project relies entirely on the valuable contributions of several materials 
 - [**Materials Project**](https://materialsproject.org/) - A comprehensive database of computed materials properties funded by the U.S. Department of Energy and developed by the Lawrence Berkeley National Laboratory in collaboration with several other laboratories and universities
 - [**Alexandria Library**](https://alexandria.icams.rub.de/) - A quantum-accurate materials library developed by ICAMS at Ruhr University Bochum
 - [**Open Quantum Materials Database (OQMD)**](https://oqmd.org/) - An extensive collection of DFT calculated properties maintained by researchers at Northwestern University
+- [**AFLOW**](https://aflow.org/) - An automatic framework for high-throughput materials discovery and its distributed data repository, developed by the AFLOW consortium at Duke University
 
 We gratefully acknowledge these projects and their dedication to open materials science data. Our tool is built entirely on the foundation of their well-maintained databases and research efforts.
 
@@ -134,7 +135,17 @@ lematerial-fetcher [GLOBAL_OPTIONS] COMMAND [COMMAND_OPTIONS]
    lematerial-fetcher oqmd transform --table-name source_table --dest-table-name dest_table
    ```
 
-4. **Push to Hugging Face**
+4. **AFLOW**
+
+   ```bash
+   # Fetch data (via the AFLUX search API)
+   lematerial-fetcher aflow fetch --table-name aflow_structures
+   
+   # Transform data
+   lematerial-fetcher aflow transform --table-name source_table --dest-table-name dest_table
+   ```
+
+5. **Push to Hugging Face**
 
    ```bash
    lematerial-fetcher push --table-name my_table --hf-repo-id my-repo

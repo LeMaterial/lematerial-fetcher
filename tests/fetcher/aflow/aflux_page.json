@@ -1,0 +1,229 @@
+[
+  {
+    "compound": "N4",
+    "auid": "aflow:992fd15e37d7ee20",
+    "aurl": "aflowlib.duke.edu:AFLOWDATA/LIB1_WEB/N:PAW_PBE:08Apr2002/N1_ICSD_95247",
+    "spacegroup_relax": 51,
+    "Pearson_symbol_relax": "oP4",
+    "geometry": [
+      1.3173,
+      6.71612,
+      7.29956,
+      90,
+      90,
+      90
+    ],
+    "species": [
+      "N"
+    ],
+    "composition": [
+      4
+    ],
+    "positions_fractional": [
+      [
+        0.269677,
+        0.999962,
+        0.25
+      ],
+      [
+        0.730323,
+        3.75901e-05,
+        0.75
+      ],
+      [
+        0.730323,
+        0.499962,
+        0.75
+      ],
+      [
+        0.269677,
+        0.500038,
+        0.25
+      ]
+    ],
+    "catalog": "LIB1",
+    "aflowlib_date": "20200524_13:53:56_GMT-5",
+    "energy_cell": -23.929
+  },
+  {
+    "compound": "N4",
+    "auid": "aflow:b1adccacc1617241",
+    "aurl": "aflowlib.duke.edu:AFLOWDATA/ICSD_WEB/ORC/N1_ICSD_95247",
+    "spacegroup_relax": 51,
+    "Pearson_symbol_relax": "oP2",
+    "geometry": [
+      1.3173,
+      6.72143,
+      7.30413,
+      90,
+      90,
+      90
+    ],
+    "species": [
+      "N"
+    ],
+    "composition": [
+      4
+    ],
+    "positions_fractional": [
+      [
+        0.269674,
+        0.000125272,
+        0.25
+      ],
+      [
+        0.730326,
+        0.999875,
+        0.75
+      ],
+      [
+        0.730326,
+        0.500125,
+        0.75
+      ],
+      [
+        0.269674,
+        0.499875,
+        0.25
+      ]
+    ],
+    "catalog": "ICSD",
+    "aflowlib_date": [
+      "20120228_18:58:57_GMT-5",
+      "20120229_03:56:50_GMT-5",
+      "20210901_18:40:12_GMT-4"
+    ],
+    "energy_cell": -23.9295
+  },
+  {
+    "compound": "B2C2",
+    "auid": "aflow:a0bacbcd30a8e39a",
+    "aurl": "aflowlib.duke.edu:AFLOWDATA/LIB2_WEB/B_hC/120",
+    "spacegroup_relax": 51,
+    "Pearson_symbol_relax": "oP4",
+    "geometry": [
+      1.45225,
+      7.42606,
+      5.0676,
+      90,
+      90,
+      90
+    ],
+    "species": [
+      "B",
+      "C"
+    ],
+    "composition": [
+      2,
+      2
+    ],
+    "positions_fractional": [
+      [
+        0,
+        0,
+        -0.00725416
+      ],
+      [
+        0,
+        0.5,
+        0.340587
+      ],
+      [
+        0.5,
+        0,
+        0.305073
+      ],
+      [
+        0.5,
+        0.5,
+        0.0282605
+      ]
+    ],
+    "catalog": "LIB2",
+    "aflowlib_date": "20200424_06:50:35_GMT-5",
+    "energy_cell": -25.6413
+  },
+  {
+    "compound": "B3C1",
+    "auid": "aflow:ac07a46920620531",
+    "aurl": "aflowlib.duke.edu:AFLOWDATA/LIB2_WEB/B_hC/21",
+    "spacegroup_relax": 47,
+    "Pearson_symbol_relax": "oP4",
+    "geometry": [
+      1.5015,
+      3.67359,
+      8.24724,
+      90,
+      90,
+      90
+    ],
+    "species": [
+      "B",
+      "C"
+    ],
+    "composition": [
+      3,
+      1
+    ],
+    "positions_fractional": [
+      [
+        0.5,
+        0.5,
+        0.630476
+      ],
+      [
+        0,
+        0,
+        0.5
+      ],
+      [
+        0.5,
+        0.5,
+        0.369524
+      ],
+      [
+        0,
+        0,
+        0
+      ]
+    ],
+    "catalog": "LIB2",
+    "aflowlib_date": "20200424_06:53:37_GMT-5",
+    "energy_cell": -23.8251
+  },
+  {
+    "compound": "H1",
+    "auid": "aflow:517a4994793f4e09",
+    "aurl": "aflowlib.duke.edu:AFLOWDATA/LIB1_WEB/H_h:PAW_LDA:04May1998/A2",
+    "spacegroup_relax": 229,
+    "Pearson_symbol_relax": "cI2",
+    "geometry": [
+      1.55683,
+      1.55683,
+      1.55683,
+      109.471,
+      109.471,
+      109.471
+    ],
+    "species": [
+      "H"
+    ],
+    "composition": [
+      1
+    ],
+    "positions_fractional": [
+      [
+        0,
+        0,
+        0
+      ]
+    ],
+    "catalog": "LIB1",
+    "aflowlib_date": [
+      "20130421_06:44:14_GMT-4",
+      "20130421_06:52:48_GMT-4",
+      "20211109_09:05:35_GMT-5"
+    ],
+    "energy_cell": -2.45173
+  }
+]
