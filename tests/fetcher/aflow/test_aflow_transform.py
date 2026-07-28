@@ -140,6 +140,36 @@ def test_transform_rejects_non_pbe_entries(aflux_page):
             transform_aflux_entry(entry, entry["auid"])
 
 
+@pytest.mark.parametrize(
+    "dft_type",
+    [
+        ["PAW_LDA"],
+        ["PAW_GGA"],
+        "PAW_LDA",  # scalar form
+        ["PAW_PBE", "PAW_LDA"],  # mixed pseudopotentials in one run
+    ],
+)
+def test_transform_rejects_unsupported_dft_type(dft_type):
+    """The adapter labels every row functional=pbe, so anything whose dft_type
+    is not exactly PAW_PBE must be rejected rather than mislabeled. This is a
+    whitelist on what the adapter claims, not a check against the Functional
+    enum: if more functionals are supported later, this guard changes with it.
+    """
+    entry = dict(ROCKSALT_NACL)
+    entry["dft_type"] = dft_type
+    with pytest.raises(ValueError, match="dft_type"):
+        transform_aflux_entry(entry, entry["auid"])
+
+
+def test_transform_accepts_missing_dft_type():
+    """Entries without provenance are still accepted under the PBE default
+    (AFLOW's standard workflow); only *known* non-PBE entries are rejected."""
+    entry = dict(ROCKSALT_NACL)
+    entry.pop("dft_type", None)
+    optimade = transform_aflux_entry(entry, entry["auid"])
+    assert optimade.functional == Functional.PBE
+
+
 def test_cross_catalog_duplicates_share_fingerprint(aflux_page):
     """The same material from different AFLOW catalogs must hash identically.
 
