@@ -43,7 +43,16 @@
     ],
     "catalog": "LIB1",
     "aflowlib_date": "20200524_13:53:56_GMT-5",
-    "energy_cell": -23.929
+    "energy_cell": -23.929,
+    "dft_type": [
+      "PAW_PBE"
+    ],
+    "ldau_type": 0,
+    "ldau_TLUJ": null,
+    "species_pp_version": [
+      "N:PAW_PBE:08Apr2002"
+    ],
+    "spin_cell": 0
   },
   {
     "compound": "N4",
@@ -93,7 +102,16 @@
       "20120229_03:56:50_GMT-5",
       "20210901_18:40:12_GMT-4"
     ],
-    "energy_cell": -23.9295
+    "energy_cell": -23.9295,
+    "dft_type": [
+      "PAW_PBE"
+    ],
+    "ldau_type": 0,
+    "ldau_TLUJ": null,
+    "species_pp_version": [
+      "N:PAW_PBE:08Apr2002"
+    ],
+    "spin_cell": 0
   },
   {
     "compound": "B2C2",
@@ -141,7 +159,17 @@
     ],
     "catalog": "LIB2",
     "aflowlib_date": "20200424_06:50:35_GMT-5",
-    "energy_cell": -25.6413
+    "energy_cell": -25.6413,
+    "dft_type": [
+      "PAW_PBE"
+    ],
+    "ldau_type": 0,
+    "ldau_TLUJ": null,
+    "species_pp_version": [
+      "B_h:PAW_PBE:07Sep2000",
+      "C:PAW_PBE:08Apr2002"
+    ],
+    "spin_cell": 4.4e-06
   },
   {
     "compound": "B3C1",
@@ -189,7 +217,17 @@
     ],
     "catalog": "LIB2",
     "aflowlib_date": "20200424_06:53:37_GMT-5",
-    "energy_cell": -23.8251
+    "energy_cell": -23.8251,
+    "dft_type": [
+      "PAW_PBE"
+    ],
+    "ldau_type": 0,
+    "ldau_TLUJ": null,
+    "species_pp_version": [
+      "B_h:PAW_PBE:07Sep2000",
+      "C:PAW_PBE:08Apr2002"
+    ],
+    "spin_cell": -9e-07
   },
   {
     "compound": "H1",
@@ -224,6 +262,15 @@
       "20130421_06:52:48_GMT-4",
       "20211109_09:05:35_GMT-5"
     ],
-    "energy_cell": -2.45173
+    "energy_cell": -2.45173,
+    "dft_type": [
+      "PAW_LDA"
+    ],
+    "ldau_type": 0,
+    "ldau_TLUJ": null,
+    "species_pp_version": [
+      "H_h:PAW_LDA:04May1998"
+    ],
+    "spin_cell": 0
   }
 ]

@@ -27,6 +27,14 @@ AFLUX_OPTIONAL_PROPERTIES = [
     "catalog",
     "aflowlib_date",
     "energy_cell",
+    # DFT provenance, kept in the raw table for a future energy-correction /
+    # cross-compatibility audit (AFLOW runs GGA+U with its own U values, which
+    # differ from the MP-2020 assumptions; see PR discussion).
+    "dft_type",
+    "ldau_type",
+    "ldau_TLUJ",
+    "species_pp_version",
+    "spin_cell",
 ]
 
 
@@ -122,6 +130,18 @@ def transform_aflux_entry(
     OptimadeStructure
         The validated structure, with space group and BAWL fingerprint computed.
     """
+    # AFLOW is not uniformly PBE: some entries (e.g. in the LIB catalogs) were
+    # computed with LDA pseudopotentials. The Functional enum cannot represent
+    # those, so refuse to label them PBE; the transformer will skip the row.
+    dft_type = attributes.get("dft_type")
+    if dft_type is not None:
+        dft_types = dft_type if isinstance(dft_type, list) else [dft_type]
+        if any(t != "PAW_PBE" for t in dft_types):
+            raise ValueError(
+                f"Unsupported dft_type {dft_types}: only PAW_PBE entries can be "
+                f"mapped to functional=pbe"
+            )
+
     structure = build_structure_from_aflux(attributes)
     optimade_fields = get_optimade_from_pymatgen(structure)
 

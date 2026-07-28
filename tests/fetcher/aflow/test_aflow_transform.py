@@ -114,14 +114,30 @@ def test_transform_aflux_entry_rocksalt():
     assert optimade.last_modified.year == 2020
 
 
-def test_transform_all_fixture_entries(aflux_page):
-    for entry in aflux_page:
+def is_pbe(entry):
+    return all(t == "PAW_PBE" for t in entry.get("dft_type", []))
+
+
+def test_transform_all_pbe_fixture_entries(aflux_page):
+    pbe_entries = [e for e in aflux_page if is_pbe(e)]
+    assert len(pbe_entries) >= 4
+    for entry in pbe_entries:
         optimade = transform_aflux_entry(entry, entry["auid"])
         assert optimade.source == "aflow"
         assert optimade.immutable_id == f"aflow-{entry['auid'].replace('aflow:', '')}"
         assert optimade.nsites == len(entry["positions_fractional"])
         assert optimade.bawl_fingerprint
         assert 1 <= optimade.space_group_it_number <= 230
+
+
+def test_transform_rejects_non_pbe_entries(aflux_page):
+    """AFLOW is not uniformly PBE (the fixture contains a PAW_LDA H entry);
+    such entries must not be labeled functional=pbe."""
+    non_pbe = [e for e in aflux_page if not is_pbe(e)]
+    assert len(non_pbe) >= 1, "fixture should contain at least one non-PBE entry"
+    for entry in non_pbe:
+        with pytest.raises(ValueError, match="dft_type"):
+            transform_aflux_entry(entry, entry["auid"])
 
 
 def test_cross_catalog_duplicates_share_fingerprint(aflux_page):
