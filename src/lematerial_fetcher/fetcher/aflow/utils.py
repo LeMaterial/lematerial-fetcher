@@ -55,6 +55,13 @@ def build_aflux_query(base_url: str, page: int, per_page: int) -> str:
     str
         The full request URL.
     """
+    # $paging(0) is a magic value in AFLUX that returns the ENTIRE result set
+    # in one response, so an off-by-one here would download the whole database.
+    if page < 1:
+        raise ValueError(
+            f"AFLUX pages are 1-based (got {page}); "
+            f"$paging(0) would return the entire result set"
+        )
     properties = ",".join(
         [f"{p}(*)" for p in AFLUX_REQUIRED_PROPERTIES] + AFLUX_OPTIONAL_PROPERTIES
     )

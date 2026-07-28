@@ -71,6 +71,14 @@ def test_build_aflux_query_contains_all_properties():
     assert "$paging(3,50)" in url
 
 
+def test_build_aflux_query_rejects_page_zero():
+    """$paging(0) is a magic AFLUX value that returns the entire result set,
+    so page numbers below 1 must be rejected."""
+    for page in (0, -1):
+        with pytest.raises(ValueError, match="1-based"):
+            build_aflux_query("https://aflow.test/API/aflux/", page=page, per_page=50)
+
+
 def test_parse_aflowlib_date_scalar():
     assert parse_aflowlib_date("20200426_10:04:20_GMT-5") == datetime(
         2020, 4, 26, 10, 4, 20
