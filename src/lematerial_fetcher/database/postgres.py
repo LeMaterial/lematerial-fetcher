@@ -285,12 +285,14 @@ class StructuresDatabase(Database):
                     if not start_id:  # No results at this offset
                         return
 
-                # Construct the query based on whether we have a start_id
+                # Construct the query based on whether we have a start_id.
+                # start_id is the id *at* the requested offset (0-based), so the
+                # scan must be inclusive: `>` would drop the boundary row itself.
                 if start_id:
                     query = f"""
                     SELECT id, type, attributes, last_modified
                     FROM {table_name}
-                    WHERE id > %s
+                    WHERE id >= %s
                     ORDER BY id
                     {f"LIMIT {limit}" if limit is not None else ""}
                     """
