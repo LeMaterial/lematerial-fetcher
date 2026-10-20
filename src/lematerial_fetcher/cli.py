@@ -129,6 +129,33 @@ cli.add_command(alexandria_cli)
 cli.add_command(oqmd_cli)
 cli.add_command(lematrho_cli)
 
+@click.group(name="jarvis")
+@click.pass_context
+def jarvis_cli(ctx):
+    """Fetch raw JARVIS-DFT structures and protocol-specific properties."""
+
+
+@jarvis_cli.command(name="fetch")
+@click.pass_context
+@add_common_options
+@add_fetch_options
+def jarvis_fetch(ctx, **config_kwargs):
+    """Stream the pinned3D DFT release to a raw table (not JARVIS-FF).
+
+    --limit is database batch size; --offset must be zero. Source gap,
+    tensor and modulus keys are retained; no PBE/MP-2020 conversion is applied.
+    """
+    from lematerial_fetcher.fetcher.jarvis.archive import ARCHIVE_URL
+    from lematerial_fetcher.fetcher.jarvis.fetch import JarvisFetcher
+
+    config_kwargs["base_url"] = ARCHIVE_URL
+    config = load_fetcher_config(**config_kwargs)
+    JarvisFetcher(config=config, debug=ctx.obj["debug"]).fetch()
+
+
+cli.add_command(jarvis_cli)
+
+
 # ------------------------------------------------------------------------------
 # MP commands
 # ------------------------------------------------------------------------------

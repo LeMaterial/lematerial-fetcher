@@ -25,6 +25,12 @@ This project relies entirely on the valuable contributions of several materials 
 
 We gratefully acknowledge these projects and their dedication to open materials science data. Our tool is built entirely on the foundation of their well-maintained databases and research efforts.
 
+## JARVIS-DFT (draft raw connector)
+
+See [the JARVIS raw-fetch guide](docs/jarvis_raw_fetch.md) for the pinned archive,
+fresh-table publication contract and remaining integration checks. Raw gap and
+elastic fields are retained; standardized transformation is a separate step.
+
 ## Prerequisites
 
 - Python 3.11 or later
